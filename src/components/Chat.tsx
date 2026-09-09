@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { Avatar } from "./Avatar";
+import { ExportMenu } from "./ExportMenu";
 
 /* §8 — the most important screen in the product.
  *
@@ -155,6 +156,7 @@ export function Chat({
           <h1>{muse.name}</h1>
           <div className="rel">{muse.relationshipType}</div>
         </div>
+        <ExportMenu conversationId={conversationId} museId={muse.id} museName={muse.name} />
       </header>
 
       <div className="thread" role="log" aria-live="polite" aria-label={`Conversation with ${muse.name}`}>
