@@ -1,69 +1,153 @@
-import Image from "next/image";
+import { redirect } from "next/navigation";
 
-export default function Home() {
+import { Avatar } from "@/components/Avatar";
+import { StartTalking } from "@/components/StartTalking";
+import { auth } from "@/lib/auth";
+import { prisma } from "@/lib/db";
+
+/* §Screen 2 — Home. A server component, so the §51 ownership rules run where
+   they cannot be bypassed and nothing about other users reaches the browser. */
+
+export default async function HomePage() {
+  const session = await auth();
+  const userId = session?.user?.id;
+  if (!userId) redirect("/login");
+
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { id: true, name: true, deletedAt: true },
+  });
+  if (!user || user.deletedAt) redirect("/login");
+
+  const [conversations, discover, mine] = await Promise.all([
+    // "Continue talking" — recently active relationships.
+    prisma.conversation.findMany({
+      where: { userId, deletedAt: null },
+      orderBy: { lastMessageAt: "desc" },
+      take: 6,
+      select: {
+        id: true,
+        lastMessageAt: true,
+        muse: { select: { id: true, name: true, relationshipType: true } },
+        messages: {
+          orderBy: { createdAt: "desc" },
+          take: 1,
+          select: { content: true, senderType: true },
+        },
+      },
+    }),
+    // §37: private Muses must never appear in discovery.
+    prisma.muse.findMany({
+      where: { visibility: "PUBLIC", status: "ACTIVE" },
+      orderBy: [{ interactionCount: "desc" }, { createdAt: "asc" }],
+      take: 12,
+      select: {
+        id: true, name: true, description: true, relationshipType: true, category: true,
+        personality: { select: { traits: true } },
+      },
+    }),
+    prisma.muse.findMany({
+      where: { ownerUserId: userId, status: "ACTIVE" },
+      orderBy: { updatedAt: "desc" },
+      select: { id: true, name: true, description: true, relationshipType: true },
+    }),
+  ]);
+
+  const talkedTo = new Set(conversations.map((c) => c.muse.id));
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+    <main className="shell">
+      <header className="row" style={{ justifyContent: "space-between" }}>
+        <p className="mark">Muse</p>
+        <span className="fine">{user.name ?? "You"}</span>
+      </header>
+
+      {conversations.length > 0 && (
+        <>
+          <h2 className="section-title">Continue talking</h2>
+          <div className="card-grid">
+            {conversations.map((c) => {
+              const last = c.messages[0];
+              return (
+                <StartTalking key={c.id} museId={c.muse.id} className="muse-card">
+                  <Avatar name={c.muse.name} />
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div className="row" style={{ gap: "0.5rem", justifyContent: "space-between" }}>
+                      <h3>{c.muse.name}</h3>
+                      <span className="stamp">{relativeTime(c.lastMessageAt)}</span>
+                    </div>
+                    <span className="rel">{c.muse.relationshipType}</span>
+                    {last && (
+                      <p style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {last.senderType === "USER" ? "You: " : ""}
+                        {last.content}
+                      </p>
+                    )}
+                  </div>
+                </StartTalking>
+              );
+            })}
+          </div>
+        </>
+      )}
+
+      <h2 className="section-title">{mine.length ? "Your Muses" : "Create your own"}</h2>
+      {mine.length ? (
+        <div className="card-grid">
+          {mine.map((m) => (
+            <StartTalking key={m.id} museId={m.id} className="muse-card">
+              <Avatar name={m.name} />
+              <div style={{ minWidth: 0 }}>
+                <h3>{m.name}</h3>
+                <span className="rel">{m.relationshipType}</span>
+                <p>{m.description}</p>
+              </div>
+            </StartTalking>
+          ))}
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+      ) : (
+        /* §43: never a blank screen. */
+        <div className="empty">
+          <p>You haven&apos;t made anyone yet.</p>
+          <p className="fine">Muse creation is the next thing being built.</p>
         </div>
-      </main>
-    </div>
+      )}
+
+      <h2 className="section-title">Discover</h2>
+      <div className="card-grid">
+        {discover
+          .filter((m) => !talkedTo.has(m.id))
+          .map((m) => (
+            <StartTalking key={m.id} museId={m.id} className="muse-card">
+              <Avatar name={m.name} />
+              <div style={{ minWidth: 0 }}>
+                <h3>{m.name}</h3>
+                <span className="rel">{m.relationshipType}</span>
+                <p>{m.description}</p>
+                {m.personality?.traits?.length ? (
+                  <div className="tags">
+                    {m.personality.traits.slice(0, 4).map((t) => (
+                      <span className="tag" key={t}>{t}</span>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            </StartTalking>
+          ))}
+      </div>
+
+      <p className="fine" style={{ marginTop: "2.5rem" }}>
+        Every Muse is an AI. Conversations are private to your account.
+      </p>
+    </main>
   );
+}
+
+function relativeTime(date: Date): string {
+  const mins = Math.round((Date.now() - date.getTime()) / 60000);
+  if (mins < 1) return "now";
+  if (mins < 60) return `${mins}m`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours}h`;
+  return `${Math.round(hours / 24)}d`;
 }

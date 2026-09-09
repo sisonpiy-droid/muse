@@ -58,6 +58,16 @@ check("named events keep their data", async () => {
   assert.deepEqual(await collect('event: content_block_delta\ndata: {"x":1}\n\n'), ['{"x":1}']);
 });
 
+check("streamed fragments keep their leading and trailing spaces", async () => {
+  /* Gemini splits mid-sentence, so a delta is often " you" or "the ". Trimming
+     each fragment welds words together: "prepareyou", "Pull upthe". */
+  const frames = [' you', 'the ', ' up '].map(t => `data: ${JSON.stringify({ text: t })}
+
+`).join("");
+  const out = await collect(frames);
+  assert.deepEqual(out.map(p => JSON.parse(p).text), [" you", "the ", " up "]);
+});
+
 let pass = 0, fail = 0;
 for (const [n, f] of results) {
   try { await f(); console.log(`  PASS  ${n}`); pass++; }

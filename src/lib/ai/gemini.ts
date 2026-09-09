@@ -82,7 +82,11 @@ function textOf(data: unknown): { text: string; finish?: string; usage?: Generat
     usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; thoughtsTokenCount?: number };
   };
   const cand = d?.candidates?.[0];
-  const text = (cand?.content?.parts || []).map((p) => p.text || "").join("").trim();
+  /* Deliberately NOT trimmed. A streaming delta may legitimately be " you" or
+     "the " -- trimming each fragment silently welds words together, which
+     showed up as "prepareyou" and "Pull upthe" on screen. Callers that want a
+     whole response trim once, at the end. */
+  const text = (cand?.content?.parts || []).map((p) => p.text || "").join("");
   return {
     text,
     finish: cand?.finishReason,
@@ -102,7 +106,8 @@ export const geminiProvider: AIProvider = {
     const data = await res.json();
     if (!res.ok) throw classify(res.status, (data as { error?: { message?: string } })?.error?.message || "no detail");
 
-    const { text, finish, usage } = textOf(data);
+    const { text: rawText, finish, usage } = textOf(data);
+    const text = rawText.trim();
     if (!text) {
       if (finish === "SAFETY") throw new ProviderError("blocked", "The reply was blocked on safety grounds.");
       if (finish === "MAX_TOKENS") {
