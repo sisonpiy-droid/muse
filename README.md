@@ -35,6 +35,34 @@ pg_ctl -D <datadir> -o "-p 5433" -l <datadir>/server.log start
 It listens on loopback only with trust auth, which is fine for a local dev
 database and is **not** how the deployed one is configured.
 
+## Solo mode — no database
+
+`/solo` is the whole product with no database and no account. All twelve
+personas, conversations, memories and relationship continuity, held in the
+browser's localStorage.
+
+It still needs one server function, because the model API key must not be
+shipped to the client (§50). `/api/solo/chat` and `/api/solo/remember` are
+stateless: the client sends the persona, the recent turns and the memories it
+wants used, and gets a stream back. The system prompt is still assembled
+server-side (§33) so the endpoint cannot be pointed at arbitrary instructions.
+
+Deploying solo mode needs **one** environment variable:
+
+```
+GEMINI_API_KEY=...
+```
+
+No database, no migrations, no AUTH_SECRET.
+
+What it gives up is real: no account, so no second device, no recovery if the
+browser is cleared, and nothing you can read back later for research. What it
+keeps is the thing the product is for — personalities that remember you.
+
+Memory retrieval there is lexical rather than semantic: embeddings would need a
+round trip per turn, and `rankMemories` already falls back to lexical scoring
+whenever a provider has no embedding model.
+
 ## Deploying
 
 The app is stateless; everything lives in Postgres. Any host that runs Next.js
