@@ -1,3 +1,4 @@
+import { sseData } from "./sse";
 import {
   AIProvider,
   ChatMessage,
@@ -11,7 +12,9 @@ const BASE = "https://generativelanguage.googleapis.com/v1beta";
 
 const key = () => process.env.GEMINI_API_KEY ?? "";
 const model = () => process.env.GEMINI_MODEL || "gemini-3.6-flash";
-const embedModel = () => process.env.EMBEDDING_MODEL || "text-embedding-004";
+/* text-embedding-004 was retired and 404s -- the same failure mode as the old
+   chat model. Ask the API what it actually serves before changing this. */
+const embedModel = () => process.env.EMBEDDING_MODEL || "gemini-embedding-001";
 const timeoutMs = () => Number(process.env.UPSTREAM_TIMEOUT_MS || 60000);
 
 /* The key travels as a header, never in the query string. A key in a URL is
@@ -125,30 +128,12 @@ export const geminiProvider: AIProvider = {
       throw classify(res.status, detail);
     }
 
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
     let emitted = false;
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-
-      // SSE frames are separated by a blank line; a chunk can split one.
-      const frames = buffer.split("\n\n");
-      buffer = frames.pop() ?? "";
-
-      for (const frame of frames) {
-        const line = frame.split("\n").find((l) => l.startsWith("data:"));
-        if (!line) continue;
-        const payload = line.slice(5).trim();
-        if (!payload || payload === "[DONE]") continue;
-        try {
-          const { text } = textOf(JSON.parse(payload));
-          if (text) { emitted = true; yield text; }
-        } catch { /* a partial frame; the next read completes it */ }
-      }
+    for await (const payload of sseData(res.body)) {
+      try {
+        const { text } = textOf(JSON.parse(payload));
+        if (text) { emitted = true; yield text; }
+      } catch { /* a frame we cannot parse is not worth killing the stream for */ }
     }
 
     if (!emitted) throw new ProviderError("empty", "The model streamed nothing back.");

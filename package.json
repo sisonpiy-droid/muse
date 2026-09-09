@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "tsx tests/rank.test.mjs && tsx tests/prompt.test.mjs",
+    "test": "tsx tests/sse.test.mjs && tsx tests/rank.test.mjs && tsx tests/prompt.test.mjs",
     "typecheck": "tsc --noEmit",
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate dev",

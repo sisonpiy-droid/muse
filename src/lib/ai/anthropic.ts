@@ -1,4 +1,5 @@
 import { extractMemoriesVia } from "./gemini";
+import { sseData } from "./sse";
 import {
   AIProvider,
   ChatMessage,
@@ -94,35 +95,15 @@ export const anthropicProvider: AIProvider = {
       throw classify(res.status, detail);
     }
 
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
     let emitted = false;
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-
-      const frames = buffer.split("\n\n");
-      buffer = frames.pop() ?? "";
-
-      for (const frame of frames) {
-        const line = frame.split("\n").find((l) => l.startsWith("data:"));
-        if (!line) continue;
-        const payload = line.slice(5).trim();
-        if (!payload) continue;
-        try {
-          const evt = JSON.parse(payload) as {
-            type?: string;
-            delta?: { type?: string; text?: string };
-          };
-          if (evt.type === "content_block_delta" && evt.delta?.type === "text_delta" && evt.delta.text) {
-            emitted = true;
-            yield evt.delta.text;
-          }
-        } catch { /* partial frame */ }
-      }
+    for await (const payload of sseData(res.body)) {
+      try {
+        const evt = JSON.parse(payload) as { type?: string; delta?: { type?: string; text?: string } };
+        if (evt.type === "content_block_delta" && evt.delta?.type === "text_delta" && evt.delta.text) {
+          emitted = true;
+          yield evt.delta.text;
+        }
+      } catch { /* partial or non-JSON frame */ }
     }
 
     if (!emitted) throw new ProviderError("empty", "The model streamed nothing back.");
