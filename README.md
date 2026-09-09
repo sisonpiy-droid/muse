@@ -47,6 +47,17 @@ stateless: the client sends the persona, the recent turns and the memories it
 wants used, and gets a stream back. The system prompt is still assembled
 server-side (§33) so the endpoint cannot be pointed at arbitrary instructions.
 
+### One build, two deployments
+
+`/`, `/login` and `/create` check for `DATABASE_URL` on every request. Without
+one they redirect to `/solo` rather than throwing a 500 from a Prisma client
+that has nothing to connect to. So the same build serves either shape: set a
+database and it is the full product, leave it unset and it is solo mode.
+
+The check is per request, not at build. Whether a deployment has a database is
+configuration, and baking it in would mean adding one later silently kept
+redirecting until somebody thought to rebuild.
+
 Deploying solo mode needs **one** environment variable:
 
 ```

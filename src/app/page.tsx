@@ -12,6 +12,11 @@ import { redirect } from "next/navigation";
  * load — even on a deployment that never intended to use it.
  */
 
+/* Evaluated per request, not at build. Whether a deployment has a database is
+   configuration, and baking that decision into the build means adding one later
+   silently keeps redirecting until someone thinks to rebuild. */
+export const dynamic = "force-dynamic";
+
 export default async function RootPage() {
   if (!process.env.DATABASE_URL) redirect("/solo");
 
