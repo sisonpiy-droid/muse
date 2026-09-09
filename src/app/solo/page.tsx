@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { Avatar } from "@/components/Avatar";
+import { ImportPersona } from "@/components/ImportPersona";
 import { safeFilename, transcriptMarkdown } from "@/lib/export";
 import {
   addMemories, builtinMuses, download, findMuse, loadState, relevantMemories, saveState,
@@ -20,7 +21,7 @@ import {
  * personalities that remember you and get more personal as you talk.
  */
 
-type View = { kind: "home" } | { kind: "chat"; museId: string };
+type View = { kind: "home" } | { kind: "chat"; museId: string } | { kind: "import" };
 
 export default function SoloPage() {
   const [state, setState] = useState<SoloState | null>(null);
@@ -37,6 +38,19 @@ export default function SoloPage() {
   // never a wrong empty state that flips a tick later.
   if (!state) return <main className="shell" />;
 
+  if (view.kind === "import") {
+    return (
+      <ImportPersona
+        onCancel={() => setView({ kind: "home" })}
+        onCreate={(muse) => {
+          const id = `made-${Date.now()}`;
+          update({ ...state, muses: [{ ...muse, id, builtin: false }, ...state.muses] });
+          setView({ kind: "chat", museId: id });
+        }}
+      />
+    );
+  }
+
   if (view.kind === "chat") {
     const muse = findMuse(state, view.museId);
     if (!muse) { setView({ kind: "home" }); return null; }
@@ -50,14 +64,26 @@ export default function SoloPage() {
     );
   }
 
-  return <SoloHome state={state} update={update} onOpen={(id) => setView({ kind: "chat", museId: id })} />;
+  return (
+    <SoloHome
+      state={state}
+      update={update}
+      onOpen={(id) => setView({ kind: "chat", museId: id })}
+      onImport={() => setView({ kind: "import" })}
+    />
+  );
 }
 
 /* ------------------------------------------------------------------ home */
 
 function SoloHome({
-  state, update, onOpen,
-}: { state: SoloState; update: (s: SoloState) => void; onOpen: (id: string) => void }) {
+  state, update, onOpen, onImport,
+}: {
+  state: SoloState;
+  update: (s: SoloState) => void;
+  onOpen: (id: string) => void;
+  onImport: () => void;
+}) {
   const [name, setName] = useState(state.userName ?? "");
   const muses = [...state.muses, ...builtinMuses()];
 
@@ -77,8 +103,8 @@ function SoloHome({
         <div style={{ marginTop: "2rem" }}>
           <h1 className="display">Who do you want<br />to talk to?</h1>
           <p className="lede">
-            Twelve people are already here. They remember what you tell them, and everything stays
-            in this browser.
+            Build someone from a real chat export, or start with one of four already here. They
+            remember what you tell them, and everything stays in this browser.
           </p>
           <div className="row" style={{ maxWidth: "22rem" }}>
             <input
@@ -97,6 +123,17 @@ function SoloHome({
 
       {state.userName && (
         <>
+          <h2 className="section-title">Build someone real</h2>
+          <button className="muse-card" onClick={onImport} style={{ borderStyle: "dashed" }}>
+            <div style={{ minWidth: 0 }}>
+              <h3>From a chat export</h3>
+              <p>
+                Upload a WhatsApp export and MUSE reads how they actually wrote — length,
+                punctuation, the habits nobody can describe.
+              </p>
+            </div>
+          </button>
+
           {talked.length > 0 && (
             <>
               <h2 className="section-title">Continue talking</h2>
@@ -108,7 +145,7 @@ function SoloHome({
             </>
           )}
 
-          <h2 className="section-title">{talked.length ? "Discover" : "Twelve people"}</h2>
+          <h2 className="section-title">Or start with someone here</h2>
           <div className="card-grid">
             {rest.map((m) => (
               <MuseCard key={m.id} muse={m} state={state} onOpen={onOpen} />

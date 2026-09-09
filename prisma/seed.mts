@@ -60,6 +60,20 @@ for (const s of PERSONAS) {
   }
 }
 
+/* Remove seed Muses that are no longer in PERSONAS. Without this the starter
+   set only ever grows: dropping a persona from the list left its rows behind,
+   still public and still in Discover. Conversations cascade with them, which is
+   correct -- a Muse nobody ships any more should not linger half-alive. */
+const wanted = PERSONAS.map((p) => p.name);
+const stale = await prisma.muse.findMany({
+  where: { ownerUserId: null, name: { notIn: wanted } },
+  select: { id: true, name: true },
+});
+for (const m of stale) {
+  await prisma.muse.delete({ where: { id: m.id } });
+  console.log(`  removed  ${m.name}`);
+}
+
 const total = await prisma.muse.count({ where: { ownerUserId: null } });
 console.log(`\n${total} seed Muses across ${new Set(PERSONAS.map((s) => s.category)).size} categories`);
 await prisma.$disconnect();
