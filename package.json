@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "prisma generate && next build",
     "start": "next start",
     "lint": "eslint",
     "test": "tsx tests/sse.test.mjs && tsx tests/rank.test.mjs && tsx tests/prompt.test.mjs",
@@ -14,7 +14,8 @@
     "db:studio": "prisma studio",
     "db:generate": "prisma generate",
     "test:e2e": "tsx tests/relationship.e2e.mts",
-    "db:seed": "tsx prisma/seed.mts"
+    "db:seed": "tsx prisma/seed.mts",
+    "db:deploy": "prisma migrate deploy"
   },
   "dependencies": {
     "@auth/prisma-adapter": "^2.11.3",

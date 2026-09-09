@@ -59,7 +59,9 @@ export default async function HomePage() {
     <main className="shell">
       <header className="row" style={{ justifyContent: "space-between" }}>
         <p className="mark">Muse</p>
-        <span className="fine">{user.name ?? "You"}</span>
+        <a href="/create" className="btn" style={{ textDecoration: "none", padding: "0.45rem 1rem", minHeight: "auto" }}>
+          Create
+        </a>
       </header>
 
       {conversations.length > 0 && (
@@ -106,10 +108,12 @@ export default async function HomePage() {
           ))}
         </div>
       ) : (
-        /* §43: never a blank screen. */
+        /* §43: never a blank screen, and always a way out of one. */
         <div className="empty">
-          <p>You haven&apos;t made anyone yet.</p>
-          <p className="fine">Muse creation is the next thing being built.</p>
+          <p>Your world is empty.</p>
+          <a href="/create" className="btn" style={{ textDecoration: "none", display: "inline-block" }}>
+            Create your first Muse
+          </a>
         </div>
       )}
 
