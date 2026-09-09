@@ -1,0 +1,79 @@
+/* The provider boundary (PRD §32).
+ *
+ * Nothing above this file may know which model answered. That matters for
+ * more than tidiness: Presence, the prototype this grew out of, hard-coded a
+ * model ID that Google later retired, and the failure surfaced as a generic
+ * "unavailable" three layers up. Providers here normalise their own errors
+ * into ProviderError so the caller can say something true about each one.
+ */
+
+export type Role = "user" | "assistant";
+
+export interface ChatMessage {
+  role: Role;
+  content: string;
+}
+
+export interface GenerateOptions {
+  system?: string;
+  messages: ChatMessage[];
+  /** Omit to let the model finish. See the note in gemini.ts on thinking tokens. */
+  maxTokens?: number;
+  temperature?: number;
+  signal?: AbortSignal;
+}
+
+export interface GenerateResult {
+  text: string;
+  /** Server-side only. §8 forbids surfacing model names or token counts. */
+  usage?: { inputTokens?: number; outputTokens?: number; thinkingTokens?: number };
+  model: string;
+}
+
+export type ProviderErrorCode =
+  | "no_key"
+  | "bad_model"
+  | "rate_limited"
+  | "timeout"
+  | "blocked"
+  | "empty"
+  | "upstream";
+
+export class ProviderError extends Error {
+  constructor(
+    readonly code: ProviderErrorCode,
+    message: string,
+    readonly status?: number
+  ) {
+    super(message);
+    this.name = "ProviderError";
+  }
+}
+
+/** One extracted memory, before it is persisted. Mirrors the Memory model. */
+export interface ExtractedMemory {
+  content: string;
+  type: "PERMANENT" | "PREFERENCE" | "GOAL" | "RELATIONSHIP" | "EVENT";
+  importance: number; // 1-5
+  confidence: number; // 0-1
+}
+
+export interface AIProvider {
+  readonly name: "gemini" | "anthropic";
+
+  generateResponse(opts: GenerateOptions): Promise<GenerateResult>;
+
+  /** Yields text deltas. §45: streaming beats a spinner for long replies. */
+  streamResponse(opts: GenerateOptions): AsyncIterable<string>;
+
+  /** Returns null when the provider has no embedding model configured, so
+   *  memory retrieval can fall back to lexical scoring rather than break. */
+  generateEmbedding(text: string): Promise<number[] | null>;
+
+  summarize(text: string, instruction?: string): Promise<string>;
+
+  extractMemories(
+    transcript: ChatMessage[],
+    existingMemories: string[]
+  ): Promise<ExtractedMemory[]>;
+}
