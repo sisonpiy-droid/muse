@@ -161,7 +161,7 @@ export const geminiProvider: AIProvider = {
         "Summarise the conversation below in under 120 words. Keep facts about the user, " +
           "decisions, and anything they seemed to care about. Write plainly, no preamble.",
       messages: [{ role: "user", content: text }],
-      maxTokens: 400,
+      // Uncapped for the same reason as extraction: the cap covers reasoning.
       temperature: 0.3,
     });
     return out;
@@ -192,20 +192,32 @@ Return ONLY a JSON array. No prose, no code fence. Each item:
 {"content": string, "type": "PERMANENT"|"PREFERENCE"|"GOAL"|"RELATIONSHIP"|"EVENT", "importance": 1-5, "confidence": 0-1}
 
 Record something only if it is durable, useful later, and about the user. A fact
-stated once in passing still counts; small talk does not. Write each memory as a
+stated once in passing still counts; small talk does not. Focus on the turns
+marked (latest), but use the earlier ones to resolve what they refer to -- write
+"their interview on Friday", not "an event on Friday", when the earlier turns
+say what it is. Write each memory as a
 plain third-person sentence about the user, e.g. "User's dog is called Bruno."
 
 Do not invent anything. Do not record the Muse's own statements as facts about
 the user. If nothing qualifies, return [].`;
 
+  /* No maxTokens. Gemini 3.x spends 300-1000 tokens reasoning before it writes
+     anything, and the cap covers thinking and output together -- a 900 budget
+     left too little for the JSON, which then failed to parse and looked exactly
+     like "there was nothing worth remembering". Silent, and wrong. */
   const { text } = await provider.generateResponse({
     system,
     messages: [{ role: "user", content: convo }],
-    maxTokens: 900,
     temperature: 0.2,
   });
 
-  return parseMemories(text);
+  const parsed = parseMemories(text);
+  if (!parsed.length && text.trim() && text.trim() !== "[]") {
+    /* Distinguishes "nothing qualified" from "the model wrote something we
+       could not read". Without this the two are indistinguishable in logs. */
+    console.error("memory extraction produced unparseable output:", text.slice(0, 300));
+  }
+  return parsed;
 }
 
 /** Models wrap JSON in fences or prose often enough that this must be tolerant. */

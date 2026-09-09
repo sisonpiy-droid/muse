@@ -4,7 +4,7 @@
  * you pass in. §62 wants unit tests on ranking, and ranking is where a
  * companion either feels like it knows you or feels like it grepped a log.
  *
- * The rule that matters most is the threshold. §13 says "do not blindly inject
+ * The rule that matters most is the gate. §13 says "do not blindly inject
  * every memory" -- a Muse that mentions your dog when you asked about work is
  * worse than one that says nothing, because it reads as a machine reciting.
  */
@@ -76,11 +76,48 @@ export function recencyScore(createdAt: Date, now: Date, halfLifeDays = 45): num
    does. A name or a preference stays true; "had a rough week" does not. */
 const DECAY_EXEMPT = new Set(["PERMANENT", "PREFERENCE", "GOAL"]);
 
+/** Which memories stand out from the rest of the set.
+ *
+ *  An absolute cosine threshold does not work with modern embedding models.
+ *  Measured on gemini-embedding-001: every pair of short sentences scores
+ *  between 0.50 and 0.65, related or not -- "what should I cook tonight"
+ *  against "User has a job interview on Friday" is 0.55. Any fixed cut either
+ *  admits everything or nothing.
+ *
+ *  What carries the signal is the *gap*: the right memory sits well above its
+ *  neighbours. So relevance is judged in standard deviations above the mean of
+ *  this particular query's scores. When nothing stands out -- a vague "how's
+ *  things" scores flat against everything -- the spread collapses and nothing
+ *  is injected, which is the correct answer.
+ */
+export function standoutIndices(similarities: number[], minZ: number, flatSpread: number): number[] {
+  const n = similarities.length;
+  if (n === 0) return [];
+  if (n === 1) return [0];
+
+  const mean = similarities.reduce((a, b) => a + b, 0) / n;
+  const variance = similarities.reduce((a, s) => a + (s - mean) ** 2, 0) / n;
+  const sd = Math.sqrt(variance);
+
+  // Everything scored alike: nothing is distinctively relevant.
+  if (sd < flatSpread) return [];
+
+  const out: number[] = [];
+  for (let i = 0; i < n; i++) {
+    if ((similarities[i] - mean) / sd >= minZ) out.push(i);
+  }
+  return out;
+}
+
 export interface RankOptions {
   queryEmbedding?: number[] | null;
   now?: Date;
-  /** Below this, a memory is not worth injecting. */
+  /** Lexical mode only: an absolute floor, since lexical scores reach a true 0. */
   threshold?: number;
+  /** Embedding mode: how many standard deviations above the mean counts as relevant. */
+  minZ?: number;
+  /** Embedding mode: below this spread, treat the set as undifferentiated. */
+  flatSpread?: number;
   limit?: number;
   weights?: { similarity: number; importance: number; recency: number; confidence: number };
 }
@@ -93,41 +130,47 @@ export function rankMemories<T extends RankableMemory>(
   opts: RankOptions = {}
 ): RankedMemory<T>[] {
   const now = opts.now ?? new Date();
-  const threshold = opts.threshold ?? 0.25;
   const limit = opts.limit ?? 8;
   const w = opts.weights ?? DEFAULT_WEIGHTS;
   const qEmb = opts.queryEmbedding;
 
-  const scored = memories.map((m) => {
-    // Embeddings when both sides have them, lexical overlap otherwise. Mixing
-    // the two in one ranking would compare incomparable scales, so the choice
-    // is per-memory and the fallback is only used where it must be.
-    const similarity =
-      qEmb && m.embedding && m.embedding.length === qEmb.length
-        ? Math.max(0, cosineSimilarity(qEmb, m.embedding))
-        : lexicalSimilarity(query, m.content);
+  if (!memories.length) return [];
 
+  /* One mode for the whole set. Mixing cosine and lexical scores in a single
+     ranking compares incomparable scales -- and the z-score gate below is
+     meaningless across two distributions. */
+  const useEmbeddings =
+    Boolean(qEmb?.length) && memories.every((m) => m.embedding?.length === qEmb!.length);
+
+  const similarities = memories.map((m) =>
+    useEmbeddings
+      ? Math.max(0, cosineSimilarity(qEmb!, m.embedding!))
+      : lexicalSimilarity(query, m.content)
+  );
+
+  const keep = useEmbeddings
+    ? new Set(standoutIndices(similarities, opts.minZ ?? 0.6, opts.flatSpread ?? 0.012))
+    : new Set(similarities.map((s, i) => (s >= (opts.threshold ?? 0.25) ? i : -1)).filter((i) => i >= 0));
+
+  const scored: RankedMemory<T>[] = [];
+  for (let i = 0; i < memories.length; i++) {
+    if (!keep.has(i)) continue;
+    const m = memories[i];
+    const similarity = similarities[i];
     const importance = Math.min(1, Math.max(0, (m.importance - 1) / 4));
     const recency = DECAY_EXEMPT.has(m.type) ? 1 : recencyScore(m.createdAt, now);
     const confidence = Math.min(1, Math.max(0, m.confidence));
 
-    const score =
-      w.similarity * similarity +
-      w.importance * importance +
-      w.recency * recency +
-      w.confidence * confidence;
+    scored.push({
+      memory: m,
+      score:
+        w.similarity * similarity +
+        w.importance * importance +
+        w.recency * recency +
+        w.confidence * confidence,
+      parts: { similarity, importance, recency, confidence },
+    });
+  }
 
-    return { memory: m, score, parts: { similarity, importance, recency, confidence } };
-  });
-
-  /* Threshold on similarity, not the blended score. Otherwise a very old,
-     very important memory clears the bar on importance alone and gets injected
-     into a conversation it has nothing to do with -- which is precisely the
-     "chatbot retrieved some text" failure §67 warns about. */
-  const minSimilarity = threshold;
-
-  return scored
-    .filter((s) => s.parts.similarity >= minSimilarity)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, limit);
+  return scored.sort((a, b) => b.score - a.score).slice(0, limit);
 }

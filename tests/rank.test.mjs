@@ -1,6 +1,6 @@
 /* Unit tests for memory ranking (§62). No database, no network. */
 import assert from "node:assert";
-import { rankMemories, cosineSimilarity, lexicalSimilarity, recencyScore } from "../src/lib/memory/rank.ts";
+import { rankMemories, cosineSimilarity, lexicalSimilarity, recencyScore, standoutIndices } from "../src/lib/memory/rank.ts";
 
 const results = [];
 const check = (name, fn) => results.push([name, fn]);
@@ -42,7 +42,7 @@ check("the dog scenario from §59", () => {
   assert.ok(!out.some((r) => r.memory.id === "food"), "unrelated memories must not be injected");
 });
 
-check("irrelevant memories are cut by the threshold, not just ranked lower", () => {
+check("lexical mode: irrelevant memories are cut, not just ranked lower", () => {
   const memories = [
     // High importance, but nothing to do with the question. The blended score
     // would clear a naive threshold; similarity must gate it instead.
@@ -67,9 +67,39 @@ check("identity memories do not decay, events do", () => {
 check("embeddings are used when both sides have them", () => {
   const out = rankMemories("anything", [
     mem({ id: "a", content: "no shared words whatsoever", embedding: [1, 0, 0] }),
-  ], { queryEmbedding: [1, 0, 0], threshold: 0.5 });
+  ], { queryEmbedding: [1, 0, 0] });
   assert.equal(out.length, 1, "semantic match should win despite zero lexical overlap");
   assert.ok(out[0].parts.similarity > 0.99);
+});
+
+/* These fixtures are real cosine values measured against gemini-embedding-001.
+   They are the reason the gate is relative rather than absolute: every score
+   sits between 0.50 and 0.65 whether the memory is relevant or not. */
+check("a standout memory is kept", () => {
+  //           interview  job    name   dog    coriander     query: "tell me about the interview"
+  const sims = [0.654, 0.608, 0.550, 0.543, 0.525];
+  const keep = standoutIndices(sims, 0.6, 0.012);
+  assert.ok(keep.includes(0), "the interview memory must survive");
+  assert.ok(!keep.includes(4), "coriander must not");
+});
+
+check("a vague opener injects nothing, because nothing stands out", () => {
+  //           query: "how's things" -- everything scores alike
+  const sims = [0.575, 0.573, 0.562, 0.559, 0.535];
+  const keep = standoutIndices(sims, 1.2, 0.012);
+  assert.ok(keep.length <= 1, `expected at most one, kept ${keep.length}`);
+});
+
+check("a flat set is treated as undifferentiated", () => {
+  const keep = standoutIndices([0.55, 0.551, 0.549, 0.55], 0.6, 0.012);
+  assert.deepEqual(keep, [], "no spread means nothing is distinctively relevant");
+});
+
+check("an absolute threshold would have admitted everything", () => {
+  // The bug this replaced: 0.25 absolute passes all five, relevant or not.
+  const sims = [0.585, 0.550, 0.528, 0.520, 0.512];
+  assert.equal(sims.filter((s) => s >= 0.25).length, 5);
+  assert.ok(standoutIndices(sims, 0.6, 0.012).length < 5);
 });
 
 check("limit is respected and order is by score", () => {
