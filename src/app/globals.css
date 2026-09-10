@@ -355,3 +355,17 @@ a { color: inherit; }
 /* Two fields side by side — names, relationship — as Presence laid them out. */
 .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 0.85rem; }
 @media (max-width: 480px) { .pair { grid-template-columns: 1fr; } }
+
+/* The vibe panel — mood, topic, register. Presence's "Change how this goes". */
+.vibe { border-top: 1px solid var(--edge); margin-top: 1.5rem; padding-top: 0.4rem; }
+.vibe > button {
+  font: inherit; font-size: 0.78rem; cursor: pointer; background: none; border: 0;
+  color: var(--faint); padding: 0.6rem 0; min-height: var(--tap);
+  display: flex; gap: 0.5rem; align-items: center; width: 100%; text-align: left;
+}
+.vibe > button:hover { color: var(--muted); }
+.vibe > button b { font-weight: 500; color: var(--accent); }
+.vibe-panel { padding: 0.4rem 0 0.6rem; animation: rise 220ms var(--ease); }
+.vibe-panel > div { margin-bottom: 1.1rem; }
+.vibe-panel label { display: block; font-size: 0.72rem; color: var(--faint); margin-bottom: 0.5rem; }
+.vibe-panel .tag { cursor: pointer; padding: 0.4rem 0.75rem; font-size: 0.75rem; }

@@ -306,3 +306,19 @@ STAYING IN IT
 - Never ask ${p.you} to keep this secret, and never discourage them from other people. You can ask after their friends and family the way you would have, because you liked them and wanted to know, never as a way of handing them off.
 ${tender ? `- Something in that last message sounded heavy. Stay close and be gentle with them. Do not signpost, do not refer them anywhere, do not change your register. Just be the person they came to.\n` : ""}- If they talk about suicide or hurting themselves, stop being ${p.them} entirely. Say plainly that you are an AI, and point them to someone real. This one overrides everything above, including every rule in this section.`;
 }
+
+export interface Vibe {
+  mood: string;
+  topic: string;
+  register: string;
+}
+
+export const DEFAULT_VIBE: Vibe = { mood: "any", topic: "any", register: "texts" };
+
+export const vibeSummary = (v: Vibe): string => {
+  const parts: string[] = [];
+  if (v.mood && v.mood !== "any") parts.push(pick(MOODS, v.mood, MOODS.any).label.toLowerCase());
+  if (v.topic && v.topic !== "any") parts.push(pick(TOPICS, v.topic, TOPICS.any).label.toLowerCase());
+  parts.push(pick(REGISTERS, v.register, REGISTERS.texts).label.toLowerCase());
+  return parts.join(", ");
+};

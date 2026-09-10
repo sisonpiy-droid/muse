@@ -1,7 +1,7 @@
 "use client";
 
 import { PERSONAS, type Persona } from "@/lib/personas";
-import type { PersonaDraft } from "@/lib/presence/persona";
+import type { PersonaDraft, Vibe } from "@/lib/presence/persona";
 import { rankMemories, type RankableMemory } from "@/lib/memory/rank";
 
 /* Solo mode's storage layer — localStorage, no database, no account.
@@ -52,6 +52,10 @@ export interface SoloState {
   muses: SoloMuse[];
   conversations: Record<string, SoloMessage[]>;
   memories: SoloMemory[];
+  /* How each person is being spoken to right now, keyed by Muse. Kept per Muse
+     rather than globally: someone can be prickly with you while someone else is
+     not, and a single shared setting would be nonsense. */
+  vibes?: Record<string, Vibe>;
 }
 
 const slug = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
@@ -61,7 +65,7 @@ export function builtinMuses(): SoloMuse[] {
 }
 
 function empty(): SoloState {
-  return { userName: null, muses: [], conversations: {}, memories: [] };
+  return { userName: null, muses: [], conversations: {}, memories: [], vibes: {} };
 }
 
 export function loadState(): SoloState {
@@ -74,6 +78,7 @@ export function loadState(): SoloState {
       muses: Array.isArray(parsed.muses) ? parsed.muses : [],
       conversations: parsed.conversations ?? {},
       memories: Array.isArray(parsed.memories) ? parsed.memories : [],
+      vibes: parsed.vibes ?? {},
     };
   } catch {
     return empty();

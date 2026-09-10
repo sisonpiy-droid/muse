@@ -4,7 +4,9 @@ import { useEffect, useRef, useState } from "react";
 
 import { Avatar } from "@/components/Avatar";
 import { ImportPersona } from "@/components/ImportPersona";
-import { REGISTERS, splitBurst } from "@/lib/presence/persona";
+import {
+  DEFAULT_VIBE, MOODS, REGISTERS, TOPICS, splitBurst, vibeSummary, type Vibe,
+} from "@/lib/presence/persona";
 import { safeFilename, transcriptMarkdown } from "@/lib/export";
 import {
   addMemories, builtinMuses, download, findMuse, loadState, relevantMemories, saveState,
@@ -245,8 +247,13 @@ function SoloChat({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastSent, setLastSent] = useState<string | null>(null);
+  const [vibeOpen, setVibeOpen] = useState(false);
   const foot = useRef<HTMLDivElement>(null);
   const box = useRef<HTMLTextAreaElement>(null);
+
+  const vibe: Vibe = state.vibes?.[muse.id] ?? DEFAULT_VIBE;
+  const setVibe = (next: Vibe) =>
+    update({ ...state, vibes: { ...(state.vibes ?? {}), [muse.id]: next } });
 
   useEffect(() => {
     foot.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -303,7 +310,9 @@ function SoloChat({
           /* Present only for someone built from real material. When it is, the
              server ignores the simple shape above and uses Presence's prompt. */
           persona: muse.persona ?? null,
-          register: muse.persona ? "texts" : undefined,
+          mood: vibe.mood,
+          topic: vibe.topic,
+          register: vibe.register,
           memories,
           userName: state.userName,
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
@@ -342,9 +351,11 @@ function SoloChat({
            separated by a line of ---, because that is how people actually text.
            Splitting them here is what makes that instruction mean anything;
            without it the separator just shows up in the message. */
-        const burst = muse.persona
-          ? splitBurst(reply, REGISTERS.texts.burst)
-          : [reply];
+        /* Only the registers that ask for several messages get split. A letter
+           or a voice note is one piece by definition, and splitting it would
+           contradict the instruction the model was just given. */
+        const reg = REGISTERS[vibe.register as keyof typeof REGISTERS] ?? REGISTERS.texts;
+        const burst = muse.persona ? splitBurst(reply, reg.burst) : [reply];
         const withMuse: SoloMessage[] = [
           ...withUser,
           ...burst.map((content, i) => ({
@@ -457,6 +468,64 @@ function SoloChat({
 
         <div ref={foot} />
       </div>
+
+      {muse.persona && (
+        <div className="vibe">
+          <button onClick={() => setVibeOpen(!vibeOpen)} aria-expanded={vibeOpen}>
+            <span>{vibeOpen ? "Close" : "Change how this goes"}</span>
+            <b>{vibeSummary(vibe)}</b>
+          </button>
+
+          {vibeOpen && (
+            <div className="vibe-panel">
+              <div>
+                <label>What mood is {muse.name} in?</label>
+                <div className="tags">
+                  {Object.entries(MOODS).map(([k, v]) => (
+                    <button key={k} className="tag" aria-pressed={vibe.mood === k}
+                      onClick={() => setVibe({ ...vibe, mood: k })}
+                      style={vibe.mood === k ? { borderColor: "var(--accent)", color: "var(--accent)" } : undefined}>
+                      {v.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label>What do you want to talk about?</label>
+                <div className="tags">
+                  {Object.entries(TOPICS).map(([k, v]) => (
+                    <button key={k} className="tag" aria-pressed={vibe.topic === k}
+                      onClick={() => setVibe({ ...vibe, topic: k })}
+                      style={vibe.topic === k ? { borderColor: "var(--accent)", color: "var(--accent)" } : undefined}>
+                      {v.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label>How are you talking?</label>
+                <div className="tags">
+                  {Object.entries(REGISTERS).map(([k, v]) => (
+                    <button key={k} className="tag" aria-pressed={vibe.register === k}
+                      onClick={() => setVibe({ ...vibe, register: k })}
+                      style={vibe.register === k ? { borderColor: "var(--accent)", color: "var(--accent)" } : undefined}>
+                      {v.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <p className="fine">
+                Takes effect on the next message. Mood suits a person having a day; if you find
+                yourself reaching for it constantly, leave it on &ldquo;however they are&rdquo; and let it land
+                where it lands.
+              </p>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="composer">
         <label className="sr-only" htmlFor="solo-composer">Write to {muse.name}</label>

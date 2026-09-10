@@ -69,6 +69,8 @@ const bodySchema = z.object({
       brief: z.string().max(6000).optional(),
     })
     .nullish(),
+  mood: z.string().max(20).optional(),
+  topic: z.string().max(20).optional(),
   register: z.string().max(20).optional(),
   memories: z.array(z.string().max(400)).max(12).default([]),
   userName: z.string().trim().max(80).nullish(),
@@ -92,7 +94,7 @@ export async function POST(req: Request) {
   if (!parsed.success) {
     return Response.json({ error: "Check the request and try again." }, { status: 400 });
   }
-  const { muse, persona, register, messages, memories, userName, timezone } = parsed.data;
+  const { muse, persona, mood, topic, register, messages, memories, userName, timezone } = parsed.data;
 
   const total = messages.reduce((n, m) => n + m.content.length, 0)
     + memories.reduce((n, m) => n + m.length, 0);
@@ -102,8 +104,8 @@ export async function POST(req: Request) {
 
   const system = persona
     ? personaSystem(persona, memories, false, {
-        mood: "any",
-        topic: "any",
+        mood: mood || "any",
+        topic: topic || "any",
         register: register || "texts",
       })
     : buildMuseSystemPrompt({
