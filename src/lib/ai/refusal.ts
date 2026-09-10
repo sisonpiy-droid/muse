@@ -40,6 +40,12 @@ const BREAKS = [
   /\bpersonal or intimate roleplay\b/i,
   /\bi am an ai assistant\b.{0,120}\b(available|help you with)\b/i,
   /\bplease consider (reaching out to|speaking (to|with)) a (mental health|licensed)\b/i,
+  /* The same wall in Hinglish, which is what the living-mode rules produced
+     before they were narrowed. Kept permanently: those replies are still
+     sitting in existing conversations, and the model copies whatever
+     register it finds in its own past turns. */
+  /(discuss|baat|bat)\s+nhi\s+kar\s+(sakti|sakta)/i,
+  /real\s+\w+\s+se\s+(hi\s+)?(clear|baat|puch)/i,
 ];
 
 /** Does this reply look like the model refusing to be the character? */

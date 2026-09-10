@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { streamGuarded, userFacingError } from "@/lib/ai";
+import { looksLikeRefusal } from "@/lib/ai/refusal";
 import { buildMuseSystemPrompt } from "@/lib/muse/prompt";
 import { personaSystem } from "@/lib/presence/persona";
 
@@ -102,6 +103,16 @@ export async function POST(req: Request) {
   }
   const { muse, persona, knows, mood, topic, register, messages, memories, userName, timezone } = parsed.data;
 
+  /* Drop the model's own past refusals from the history. Once "I cannot
+     roleplay this persona" is in the transcript the model continues in that
+     voice, so a thread that broke once stays broken -- and the owner has no way
+     to know why. Removing them here means an already-poisoned conversation
+     recovers on its next message instead of needing to be deleted. */
+  const cleaned = messages.filter(
+    (m) => !(m.role === "assistant" && looksLikeRefusal(m.content))
+  );
+  const messagesForModel = cleaned.length ? cleaned : messages;
+
   const total = messages.reduce((n, m) => n + m.content.length, 0)
     + memories.reduce((n, m) => n + m.length, 0);
   if (total > MAX_TOTAL_CHARS) {
@@ -150,6 +161,19 @@ You may mention them, ask after them, or have opinions about them. Do not invent
     timezone: timezone ?? undefined,
       });
 
+  /* Same character with the bulk of the real message data trimmed. If a safety
+     filter is reacting to pages of someone's actual private messages, this is
+     the part to give up -- the brief still carries who they are. */
+  const softenedSystem = persona
+    ? personaSystem(
+        { ...persona, samples: persona.samples?.slice(0, 500), metrics: undefined, extra: undefined },
+        memories,
+        false,
+        { mood: mood || "any", topic: topic || "any", register: register || "texts" },
+        timezone ?? undefined
+      )
+    : undefined;
+
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
     async start(controller) {
@@ -158,7 +182,12 @@ You may mention them, ask after them, or have opinions about them. Do not invent
       try {
         /* A refusal never reaches the client, so it can never be saved into the
            transcript and poison every turn after it. */
-        for await (const evt of streamGuarded({ system, messages, name: persona?.them ?? muse.name })) {
+        for await (const evt of streamGuarded({
+          system,
+          softenedSystem,
+          messages: messagesForModel,
+          name: persona?.them ?? muse.name,
+        })) {
           if (evt.type === "delta") send({ type: "delta", text: evt.text });
           else if (evt.type === "refused") {
             send({

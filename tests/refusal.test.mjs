@@ -50,6 +50,25 @@ check("empty and whitespace are not refusals", () => {
   assert.ok(!looksLikeRefusal("   \n  "));
 });
 
+check("catches the Hinglish wall the living rules used to produce", () => {
+  // Exactly what was reported. These lines are still sitting in real
+  // conversations, and the model copies the register it finds in its own turns.
+  assert.ok(looksLikeRefusal("Nhi pata\n\nPr Piyush maine pehle hi bola, yeh sab real Aditi se hi clear karo\n\nMai yeh sab discuss nhi kar sakti"));
+  assert.ok(looksLikeRefusal("Mai yeh sab discuss nhi kar sakti."));
+  assert.ok(looksLikeRefusal("ye sab real Aditi se hi clear karo"));
+});
+
+check("does not flag ordinary Hinglish", () => {
+  for (const t of [
+    "haan bol",
+    "khana khaya ki nhi",
+    "mujhe nhi pta yaar",
+    "tu kr le jo krna hai",
+    "nhi re, kyu lag rha hai aisa?",
+    "mai kya khaungi budhu, tu bata",
+  ]) assert.ok(!looksLikeRefusal(t), `false positive: ${t}`);
+});
+
 let pass = 0, fail = 0;
 for (const [n, f] of results) {
   try { await f(); console.log(`  PASS  ${n}`); pass++; }

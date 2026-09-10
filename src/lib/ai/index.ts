@@ -82,11 +82,25 @@ export async function* streamGuarded(opts: {
   messages: ChatMessage[];
   /** Used in the retry reminder. */
   name: string;
+  /** A shorter prompt to fall back to before giving up entirely. Carries the
+   *  same character with less verbatim material, which is what tends to trip a
+   *  safety filter on a persona built from someone's real messages. */
+  softenedSystem?: string;
 }): AsyncIterable<GuardedEvent> {
   const provider = getProvider();
 
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const system = attempt === 0 ? opts.system : opts.system + retryNudge(opts.name);
+  /* Three attempts: as asked, then with a reminder, then softened. A slightly
+     plainer reply is better than no reply, and a persona that goes silent on
+     its owner is the worst outcome available. */
+  const attempts = [
+    opts.system,
+    opts.system + retryNudge(opts.name),
+    (opts.softenedSystem ?? opts.system) + retryNudge(opts.name),
+  ];
+
+  for (let attempt = 0; attempt < attempts.length; attempt++) {
+    const system = attempts[attempt];
+    if (attempt === 2 && !opts.softenedSystem) break;
 
     let head = "";
     let flushed = false;
@@ -130,7 +144,15 @@ export async function* streamGuarded(opts: {
       yield { type: "done" };
       return;
     }
-    // Otherwise it refused. Loop and try once more, then give up.
+
+    /* Logged because this is otherwise invisible. When a persona goes quiet the
+       only evidence is a message to the user, and without the model's actual
+       words there is nothing to diagnose from -- which is exactly the position
+       this was reported from. Truncated, and it is the model's output rather
+       than anyone's conversation. */
+    console.error(
+      `[refusal] ${opts.name} attempt ${attempt + 1}/${attempts.length}: ${head.slice(0, 200).replace(/\s+/g, " ")}`
+    );
   }
 
   yield { type: "refused" };
