@@ -34,6 +34,23 @@ export interface SoloMessage {
   from: "user" | "muse";
   content: string;
   at: string;
+  /* Which Muse said it. Absent in a one-to-one thread, where there is only one
+     possible speaker; required in a circle, where there are several. Optional
+     so conversations saved before circles existed still load. */
+  speakerId?: string;
+  /** Set when the user has changed the text after the fact. */
+  edited?: boolean;
+}
+
+/* A circle is both halves of what was asked for: a set of people who know one
+   another, and a thread they are all in. Keeping it one concept rather than two
+   means membership cannot disagree with itself -- being in the group is what it
+   means to know the others. */
+export interface SoloCircle {
+  id: string;
+  name: string;
+  memberIds: string[];
+  createdAt: string;
 }
 
 /* The Presence fields are required on a starter and absent on a built
@@ -62,6 +79,8 @@ export interface SoloState {
      rather than globally: someone can be prickly with you while someone else is
      not, and a single shared setting would be nonsense. */
   vibes?: Record<string, Vibe>;
+  /** Circles share the `conversations` map; ids never collide. */
+  circles?: SoloCircle[];
 }
 
 const slug = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
@@ -88,7 +107,7 @@ export function builtinMuses(): SoloMuse[] {
 }
 
 function empty(): SoloState {
-  return { userName: null, muses: [], conversations: {}, memories: [], vibes: {} };
+  return { userName: null, muses: [], conversations: {}, memories: [], vibes: {}, circles: [] };
 }
 
 export function loadState(): SoloState {
@@ -102,6 +121,7 @@ export function loadState(): SoloState {
       conversations: parsed.conversations ?? {},
       memories: Array.isArray(parsed.memories) ? parsed.memories : [],
       vibes: parsed.vibes ?? {},
+      circles: Array.isArray(parsed.circles) ? parsed.circles : [],
     };
   } catch {
     return empty();
@@ -187,4 +207,69 @@ export function download(filename: string, text: string, mime: string): void {
   a.remove();
   // Revoking synchronously cancels the download in some browsers.
   setTimeout(() => URL.revokeObjectURL(href), 0);
+}
+
+
+/* ------------------------------------------------------------- circles */
+
+export function circleOf(state: SoloState, id: string): SoloCircle | undefined {
+  return state.circles?.find((c) => c.id === id);
+}
+
+/** The Muses in a circle, in membership order, skipping any since deleted. */
+export function membersOf(state: SoloState, circle: SoloCircle): SoloMuse[] {
+  return circle.memberIds
+    .map((id) => findMuse(state, id))
+    .filter((m): m is SoloMuse => Boolean(m));
+}
+
+/** Everyone this Muse knows: the other members of every circle they are in.
+ *  Deduplicated, since two people can share more than one circle. */
+export function knownTo(state: SoloState, museId: string): SoloMuse[] {
+  const ids = new Set<string>();
+  for (const c of state.circles ?? []) {
+    if (!c.memberIds.includes(museId)) continue;
+    for (const id of c.memberIds) if (id !== museId) ids.add(id);
+  }
+  return [...ids].map((id) => findMuse(state, id)).filter((m): m is SoloMuse => Boolean(m));
+}
+
+/* ------------------------------------------------- editing and deleting */
+
+export function editMessage(
+  state: SoloState,
+  threadId: string,
+  messageId: string,
+  content: string
+): SoloState {
+  const log = state.conversations[threadId] ?? [];
+  return {
+    ...state,
+    conversations: {
+      ...state.conversations,
+      [threadId]: log.map((m) =>
+        m.id === messageId ? { ...m, content, edited: true } : m
+      ),
+    },
+  };
+}
+
+export function deleteMessage(state: SoloState, threadId: string, messageId: string): SoloState {
+  const log = state.conversations[threadId] ?? [];
+  return {
+    ...state,
+    conversations: { ...state.conversations, [threadId]: log.filter((m) => m.id !== messageId) },
+  };
+}
+
+/** Everything from this message onward. Useful for taking a conversation back
+ *  to a fork rather than deleting one line out of the middle of it. */
+export function deleteFrom(state: SoloState, threadId: string, messageId: string): SoloState {
+  const log = state.conversations[threadId] ?? [];
+  const at = log.findIndex((m) => m.id === messageId);
+  if (at < 0) return state;
+  return {
+    ...state,
+    conversations: { ...state.conversations, [threadId]: log.slice(0, at) },
+  };
 }

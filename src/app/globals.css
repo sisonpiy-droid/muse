@@ -369,3 +369,47 @@ a { color: inherit; }
 .vibe-panel > div { margin-bottom: 1.1rem; }
 .vibe-panel label { display: block; font-size: 0.72rem; color: var(--faint); margin-bottom: 0.5rem; }
 .vibe-panel .tag { cursor: pointer; padding: 0.4rem 0.75rem; font-size: 0.75rem; }
+
+/* Message actions — edit, delete, delete-from-here. Kept out of the way until
+   the message is hovered, and always visible on touch where there is no hover. */
+.turn { position: relative; }
+.msg-actions {
+  display: flex;
+  gap: 0.6rem;
+  margin-top: 0.35rem;
+  opacity: 0;
+  transition: opacity 140ms var(--ease);
+}
+.turn:hover .msg-actions,
+.turn:focus-within .msg-actions { opacity: 1; }
+@media (hover: none) { .msg-actions { opacity: 1; } }
+
+.msg-actions button {
+  font: inherit;
+  font-size: 0.68rem;
+  background: none;
+  border: 0;
+  padding: 0.2rem 0;
+  color: var(--faint);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-color: var(--edge-lit);
+}
+.msg-actions button:hover { color: var(--ink); }
+
+.msg-edit { margin-top: 0.4rem; }
+.msg-edit textarea { font-size: 0.95rem; }
+
+/* A circle's speaker label, and the overlapping avatars that stand for a group. */
+.turn-muse .who {
+  display: block;
+  font-size: 0.68rem;
+  letter-spacing: 0.05em;
+  color: var(--accent);
+  font-family: var(--sans);
+  margin-bottom: 0.15rem;
+}
+.stack-avatars { display: flex; flex: 0 0 auto; }
+.stack-avatars .avatar { margin-left: -14px; border: 2px solid var(--bg); }
+.stack-avatars .avatar:first-child { margin-left: 0; }

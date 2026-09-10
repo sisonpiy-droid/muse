@@ -3,14 +3,17 @@
 import { useEffect, useRef, useState } from "react";
 
 import { Avatar } from "@/components/Avatar";
+import { CircleChat } from "@/components/CircleChat";
 import { ImportPersona } from "@/components/ImportPersona";
+import { MessageActions } from "@/components/MessageActions";
 import {
   DEFAULT_VIBE, MOODS, REGISTERS, TOPICS, splitBurst, vibeSummary, type Vibe,
 } from "@/lib/presence/persona";
 import { safeFilename, transcriptMarkdown } from "@/lib/export";
 import {
-  addMemories, builtinMuses, download, findMuse, loadState, relevantMemories, saveState,
-  type SoloMessage, type SoloMuse, type SoloState,
+  addMemories, builtinMuses, circleOf, deleteFrom, deleteMessage, download, editMessage,
+  findMuse, knownTo, loadState, membersOf, relevantMemories, saveState,
+  type SoloCircle, type SoloMessage, type SoloMuse, type SoloState,
 } from "@/lib/solo/store";
 
 /* Solo MUSE — the whole product with no database and no account.
@@ -24,7 +27,12 @@ import {
  * personalities that remember you and get more personal as you talk.
  */
 
-type View = { kind: "home" } | { kind: "chat"; museId: string } | { kind: "import" };
+type View =
+  | { kind: "home" }
+  | { kind: "chat"; museId: string }
+  | { kind: "import" }
+  | { kind: "circle"; circleId: string }
+  | { kind: "new-circle" };
 
 export default function SoloPage() {
   const [state, setState] = useState<SoloState | null>(null);
@@ -72,6 +80,34 @@ export default function SoloPage() {
     );
   }
 
+  if (view.kind === "circle") {
+    const circle = circleOf(state, view.circleId);
+    if (!circle) { setView({ kind: "home" }); return null; }
+    return (
+      <CircleChat circle={circle} state={state} update={update} onBack={() => setView({ kind: "home" })} />
+    );
+  }
+
+  if (view.kind === "new-circle") {
+    return (
+      <NewCircle
+        state={state}
+        onCancel={() => setView({ kind: "home" })}
+        onCreate={(name, memberIds) => {
+          const id = `circle-${Date.now()}`;
+          update({
+            ...state,
+            circles: [
+              { id, name, memberIds, createdAt: new Date().toISOString() },
+              ...(state.circles ?? []),
+            ],
+          });
+          setView({ kind: "circle", circleId: id });
+        }}
+      />
+    );
+  }
+
   if (view.kind === "chat") {
     const muse = findMuse(state, view.museId);
     if (!muse) { setView({ kind: "home" }); return null; }
@@ -91,6 +127,8 @@ export default function SoloPage() {
       update={update}
       onOpen={(id) => setView({ kind: "chat", museId: id })}
       onImport={() => setView({ kind: "import" })}
+      onOpenCircle={(id) => setView({ kind: "circle", circleId: id })}
+      onNewCircle={() => setView({ kind: "new-circle" })}
     />
   );
 }
@@ -98,12 +136,14 @@ export default function SoloPage() {
 /* ------------------------------------------------------------------ home */
 
 function SoloHome({
-  state, update, onOpen, onImport,
+  state, update, onOpen, onImport, onOpenCircle, onNewCircle,
 }: {
   state: SoloState;
   update: (s: SoloState) => void;
   onOpen: (id: string) => void;
   onImport: () => void;
+  onOpenCircle: (id: string) => void;
+  onNewCircle: () => void;
 }) {
   const [name, setName] = useState(state.userName ?? "");
   const muses = [...state.muses, ...builtinMuses()];
@@ -165,6 +205,30 @@ function SoloHome({
               </div>
             </>
           )}
+
+          <h2 className="section-title">Circles</h2>
+          <div className="card-grid">
+            {(state.circles ?? []).map((c) => (
+              <button key={c.id} className="muse-card" onClick={() => onOpenCircle(c.id)}>
+                <div className="stack-avatars">
+                  {membersOf(state, c).slice(0, 3).map((m) => <Avatar key={m.id} name={m.name} />)}
+                </div>
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <h3>{c.name}</h3>
+                  <span className="rel">{membersOf(state, c).map((m) => m.name).join(", ")}</span>
+                  <p>{(state.conversations[c.id]?.length ?? 0)} messages</p>
+                </div>
+              </button>
+            ))}
+            <button className="muse-card" onClick={onNewCircle} style={{ borderStyle: "dashed" }}>
+              <div style={{ minWidth: 0 }}>
+                <h3>Put people in a room together</h3>
+                <p>
+                  Pick two or more. They will know each other, talk to each other, and take sides.
+                </p>
+              </div>
+            </button>
+          </div>
 
           <h2 className="section-title">Or start with someone here</h2>
           <div className="card-grid">
@@ -315,6 +379,12 @@ function SoloChat({
           persona: muse.persona
             ? { ...muse.persona, you: muse.persona.you || state.userName || "them" }
             : null,
+          /* Everyone they share a circle with. Being in a circle should mean
+             they know those people exist in here too, not only in the group. */
+          knows: knownTo(state, muse.id).map((k) => ({
+            name: k.name,
+            relationship: k.relationshipType,
+          })),
           mood: vibe.mood,
           topic: vibe.topic,
           register: vibe.register,
@@ -461,6 +531,13 @@ function SoloChat({
         {log.map((m) => (
           <div key={m.id} className={m.from === "user" ? "turn turn-user" : "turn turn-muse"}>
             {m.content}
+            {m.edited && <span className="stamp"> · edited</span>}
+            <MessageActions
+              content={m.content}
+              onEdit={(text) => update(editMessage(state, muse.id, m.id, text))}
+              onDelete={() => update(deleteMessage(state, muse.id, m.id))}
+              onDeleteFrom={() => update(deleteFrom(state, muse.id, m.id))}
+            />
           </div>
         ))}
 
@@ -563,6 +640,93 @@ function SoloChat({
 }
 
 /* ---------------------------------------------------------------- helpers */
+
+
+/* ---------------------------------------------------------- new circle */
+
+function NewCircle({
+  state, onCancel, onCreate,
+}: {
+  state: SoloState;
+  onCancel: () => void;
+  onCreate: (name: string, memberIds: string[]) => void;
+}) {
+  const everyone = [...state.muses, ...builtinMuses()];
+  const [picked, setPicked] = useState<string[]>([]);
+  const [name, setName] = useState("");
+
+  /* Only people with a full profile can be in a circle. A Muse without one has
+     no archetype or samples for the group prompt to work from, and would be the
+     one flat voice in the room. */
+  const eligible = everyone.filter((m) => m.persona);
+
+  const toggle = (id: string) =>
+    setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
+
+  const suggested = picked.length
+    ? picked.map((id) => eligible.find((m) => m.id === id)?.name).filter(Boolean).join(" & ")
+    : "";
+
+  return (
+    <main className="shell">
+      <header className="row" style={{ justifyContent: "space-between" }}>
+        <p className="mark">New circle</p>
+        <button className="link-btn" onClick={onCancel}>Cancel</button>
+      </header>
+
+      <h1 className="display" style={{ fontSize: "1.9rem" }}>Who knows who?</h1>
+      <p className="lede">
+        Pick two or more. Everyone in a circle knows everyone else in it — they will talk to each
+        other, not just to you.
+      </p>
+
+      <div className="card-grid">
+        {eligible.map((m) => (
+          <button
+            key={m.id}
+            className="muse-card"
+            onClick={() => toggle(m.id)}
+            style={picked.includes(m.id) ? { borderColor: "var(--accent)" } : undefined}
+          >
+            <Avatar name={m.name} />
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <h3>{m.name}{picked.includes(m.id) ? " ✓" : ""}</h3>
+              <span className="rel">{m.relationshipType}</span>
+              <p>{m.description}</p>
+            </div>
+          </button>
+        ))}
+      </div>
+
+      {eligible.length < 2 && (
+        <p className="fine" style={{ marginTop: "1rem" }}>
+          You need at least two people with a full profile. Build someone from a chat export, or
+          start a conversation with one of the four already here.
+        </p>
+      )}
+
+      <label className="field" style={{ marginTop: "1.5rem" }}>
+        <span>Call it something</span>
+        <input
+          className="input"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder={suggested || "The group chat"}
+        />
+      </label>
+
+      <div className="row" style={{ marginTop: "1.25rem" }}>
+        <button
+          className="btn"
+          disabled={picked.length < 2}
+          onClick={() => onCreate(name.trim() || suggested || "The group chat", picked)}
+        >
+          {picked.length < 2 ? "Pick at least two" : `Put ${picked.length} in a room`}
+        </button>
+      </div>
+    </main>
+  );
+}
 
 function isDefaultVibe(v: Vibe): boolean {
   return v.mood === DEFAULT_VIBE.mood && v.topic === DEFAULT_VIBE.topic && v.register === DEFAULT_VIBE.register;

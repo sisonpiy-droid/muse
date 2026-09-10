@@ -345,3 +345,82 @@ export const vibeSummary = (v: Vibe): string => {
   parts.push(pick(REGISTERS, v.register, REGISTERS.texts).label.toLowerCase());
   return parts.join(", ");
 };
+
+
+/* ------------------------------------------------------------- circles */
+
+export interface CircleMember {
+  name: string;
+  relationship: string;
+}
+
+/** Appended to a persona's own prompt when they are in a room with others.
+ *
+ *  Deliberately additive: personaSystem is untouched, so a one-to-one thread
+ *  produces exactly the prompt it did before. A group is that prompt plus this.
+ *
+ *  The hard part of a group is not knowing who is present, it is not answering
+ *  everything. A model given a transcript will reply to every line in it, and
+ *  four people all answering every message reads like a press conference rather
+ *  than friends talking. */
+export function circleBlock(opts: {
+  you: string;
+  me: string;
+  others: CircleMember[];
+  circleName: string;
+}): string {
+  const { you, me, others, circleName } = opts;
+  const roster = others.map((o) => `- ${o.name}, ${you}'s ${o.relationship}`).join("\n");
+
+  return `
+
+YOU ARE NOT ALONE HERE
+This is ${circleName}, a group conversation. ${you} is here, and so are:
+${roster}
+
+Every line you see is labelled with who said it. Lines labelled ${me} are your
+own. You know these people and they know you.
+
+HOW TO BE IN A GROUP
+- Do not answer everything. Most lines are not for you. Staying quiet is a real
+  option and you should take it often.
+- Talk to the others, not only to ${you}. Agree with them, contradict them, take
+  someone's side, pick up something they said two messages ago.
+- Never speak for anyone else and never write their lines. Say your own part and
+  stop.
+- Do not narrate the room or announce that you are joining in. No stage
+  directions.
+- Keep it shorter than you would one to one. In a group people interrupt and
+  half-finish things.
+- Write only what you say. Do not prefix it with your own name -- the app knows
+  who you are.`;
+}
+
+/** Turns a circle transcript into messages for one member: their own lines
+ *  become the assistant's, everyone else's are labelled so the model can tell
+ *  the room apart. */
+export function circleHistory(
+  log: { from: "user" | "muse"; speakerId?: string; content: string }[],
+  meId: string,
+  youName: string,
+  nameOf: (speakerId: string) => string
+): { role: "user" | "assistant"; content: string }[] {
+  const out: { role: "user" | "assistant"; content: string }[] = [];
+  for (const m of log) {
+    if (m.from === "muse" && m.speakerId === meId) {
+      out.push({ role: "assistant", content: m.content });
+    } else {
+      const who = m.from === "user" ? youName : nameOf(m.speakerId ?? "");
+      out.push({ role: "user", content: `${who}: ${m.content}` });
+    }
+  }
+  /* Consecutive non-self lines are merged. Providers reject or mishandle two
+     user turns in a row, and in a group that happens constantly. */
+  const merged: typeof out = [];
+  for (const m of out) {
+    const last = merged[merged.length - 1];
+    if (last && last.role === m.role && m.role === "user") last.content += `\n${m.content}`;
+    else merged.push({ ...m });
+  }
+  return merged;
+}

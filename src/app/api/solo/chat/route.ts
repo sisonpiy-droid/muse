@@ -69,6 +69,12 @@ const bodySchema = z.object({
       brief: z.string().max(6000).optional(),
     })
     .nullish(),
+  /* People this Muse shares a circle with. Additive: absent on every request
+     that does not involve circles, and the prompt is unchanged when it is. */
+  knows: z
+    .array(z.object({ name: z.string().max(60), relationship: z.string().max(120) }))
+    .max(8)
+    .optional(),
   mood: z.string().max(20).optional(),
   topic: z.string().max(20).optional(),
   register: z.string().max(20).optional(),
@@ -94,7 +100,7 @@ export async function POST(req: Request) {
   if (!parsed.success) {
     return Response.json({ error: "Check the request and try again." }, { status: 400 });
   }
-  const { muse, persona, mood, topic, register, messages, memories, userName, timezone } = parsed.data;
+  const { muse, persona, knows, mood, topic, register, messages, memories, userName, timezone } = parsed.data;
 
   const total = messages.reduce((n, m) => n + m.content.length, 0)
     + memories.reduce((n, m) => n + m.length, 0);
@@ -107,7 +113,16 @@ export async function POST(req: Request) {
         mood: mood || "any",
         topic: topic || "any",
         register: register || "texts",
-      }, timezone ?? undefined)
+      }, timezone ?? undefined) +
+      (knows?.length
+        ? `
+
+PEOPLE YOU BOTH KNOW
+${knows
+            .map((k) => `- ${k.name}, ${userName || "their"} ${k.relationship}`)
+            .join("\n")}
+You may mention them, ask after them, or have opinions about them. Do not invent what they have been doing lately -- you would only know that if you had been told.`
+        : "")
     : buildMuseSystemPrompt({
     name: muse.name,
     description: muse.description,
