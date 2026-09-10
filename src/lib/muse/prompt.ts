@@ -73,7 +73,17 @@ function stageGuidance(stage: RelationshipStage, messageCount: number): string {
 }
 
 function timeGuidance(now: Date, timezone?: string): string {
-  const hour = now.getHours();
+  /* Read the hour in the user's zone, not the server's. The stamp below always
+     honoured the timezone, so the two disagreed: a Muse could be told "It is
+     Thursday 10:09 — early morning" because 10:09 in Mumbai is 04:39 where the
+     server runs. */
+  const hour = Number(
+    new Intl.DateTimeFormat("en-GB", {
+      hour: "numeric",
+      hourCycle: "h23",
+      ...(timezone ? { timeZone: timezone } : {}),
+    }).format(now)
+  );
   const when =
     hour < 5 ? "the middle of the night" :
     hour < 9 ? "early morning" :

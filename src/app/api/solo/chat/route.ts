@@ -107,7 +107,7 @@ export async function POST(req: Request) {
         mood: mood || "any",
         topic: topic || "any",
         register: register || "texts",
-      })
+      }, timezone ?? undefined)
     : buildMuseSystemPrompt({
     name: muse.name,
     description: muse.description,

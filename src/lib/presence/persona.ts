@@ -214,14 +214,36 @@ ${invented
 - Output only the profile. No preamble, no closing remark.`;
 }
 
-const clockOf = (ts: number) =>
-  new Date(ts).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+const clockOf = (ts: number, timeZone?: string) =>
+  new Date(ts).toLocaleTimeString("en-GB", {
+    hour: "2-digit",
+    minute: "2-digit",
+    // h23 so midnight is 00:39 rather than 0:39 or 24:39.
+    hourCycle: "h23",
+    ...(timeZone ? { timeZone } : {}),
+  });
 
-function timeContext() {
+/* In Presence this ran in the browser, so `new Date()` was the reader's own
+   clock. Here it runs on the server, which is UTC — so a Muse in Mumbai was
+   told it was four in the morning when it was half past nine. The reader's
+   timezone comes up with the request; without it we fall back to the server's,
+   which is wrong but at least consistent. */
+function timeContext(timeZone?: string) {
   const d = new Date();
-  const h = d.getHours();
-  const part = h < 5 ? "the middle of the night" : h < 12 ? "morning" : h < 17 ? "afternoon" : h < 22 ? "evening" : "late at night";
-  return `It is ${d.toLocaleDateString(undefined, { weekday: "long" })} ${part}, ${clockOf(d.getTime())}, where they are. Notice it if it matters — if it's 3am, that is worth a word. Don't announce the time otherwise.`;
+
+  const inZone = (opts: Intl.DateTimeFormatOptions) =>
+    new Intl.DateTimeFormat("en-GB", { ...opts, ...(timeZone ? { timeZone } : {}) }).format(d);
+
+  // hourCycle h23 so midnight reads as 0 rather than 24.
+  const h = Number(inZone({ hour: "numeric", hourCycle: "h23" }));
+  const part =
+    h < 5 ? "the middle of the night"
+      : h < 12 ? "morning"
+      : h < 17 ? "afternoon"
+      : h < 22 ? "evening"
+      : "late at night";
+
+  return `It is ${inZone({ weekday: "long" })} ${part}, ${clockOf(d.getTime(), timeZone)}, where they are. Notice it if it matters — if it's 3am, that is worth a word. Don't announce the time otherwise.`;
 }
 
 export const splitBurst = (raw: string, allowBurst = true): string[] => {
@@ -241,7 +263,8 @@ export function personaSystem(
   p: PersonaDraft,
   memories: string[] = [],
   tender = false,
-  vibe: { mood: string; topic: string; register: string } = { mood: "any", topic: "any", register: "texts" }
+  vibe: { mood: string; topic: string; register: string } = { mood: "any", topic: "any", register: "texts" },
+  timeZone?: string
 ): string {
   const callsYou = p.callsYou?.trim() || p.you?.trim() || "";
   const arch = pick(ARCHETYPES, p.arch, ARCHETYPES.other);
@@ -253,7 +276,7 @@ export function personaSystem(
   const about = [p.extra, p.interests].map((x) => (x || "").trim()).filter(Boolean).join("\n");
   return `You are ${p.them}. You are texting ${p.you}${callsYou && callsYou !== p.you ? `, who you call ${callsYou}` : ""}. You were ${p.relationship}. ${mode.frame(p)}
 
-${timeContext()}
+${timeContext(timeZone)}
 
 WHO YOU ARE
 ${p.brief}
