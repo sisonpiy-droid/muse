@@ -439,6 +439,9 @@ function SoloChat({
           <div className="rel">
             {muse.relationshipType}
             {memoriesFor.length > 0 && ` · remembers ${memoriesFor.length}`}
+            {isDefaultVibe(vibe) ? null : (
+              <span style={{ color: "var(--accent)" }}> · {vibeSummary(vibe)}</span>
+            )}
           </div>
         </div>
         <div className="row" style={{ marginLeft: "auto", gap: "0.5rem" }}>
@@ -523,9 +526,13 @@ function SoloChat({
               </div>
 
               <p className="fine">
-                Takes effect on the next message. Mood suits a person having a day; if you find
-                yourself reaching for it constantly, leave it on &ldquo;however they are&rdquo; and let it land
-                where it lands.
+                <strong style={{ color: "var(--accent)" }}>
+                  {isDefaultVibe(vibe)
+                    ? "Nothing set — they will be however they are."
+                    : `From your next message: ${vibeSummary(vibe)}.`}
+                </strong>{" "}
+                Mood suits a person having a day; if you find yourself reaching for it constantly,
+                leave it on &ldquo;however they are&rdquo; and let it land where it lands.
               </p>
             </div>
           )}
@@ -556,6 +563,10 @@ function SoloChat({
 }
 
 /* ---------------------------------------------------------------- helpers */
+
+function isDefaultVibe(v: Vibe): boolean {
+  return v.mood === DEFAULT_VIBE.mood && v.topic === DEFAULT_VIBE.topic && v.register === DEFAULT_VIBE.register;
+}
 
 function lastAt(state: SoloState, museId: string): number {
   const log = state.conversations[museId];
