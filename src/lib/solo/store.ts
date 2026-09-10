@@ -36,7 +36,13 @@ export interface SoloMessage {
   at: string;
 }
 
-export interface SoloMuse extends Persona {
+/* The Presence fields are required on a starter and absent on a built
+   character, which carries them inside `persona` instead. */
+type PresenceFields = "arch" | "texture" | "mode" | "brief" | "samples" | "extra";
+
+export interface SoloMuse
+  extends Omit<Persona, PresenceFields>,
+    Partial<Pick<Persona, PresenceFields>> {
   id: string;
   /** Personas that shipped with the app cannot be edited or deleted. */
   builtin: boolean;
@@ -61,7 +67,24 @@ export interface SoloState {
 const slug = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 
 export function builtinMuses(): SoloMuse[] {
-  return PERSONAS.map((p) => ({ ...p, id: `builtin-${slug(p.name)}`, builtin: true }));
+  return PERSONAS.map((p) => ({
+    ...p,
+    id: `builtin-${slug(p.name)}`,
+    builtin: true,
+    /* `you` is left empty and filled at send time from whatever the user
+       called themselves -- it is the one field that cannot be authored here. */
+    persona: {
+      them: p.name,
+      you: "",
+      relationship: p.relationshipType,
+      arch: p.arch,
+      texture: p.texture,
+      mode: p.mode,
+      brief: p.brief,
+      samples: p.samples,
+      extra: p.extra,
+    },
+  }));
 }
 
 function empty(): SoloState {

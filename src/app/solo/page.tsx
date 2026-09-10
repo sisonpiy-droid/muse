@@ -309,7 +309,12 @@ function SoloChat({
           })),
           /* Present only for someone built from real material. When it is, the
              server ignores the simple shape above and uses Presence's prompt. */
-          persona: muse.persona ?? null,
+          /* `you` is filled here rather than stored: the starters are authored
+             without knowing who will read them, and a built character should
+             follow a rename too. */
+          persona: muse.persona
+            ? { ...muse.persona, you: muse.persona.you || state.userName || "them" }
+            : null,
           mood: vibe.mood,
           topic: vibe.topic,
           register: vibe.register,
