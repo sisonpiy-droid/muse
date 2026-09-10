@@ -93,20 +93,31 @@ export async function* streamGuarded(opts: {
     let sawAnything = false;
     const buffered: string[] = [];
 
-    for await (const delta of provider.streamResponse({ system, messages: opts.messages })) {
-      sawAnything = true;
-      if (flushed) {
-        yield { type: "delta", text: delta };
-        continue;
+    try {
+      for await (const delta of provider.streamResponse({ system, messages: opts.messages })) {
+        sawAnything = true;
+        if (flushed) {
+          yield { type: "delta", text: delta };
+          continue;
+        }
+
+        head += delta;
+        buffered.push(delta);
+        if (head.length < REFUSAL_SNIFF_CHARS) continue;
+
+        if (looksLikeRefusal(head)) break;      // abandon this attempt
+        flushed = true;
+        for (const b of buffered) yield { type: "delta", text: b };
       }
-
-      head += delta;
-      buffered.push(delta);
-      if (head.length < REFUSAL_SNIFF_CHARS) continue;
-
-      if (looksLikeRefusal(head)) break;      // abandon this attempt
-      flushed = true;
-      for (const b of buffered) yield { type: "delta", text: b };
+    } catch (err) {
+      /* A stream that produces nothing, or is stopped by a safety filter, is a
+         refusal wearing a different hat -- and it was surfacing as "Something
+         went wrong. Try again." with no retry, because the throw escaped this
+         loop entirely. Treated as a refusal so it gets the second attempt.
+         Anything already flushed to the client cannot be retried, and any
+         other kind of failure is still a real error. */
+      const code = err instanceof ProviderError ? err.code : null;
+      if (flushed || (code !== "empty" && code !== "blocked")) throw err;
     }
 
     // A reply shorter than the sniff window never flushed; judge it whole.
