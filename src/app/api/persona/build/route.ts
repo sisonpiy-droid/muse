@@ -43,6 +43,34 @@ const bodySchema = z.object({
   prompts: z.record(z.string(), z.string().max(400)).optional(),
 });
 
+/** Which field, in the words used on the screen it came from. */
+function buildFieldError(field: string, code?: string): string {
+  const tooLong = code === "too_big";
+  switch (field) {
+    case "them":
+      return "They need a name.";
+    case "you":
+      return "Put your own name in as well — it's what they'll call you.";
+    case "relationship":
+      return tooLong
+        ? "“They were” is too long. A few words is enough: “my father”, “my oldest friend”."
+        : "Say what they were to you.";
+    case "callsYou":
+      return "“They called you” is too long — it should be one nickname.";
+    case "extra":
+      return "What you wrote about them is too long to send. Trim it to a few paragraphs and the rest still comes through in their messages.";
+    case "prompts":
+      return "One of the five answers is too long. They're meant to be a line each.";
+    case "mode":
+      return "Pick who this is — someone who died, someone living, or someone you made up.";
+    case "samples":
+    case "metrics":
+      return "That export is larger than this can send in one go. Try a shorter date range.";
+    default:
+      return "Check the details and try again.";
+  }
+}
+
 export async function POST(req: Request) {
   let raw: unknown;
   try {
@@ -53,7 +81,17 @@ export async function POST(req: Request) {
 
   const parsed = bodySchema.safeParse(raw);
   if (!parsed.success) {
-    return Response.json({ error: "Check the details and try again." }, { status: 400 });
+    /* "Check the details and try again" is the whole message the user got, on a
+       screen with eleven fields, and nothing was written server-side either --
+       so a rejected build was undiagnosable from both ends at once. Say which
+       field, and log the rest. */
+    const issue = parsed.error.issues[0];
+    const field = String(issue?.path?.[0] ?? "");
+    console.error(
+      "persona build rejected:",
+      parsed.error.issues.map((i) => `${i.path.join(".") || "(root)"}: ${i.code}`).join("; ")
+    );
+    return Response.json({ error: buildFieldError(field, issue?.code) }, { status: 400 });
   }
   const src = parsed.data;
 

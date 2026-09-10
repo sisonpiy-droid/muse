@@ -28,6 +28,16 @@ import { ARCHETYPES, MODES, PROMPTS, TEXTURES, detectArch, type PersonaDraft } f
 
 type Step = 0 | 1 | 2 | 3 | 9 | 10 | 11; // 10 = building, 11 = review
 
+/* The same caps /api/persona/build enforces.
+ *
+ * They lived only on the server, so the samples box -- a plain textarea people
+ * paste into -- accepted a whole export and then failed validation at the very
+ * end, after every other step had been filled in, with a message that named no
+ * field. The limit belongs where the typing happens. */
+const MAX_SAMPLES = 14000;
+const MAX_EXTRA = 4000;
+const MAX_PROMPT = 400;
+
 export function ImportPersona({
   onCreate,
   onCancel,
@@ -149,12 +159,12 @@ export function ImportPersona({
           <div className="pair">
             <label className="field">
               <span>Their name</span>
-              <input className="input" autoFocus value={draft.them} placeholder="John"
+              <input className="input" autoFocus value={draft.them} placeholder="John" maxLength={60}
                 onChange={(e) => D("them", e.target.value)} />
             </label>
             <label className="field">
               <span>Your name</span>
-              <input className="input" value={draft.you} placeholder="Sam"
+              <input className="input" value={draft.you} placeholder="Sam" maxLength={60}
                 onChange={(e) => D("you", e.target.value)} />
             </label>
           </div>
@@ -162,12 +172,12 @@ export function ImportPersona({
           <div className="pair">
             <label className="field">
               <span>They were</span>
-              <input className="input" value={draft.relationship} placeholder="my father"
+              <input className="input" value={draft.relationship} placeholder="my father" maxLength={120}
                 onChange={(e) => setDraft((d) => ({ ...d, relationship: e.target.value, arch: detectArch(e.target.value) }))} />
             </label>
             <label className="field">
               <span>They called you</span>
-              <input className="input" value={draft.callsYou ?? ""} placeholder="kiddo"
+              <input className="input" value={draft.callsYou ?? ""} placeholder="kiddo" maxLength={60}
                 onChange={(e) => D("callsYou", e.target.value)} />
             </label>
           </div>
@@ -354,13 +364,25 @@ export function ImportPersona({
             <span>Or paste some of their messages</span>
             <textarea className="input" rows={6} value={draft.samples ?? ""}
               placeholder={"are you up\ni've got the crossword out\n7 down is beating me\nDAD"}
+              maxLength={MAX_SAMPLES}
               onChange={(e) => D("samples", e.target.value)} />
-            <p className="fine" style={{ marginTop: "0.7rem" }}>This teaches them how to write. Optional.</p>
+            <p className="fine" style={{ marginTop: "0.7rem" }}>
+              This teaches them how to write. Optional.
+              {(draft.samples?.length ?? 0) > MAX_SAMPLES * 0.9 && (
+                <>
+                  {" "}
+                  <strong style={{ color: "var(--accent)" }}>
+                    {draft.samples?.length}/{MAX_SAMPLES} characters
+                  </strong>{" "}
+                  — a spread of their messages teaches more than one long stretch does.
+                </>
+              )}
+            </p>
           </div>
 
           <div className="field">
             <span>What was {draft.them || "they"} like?</span>
-            <textarea className="input" rows={7} value={draft.extra ?? ""}
+            <textarea className="input" rows={7} value={draft.extra ?? ""} maxLength={MAX_EXTRA}
               placeholder={"stubborn about being right. hated being fussed over. suspicious of anyone too cheerful. never asked a direct question when a sideways one would do. could talk about football for hours."}
               onChange={(e) => D("extra", e.target.value)} />
             <p className="fine" style={{ marginTop: "0.7rem" }}>
@@ -388,6 +410,7 @@ export function ImportPersona({
             <label key={pr.k} className="field">
               <span>{pr.q}</span>
               <textarea id={`q-${pr.k}`} className="input" rows={1} value={draft.prompts?.[pr.k] ?? ""}
+                maxLength={MAX_PROMPT}
                 placeholder={pr.h} onChange={(e) => P(pr.k, e.target.value)} />
             </label>
           ))}
