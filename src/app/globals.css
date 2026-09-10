@@ -413,3 +413,27 @@ a { color: inherit; }
 .stack-avatars { display: flex; flex: 0 0 auto; }
 .stack-avatars .avatar { margin-left: -14px; border: 2px solid var(--bg); }
 .stack-avatars .avatar:first-child { margin-left: 0; }
+
+/* A card and the controls that act on it. The controls sit outside the card's
+   own button — nesting a button inside a button is not clickable, and assistive
+   tech announces the pair as one control. */
+.card-wrap { display: block; }
+.card-actions {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  padding: 0.35rem 0.25rem 0;
+}
+.card-actions button {
+  font: inherit;
+  font-size: 0.68rem;
+  background: none;
+  border: 0;
+  padding: 0.15rem 0;
+  color: var(--faint);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-color: var(--edge-lit);
+}
+.card-actions button:hover { color: var(--danger); }

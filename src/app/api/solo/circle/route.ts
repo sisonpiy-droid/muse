@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { getProvider, userFacingError } from "@/lib/ai";
+import { streamGuarded, userFacingError } from "@/lib/ai";
 import { circleBlock, circleHistory, personaSystem } from "@/lib/presence/persona";
 
 /* One turn in a circle: several people in a room, one of them replying.
@@ -98,10 +98,14 @@ export async function POST(req: Request) {
       const send = (obj: unknown) =>
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(obj)}\n\n`));
       try {
-        for await (const delta of getProvider().streamResponse({ system, messages })) {
-          send({ type: "delta", text: delta });
+        for await (const evt of streamGuarded({ system, messages, name: speaker.persona.them })) {
+          if (evt.type === "delta") send({ type: "delta", text: evt.text });
+          else if (evt.type === "refused") {
+            /* In a circle a refusal is quieter: that member simply says
+               nothing this turn, which is normal in a group anyway. */
+            send({ type: "silent" });
+          } else send({ type: "done" });
         }
-        send({ type: "done" });
       } catch (err) {
         console.error("circle generation failed", err);
         const { message, retryable } = userFacingError(err);

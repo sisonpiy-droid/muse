@@ -11,7 +11,8 @@ import {
 } from "@/lib/presence/persona";
 import { safeFilename, transcriptMarkdown } from "@/lib/export";
 import {
-  addMemories, builtinMuses, circleOf, deleteFrom, deleteMessage, download, editMessage,
+  addMemories, builtinMuses, circleOf, deleteCircle, deleteConversation, deleteFrom,
+  deleteMessage, deleteMuse, download, editMessage,
   findMuse, knownTo, loadState, membersOf, relevantMemories, saveState,
   type SoloCircle, type SoloMessage, type SoloMuse, type SoloState,
 } from "@/lib/solo/store";
@@ -200,7 +201,7 @@ function SoloHome({
               <h2 className="section-title">Continue talking</h2>
               <div className="card-grid">
                 {talked.map((m) => (
-                  <MuseCard key={m.id} muse={m} state={state} onOpen={onOpen} />
+                  <MuseCard key={m.id} muse={m} state={state} update={update} onOpen={onOpen} />
                 ))}
               </div>
             </>
@@ -220,6 +221,22 @@ function SoloHome({
                 </div>
               </button>
             ))}
+            {(state.circles ?? []).length > 0 && (
+              <div className="card-actions">
+                {(state.circles ?? []).map((c) => (
+                  <button
+                    key={c.id}
+                    onClick={() => {
+                      if (confirm(`Delete the circle "${c.name}" and its conversation? The people in it are kept.`)) {
+                        update(deleteCircle(state, c.id));
+                      }
+                    }}
+                  >
+                    delete {c.name}
+                  </button>
+                ))}
+              </div>
+            )}
             <button className="muse-card" onClick={onNewCircle} style={{ borderStyle: "dashed" }}>
               <div style={{ minWidth: 0 }}>
                 <h3>Put people in a room together</h3>
@@ -233,7 +250,7 @@ function SoloHome({
           <h2 className="section-title">Or start with someone here</h2>
           <div className="card-grid">
             {rest.map((m) => (
-              <MuseCard key={m.id} muse={m} state={state} onOpen={onOpen} />
+              <MuseCard key={m.id} muse={m} state={state} update={update} onOpen={onOpen} />
             ))}
           </div>
 
@@ -270,13 +287,15 @@ function SoloHome({
 }
 
 function MuseCard({
-  muse, state, onOpen,
-}: { muse: SoloMuse; state: SoloState; onOpen: (id: string) => void }) {
+  muse, state, update, onOpen,
+}: { muse: SoloMuse; state: SoloState; update: (s: SoloState) => void; onOpen: (id: string) => void }) {
   const log = state.conversations[muse.id] ?? [];
   const last = log[log.length - 1];
   const remembered = state.memories.filter((m) => m.museId === muse.id).length;
+  const hasThread = log.length > 0;
 
   return (
+    <div className="card-wrap">
     <button className="muse-card" onClick={() => onOpen(muse.id)}>
       <Avatar name={muse.name} />
       <div style={{ minWidth: 0, flex: 1 }}>
@@ -297,6 +316,40 @@ function MuseCard({
         ) : null}
       </div>
     </button>
+
+    {/* Outside the card button — a delete control nested inside a button is
+        not clickable, and screen readers announce it as one control. */}
+    <div className="card-actions">
+      {hasThread && (
+        <button
+          onClick={() => {
+            if (!confirm(`Delete your conversation with ${muse.name}?
+
+OK also forgets what they learned. Cancel keeps the memories.`)) {
+              if (confirm(`Delete the conversation but keep what ${muse.name} remembers?`)) {
+                update(deleteConversation(state, muse.id, false));
+              }
+              return;
+            }
+            update(deleteConversation(state, muse.id, true));
+          }}
+        >
+          delete chat
+        </button>
+      )}
+      {!muse.builtin && (
+        <button
+          onClick={() => {
+            if (confirm(`Delete ${muse.name} completely? Their conversation and everything they remember goes too.`)) {
+              update(deleteMuse(state, muse.id));
+            }
+          }}
+        >
+          delete {muse.name}
+        </button>
+      )}
+    </div>
+    </div>
   );
 }
 

@@ -110,6 +110,34 @@ function empty(): SoloState {
   return { userName: null, muses: [], conversations: {}, memories: [], vibes: {}, circles: [] };
 }
 
+/* Characters built before the Presence port stored their voice profile in
+   `customInstructions` and had no `persona` at all. Those take the generic
+   prompt rather than personaSystem, which means the mood and register controls
+   have nothing to act on and the panel does not appear for them — reported as
+   "change how this goes isn't working" on a character built days earlier.
+   Rebuilt here from what was saved, so old characters get the same treatment as
+   new ones without anyone having to make them again. */
+function migrate(m: SoloMuse): SoloMuse {
+  if (m.persona || m.builtin) return m;
+  const brief = m.customInstructions?.trim() || m.description?.trim() || "";
+  if (!brief) return m;
+  return {
+    ...m,
+    persona: {
+      them: m.name,
+      you: "",
+      relationship: m.relationshipType || "someone close",
+      /* The originals recorded none of these, and guessing would put words in
+         a character's mouth. "other" tells the prompt to lean entirely on the
+         profile below rather than assume a relationship script. */
+      arch: "other",
+      texture: "close",
+      mode: "character",
+      brief,
+    },
+  };
+}
+
 export function loadState(): SoloState {
   try {
     const raw = localStorage.getItem(KEY);
@@ -117,7 +145,7 @@ export function loadState(): SoloState {
     const parsed = JSON.parse(raw) as Partial<SoloState>;
     return {
       userName: parsed.userName ?? null,
-      muses: Array.isArray(parsed.muses) ? parsed.muses : [],
+      muses: Array.isArray(parsed.muses) ? parsed.muses.map(migrate) : [],
       conversations: parsed.conversations ?? {},
       memories: Array.isArray(parsed.memories) ? parsed.memories : [],
       vibes: parsed.vibes ?? {},
@@ -271,5 +299,52 @@ export function deleteFrom(state: SoloState, threadId: string, messageId: string
   return {
     ...state,
     conversations: { ...state.conversations, [threadId]: log.slice(0, at) },
+  };
+}
+
+
+/** Clears one thread. `alsoForget` drops what was learned in it too — deleting
+ *  a conversation while the Muse still remembers every word of it is not what
+ *  anybody means by delete, but the two are separable and worth asking about. */
+export function deleteConversation(
+  state: SoloState,
+  threadId: string,
+  alsoForget: boolean
+): SoloState {
+  const conversations = { ...state.conversations };
+  delete conversations[threadId];
+  return {
+    ...state,
+    conversations,
+    memories: alsoForget ? state.memories.filter((m) => m.museId !== threadId) : state.memories,
+  };
+}
+
+/** Removes a Muse you built, with its conversation and memories. Built-ins
+ *  cannot be removed: they come from the build, not from storage. */
+export function deleteMuse(state: SoloState, museId: string): SoloState {
+  const conversations = { ...state.conversations };
+  delete conversations[museId];
+  return {
+    ...state,
+    muses: state.muses.filter((m) => m.id !== museId),
+    conversations,
+    memories: state.memories.filter((m) => m.museId !== museId),
+    vibes: Object.fromEntries(Object.entries(state.vibes ?? {}).filter(([k]) => k !== museId)),
+    circles: (state.circles ?? [])
+      .map((c) => ({ ...c, memberIds: c.memberIds.filter((id) => id !== museId) }))
+      /* A circle needs two people to be a circle. */
+      .filter((c) => c.memberIds.length >= 2),
+  };
+}
+
+/** Removes a circle and its thread. The people in it are untouched. */
+export function deleteCircle(state: SoloState, circleId: string): SoloState {
+  const conversations = { ...state.conversations };
+  delete conversations[circleId];
+  return {
+    ...state,
+    conversations,
+    circles: (state.circles ?? []).filter((c) => c.id !== circleId),
   };
 }

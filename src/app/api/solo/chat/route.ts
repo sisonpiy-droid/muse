@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { getProvider, userFacingError } from "@/lib/ai";
+import { streamGuarded, userFacingError } from "@/lib/ai";
 import { buildMuseSystemPrompt } from "@/lib/muse/prompt";
 import { personaSystem } from "@/lib/presence/persona";
 
@@ -156,10 +156,18 @@ You may mention them, ask after them, or have opinions about them. Do not invent
       const send = (obj: unknown) =>
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(obj)}\n\n`));
       try {
-        for await (const delta of getProvider().streamResponse({ system, messages })) {
-          send({ type: "delta", text: delta });
+        /* A refusal never reaches the client, so it can never be saved into the
+           transcript and poison every turn after it. */
+        for await (const evt of streamGuarded({ system, messages, name: persona?.them ?? muse.name })) {
+          if (evt.type === "delta") send({ type: "delta", text: evt.text });
+          else if (evt.type === "refused") {
+            send({
+              type: "error",
+              message: `${persona?.them ?? muse.name} didn't come to the phone. Try saying it differently.`,
+              retryable: true,
+            });
+          } else send({ type: "done" });
         }
-        send({ type: "done" });
       } catch (err) {
         console.error("solo generation failed", err);
         const { message, retryable } = userFacingError(err);

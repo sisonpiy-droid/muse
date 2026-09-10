@@ -1,6 +1,7 @@
 import { anthropicProvider } from "./anthropic";
 import { geminiProvider } from "./gemini";
-import { AIProvider, ProviderError } from "./types";
+import { REFUSAL_SNIFF_CHARS, looksLikeRefusal, retryNudge } from "./refusal";
+import { AIProvider, ChatMessage, ProviderError } from "./types";
 
 export * from "./types";
 export { geminiProvider, anthropicProvider };
@@ -59,4 +60,67 @@ export function userFacingError(err: unknown): { message: string; retryable: boo
     return { message: "That took too long to come back. Try again?", retryable: true };
   }
   return { message: "Something went wrong. Try again.", retryable: true };
+}
+
+
+/* ------------------------------------------------- streaming with a guard */
+
+export type GuardedEvent =
+  | { type: "delta"; text: string }
+  | { type: "done" }
+  | { type: "refused" };
+
+/** Streams a reply, but holds the opening back long enough to notice a refusal.
+ *
+ *  A refusal announces itself in the first few words, so buffering that much
+ *  costs nothing visible and means the caller never receives — and therefore
+ *  never stores — a reply where the character has broken. On a refusal it
+ *  retries once with a short reminder; if that refuses too it yields
+ *  `refused`, and the caller is expected to keep the conversation unchanged. */
+export async function* streamGuarded(opts: {
+  system: string;
+  messages: ChatMessage[];
+  /** Used in the retry reminder. */
+  name: string;
+}): AsyncIterable<GuardedEvent> {
+  const provider = getProvider();
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const system = attempt === 0 ? opts.system : opts.system + retryNudge(opts.name);
+
+    let head = "";
+    let flushed = false;
+    let sawAnything = false;
+    const buffered: string[] = [];
+
+    for await (const delta of provider.streamResponse({ system, messages: opts.messages })) {
+      sawAnything = true;
+      if (flushed) {
+        yield { type: "delta", text: delta };
+        continue;
+      }
+
+      head += delta;
+      buffered.push(delta);
+      if (head.length < REFUSAL_SNIFF_CHARS) continue;
+
+      if (looksLikeRefusal(head)) break;      // abandon this attempt
+      flushed = true;
+      for (const b of buffered) yield { type: "delta", text: b };
+    }
+
+    // A reply shorter than the sniff window never flushed; judge it whole.
+    if (!flushed && sawAnything && !looksLikeRefusal(head)) {
+      flushed = true;
+      for (const b of buffered) yield { type: "delta", text: b };
+    }
+
+    if (flushed) {
+      yield { type: "done" };
+      return;
+    }
+    // Otherwise it refused. Loop and try once more, then give up.
+  }
+
+  yield { type: "refused" };
 }
