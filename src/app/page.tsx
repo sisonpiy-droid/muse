@@ -17,8 +17,22 @@ import { redirect } from "next/navigation";
    silently keeps redirecting until someone thinks to rebuild. */
 export const dynamic = "force-dynamic";
 
+/* Having a database is no longer enough to switch the product over.
+ *
+ * Provisioning Postgres is the first step of building accounts, not the last:
+ * for the whole time the signed-in app is being brought up to what solo mode
+ * already does, DATABASE_URL is set and the account app is not ready. Keying
+ * the redirect off the connection string alone meant the next deploy of
+ * anything at all would land visitors on a half-built signup flow and hide the
+ * conversations they actually have.
+ *
+ * So the switch is its own decision. Set ACCOUNTS_ENABLED=1 when the signed-in
+ * app is genuinely the better one, and not before. */
+const accountsReady = () =>
+  Boolean(process.env.DATABASE_URL) && process.env.ACCOUNTS_ENABLED === "1";
+
 export default async function RootPage() {
-  if (!process.env.DATABASE_URL) redirect("/solo");
+  if (!accountsReady()) redirect("/solo");
 
   const { default: DatabaseHome } = await import("./home-db");
   return <DatabaseHome />;
