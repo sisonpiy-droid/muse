@@ -57,6 +57,16 @@ const bodySchema = z.object({
   timezone: z.string().max(64).nullish(),
   mood: z.string().max(20).optional(),
   register: z.string().max(20).optional(),
+  /* Whoever is speaking brings their own standing state into the room. Keyed
+     by speaker rather than shared: one person can be having a bad month while
+     everyone else is fine, which is most group chats. */
+  feelings: z
+    .object({
+      mood: z.string().max(20).default("any"),
+      warmth: z.string().max(20).default("normal"),
+      note: z.string().max(600).default(""),
+    })
+    .nullish(),
 });
 
 const MAX_TOTAL_CHARS = 60_000;
@@ -73,7 +83,8 @@ export async function POST(req: Request) {
   if (!parsed.success) {
     return Response.json({ error: "Check the request and try again." }, { status: 400 });
   }
-  const { circleName, speaker, others, log, names, userName, timezone, mood, register } = parsed.data;
+  const { circleName, speaker, others, log, names, userName, timezone, mood, register, feelings } =
+    parsed.data;
 
   if (log.reduce((n, m) => n + m.content.length, 0) > MAX_TOTAL_CHARS) {
     return Response.json({ error: "This conversation has got too long to send." }, { status: 413 });
@@ -87,7 +98,8 @@ export async function POST(req: Request) {
       [],
       false,
       { mood: mood || "any", topic: "any", register: register || "texts" },
-      timezone ?? undefined
+      timezone ?? undefined,
+      feelings ?? undefined
     ) + circleBlock({ you, me: speaker.persona.them, others, circleName });
 
   const messages = circleHistory(log, speaker.id, you, (id) => names[id] ?? "Someone");

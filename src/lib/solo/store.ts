@@ -1,7 +1,7 @@
 "use client";
 
 import { PERSONAS, type Persona } from "@/lib/personas";
-import type { PersonaDraft, Vibe } from "@/lib/presence/persona";
+import { DEFAULT_FEELINGS, type Feelings, type PersonaDraft, type Vibe } from "@/lib/presence/persona";
 import { rankMemories, type RankableMemory } from "@/lib/memory/rank";
 
 /* Solo mode's storage layer — localStorage, no database, no account.
@@ -81,6 +81,13 @@ export interface SoloState {
   vibes?: Record<string, Vibe>;
   /** Circles share the `conversations` map; ids never collide. */
   circles?: SoloCircle[];
+  /* Changes to a starter, kept as an overlay rather than a copy so the
+     originals stay the source of truth. Built characters are edited in place
+     and never appear here. */
+  edits?: Record<string, MusePatch>;
+  /* Standing emotional state, keyed by Muse. Unlike a vibe this persists: it
+     is meant to be set once and left, and it is still true next week. */
+  feelings?: Record<string, Feelings>;
 }
 
 const slug = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
@@ -150,6 +157,8 @@ export function loadState(): SoloState {
       memories: Array.isArray(parsed.memories) ? parsed.memories : [],
       vibes: parsed.vibes ?? {},
       circles: Array.isArray(parsed.circles) ? parsed.circles : [],
+      edits: parsed.edits ?? {},
+      feelings: parsed.feelings ?? {},
     };
   } catch {
     return empty();
@@ -166,9 +175,14 @@ export function saveState(state: SoloState): void {
 }
 
 /** Built-ins are not persisted — they ship with the build, so storing copies
- *  would freeze them at whatever they were when someone first visited. */
+ *  would freeze them at whatever they were when someone first visited. Any
+ *  changes the user has made to one are replayed over the top instead. */
 export function allMuses(state: SoloState): SoloMuse[] {
-  return [...state.muses, ...builtinMuses()];
+  const edits = state.edits ?? {};
+  return [
+    ...state.muses,
+    ...builtinMuses().map((m) => (edits[m.id] ? applyPatch(m, edits[m.id]) : m)),
+  ];
 }
 
 export function findMuse(state: SoloState, id: string): SoloMuse | undefined {
@@ -331,6 +345,8 @@ export function deleteMuse(state: SoloState, museId: string): SoloState {
     conversations,
     memories: state.memories.filter((m) => m.museId !== museId),
     vibes: Object.fromEntries(Object.entries(state.vibes ?? {}).filter(([k]) => k !== museId)),
+    feelings: Object.fromEntries(Object.entries(state.feelings ?? {}).filter(([k]) => k !== museId)),
+    edits: Object.fromEntries(Object.entries(state.edits ?? {}).filter(([k]) => k !== museId)),
     circles: (state.circles ?? [])
       .map((c) => ({ ...c, memberIds: c.memberIds.filter((id) => id !== museId) }))
       /* A circle needs two people to be a circle. */
@@ -347,4 +363,128 @@ export function deleteCircle(state: SoloState, circleId: string): SoloState {
     conversations,
     circles: (state.circles ?? []).filter((c) => c.id !== circleId),
   };
+}
+
+/* ------------------------------------------------- editing who they are */
+
+/* What the user is allowed to change about a Muse.
+ *
+ * Every field here exists twice: once on the card, where it is display, and
+ * once inside `persona`, which is what the model actually reads. They are kept
+ * in step by applyPatch rather than by the caller, because letting a rename
+ * update the card and not the prompt would produce someone who is called Maya
+ * on screen and answers to a different name.
+ */
+export interface MusePatch {
+  name?: string;
+  relationshipType?: string;
+  description?: string;
+  traits?: string[];
+  /** WHO YOU ARE — the voice profile. */
+  brief?: string;
+  /** Verbatim messages the model copies the texture of. */
+  samples?: string;
+  /** Behaviour, in the user's own words. */
+  extra?: string;
+  arch?: string;
+  texture?: string;
+}
+
+/** Fields that were explicitly set, so an untouched field is left alone and a
+ *  deliberately-emptied one is honoured. */
+function defined<T extends object>(patch: T): Partial<T> {
+  return Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)) as Partial<T>;
+}
+
+export function applyPatch(m: SoloMuse, patch: MusePatch): SoloMuse {
+  const p = defined(patch);
+  const merged: SoloMuse = { ...m, ...p };
+
+  /* A character with no profile at all -- one built before the Presence port,
+     whose customInstructions were too thin for migrate() to rebuild from. If
+     the user has now written a brief, that is enough to give them one, which
+     turns this screen into the way to rescue those rather than start again. */
+  if (!m.persona) {
+    if (!merged.brief?.trim()) return merged;
+    return {
+      ...merged,
+      persona: {
+        them: merged.name,
+        you: "",
+        relationship: merged.relationshipType || "someone close",
+        arch: merged.arch ?? "other",
+        texture: merged.texture ?? "close",
+        mode: "character",
+        brief: merged.brief,
+        samples: merged.samples,
+        extra: merged.extra,
+      },
+    };
+  }
+
+  return {
+    ...merged,
+    persona: {
+      ...m.persona,
+      them: merged.name,
+      relationship: merged.relationshipType,
+      arch: p.arch ?? m.persona.arch,
+      texture: p.texture ?? m.persona.texture,
+      brief: p.brief ?? m.persona.brief,
+      samples: p.samples ?? m.persona.samples,
+      extra: p.extra ?? m.persona.extra,
+    },
+  };
+}
+
+/** Edits a Muse, whoever owns it.
+ *
+ *  A built character is stored, so it is changed in place. A starter is not --
+ *  it comes from the build, and storing a copy would freeze it at whatever it
+ *  was the day someone first opened the app. So a starter's changes are kept as
+ *  an overlay against its id and replayed by allMuses.
+ *
+ *  Keeping the id either way is the point: the conversation, the memories, the
+ *  circles and the vibe are all keyed by it, so editing someone never costs you
+ *  the history you have with them. */
+export function editMuse(state: SoloState, museId: string, patch: MusePatch): SoloState {
+  if (state.muses.some((m) => m.id === museId)) {
+    return { ...state, muses: state.muses.map((m) => (m.id === museId ? applyPatch(m, patch) : m)) };
+  }
+  return {
+    ...state,
+    edits: {
+      ...(state.edits ?? {}),
+      [museId]: { ...(state.edits?.[museId] ?? {}), ...defined(patch) },
+    },
+  };
+}
+
+/** Puts a starter back to how it shipped. Only meaningful for a starter: a
+ *  built character has no original to go back to.
+ *
+ *  Clears the standing state as well as the profile. They shipped without one,
+ *  and a reset that leaves "prickly, a bit off with you" sitting in the header
+ *  looks like the reset failed. The conversation and the memories are kept --
+ *  those are the user's, not the character's. */
+export function resetMuse(state: SoloState, museId: string): SoloState {
+  const edits = { ...(state.edits ?? {}) };
+  const feelings = { ...(state.feelings ?? {}) };
+  delete edits[museId];
+  delete feelings[museId];
+  return { ...state, edits, feelings };
+}
+
+export function isEdited(state: SoloState, museId: string): boolean {
+  return Boolean(state.edits?.[museId] && Object.keys(state.edits[museId]).length);
+}
+
+/* --------------------------------------------------------- how they feel */
+
+export function feelingsOf(state: SoloState, museId: string): Feelings {
+  return state.feelings?.[museId] ?? DEFAULT_FEELINGS;
+}
+
+export function setFeelings(state: SoloState, museId: string, feelings: Feelings): SoloState {
+  return { ...state, feelings: { ...(state.feelings ?? {}), [museId]: feelings } };
 }

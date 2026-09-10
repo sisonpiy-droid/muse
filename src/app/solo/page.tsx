@@ -4,17 +4,20 @@ import { useEffect, useRef, useState } from "react";
 
 import { Avatar } from "@/components/Avatar";
 import { CircleChat } from "@/components/CircleChat";
+import { EditMuse } from "@/components/EditMuse";
 import { ImportPersona } from "@/components/ImportPersona";
 import { MessageActions } from "@/components/MessageActions";
 import {
-  DEFAULT_VIBE, MOODS, REGISTERS, TOPICS, splitBurst, vibeSummary, type Vibe,
+  DEFAULT_VIBE, MOODS, REGISTERS, TOPICS, feelingsSummary, hasFeelings, splitBurst,
+  vibeSummary, type Vibe,
 } from "@/lib/presence/persona";
 import { safeFilename, transcriptMarkdown } from "@/lib/export";
 import {
-  addMemories, builtinMuses, circleOf, deleteCircle, deleteConversation, deleteFrom,
-  deleteMessage, deleteMuse, download, editMessage,
-  findMuse, knownTo, loadState, membersOf, relevantMemories, saveState,
-  type SoloCircle, type SoloMessage, type SoloMuse, type SoloState,
+  addMemories, allMuses, circleOf, deleteCircle, deleteConversation, deleteFrom,
+  deleteMessage, deleteMuse, download, editMessage, editMuse, feelingsOf,
+  findMuse, isEdited, knownTo, loadState, membersOf, relevantMemories, resetMuse,
+  saveState, setFeelings,
+  type SoloMessage, type SoloMuse, type SoloState,
 } from "@/lib/solo/store";
 
 /* Solo MUSE — the whole product with no database and no account.
@@ -31,6 +34,7 @@ import {
 type View =
   | { kind: "home" }
   | { kind: "chat"; museId: string }
+  | { kind: "edit"; museId: string }
   | { kind: "import" }
   | { kind: "circle"; circleId: string }
   | { kind: "new-circle" };
@@ -109,6 +113,32 @@ export default function SoloPage() {
     );
   }
 
+  if (view.kind === "edit") {
+    const muse = findMuse(state, view.museId);
+    if (!muse) { setView({ kind: "home" }); return null; }
+    return (
+      <EditMuse
+        key={muse.id}
+        muse={muse}
+        feelings={feelingsOf(state, muse.id)}
+        /* A starter with a standing state but no profile changes is still
+           something to put back, so both count. */
+        resettable={
+          muse.builtin && (isEdited(state, muse.id) || hasFeelings(feelingsOf(state, muse.id)))
+        }
+        onCancel={() => setView({ kind: "chat", museId: muse.id })}
+        onSave={(patch, feelings) => {
+          update(setFeelings(editMuse(state, muse.id, patch), muse.id, feelings));
+          setView({ kind: "chat", museId: muse.id });
+        }}
+        onReset={() => {
+          update(resetMuse(state, muse.id));
+          setView({ kind: "chat", museId: muse.id });
+        }}
+      />
+    );
+  }
+
   if (view.kind === "chat") {
     const muse = findMuse(state, view.museId);
     if (!muse) { setView({ kind: "home" }); return null; }
@@ -118,6 +148,7 @@ export default function SoloPage() {
         state={state}
         update={update}
         onBack={() => setView({ kind: "home" })}
+        onEdit={() => setView({ kind: "edit", museId: muse.id })}
       />
     );
   }
@@ -127,6 +158,7 @@ export default function SoloPage() {
       state={state}
       update={update}
       onOpen={(id) => setView({ kind: "chat", museId: id })}
+      onEdit={(id) => setView({ kind: "edit", museId: id })}
       onImport={() => setView({ kind: "import" })}
       onOpenCircle={(id) => setView({ kind: "circle", circleId: id })}
       onNewCircle={() => setView({ kind: "new-circle" })}
@@ -137,22 +169,32 @@ export default function SoloPage() {
 /* ------------------------------------------------------------------ home */
 
 function SoloHome({
-  state, update, onOpen, onImport, onOpenCircle, onNewCircle,
+  state, update, onOpen, onEdit, onImport, onOpenCircle, onNewCircle,
 }: {
   state: SoloState;
   update: (s: SoloState) => void;
   onOpen: (id: string) => void;
+  onEdit: (id: string) => void;
   onImport: () => void;
   onOpenCircle: (id: string) => void;
   onNewCircle: () => void;
 }) {
   const [name, setName] = useState(state.userName ?? "");
-  const muses = [...state.muses, ...builtinMuses()];
+  const muses = allMuses(state);
 
   const talked = muses
     .filter((m) => (state.conversations[m.id]?.length ?? 0) > 0)
     .sort((a, b) => lastAt(state, b.id) - lastAt(state, a.id));
   const rest = muses.filter((m) => !(state.conversations[m.id]?.length ?? 0));
+
+  /* Grouped rather than one long grid. Sixteen cards in a row is a list to be
+     got through; three labelled groups is a choice. Insertion order decides
+     the sections, so the order in personas.ts is the order on screen. */
+  const groups = rest.reduce((acc, m) => {
+    const key = m.category || "Someone else";
+    (acc[key] ??= []).push(m);
+    return acc;
+  }, {} as Record<string, SoloMuse[]>);
 
   return (
     <main className="shell">
@@ -165,8 +207,8 @@ function SoloHome({
         <div style={{ marginTop: "2rem" }}>
           <h1 className="display">Who do you want<br />to talk to?</h1>
           <p className="lede">
-            Build someone from a real chat export, or start with one of four already here. They
-            remember what you tell them, and everything stays in this browser.
+            Build someone from a real chat export, or start with one of the {muses.length} already here.
+            They remember what you tell them, and everything stays in this browser.
           </p>
           <div className="row" style={{ maxWidth: "22rem" }}>
             <input
@@ -201,7 +243,9 @@ function SoloHome({
               <h2 className="section-title">Continue talking</h2>
               <div className="card-grid">
                 {talked.map((m) => (
-                  <MuseCard key={m.id} muse={m} state={state} update={update} onOpen={onOpen} />
+                  <MuseCard
+                    key={m.id} muse={m} state={state} update={update} onOpen={onOpen} onEdit={onEdit}
+                  />
                 ))}
               </div>
             </>
@@ -247,12 +291,18 @@ function SoloHome({
             </button>
           </div>
 
-          <h2 className="section-title">Or start with someone here</h2>
-          <div className="card-grid">
-            {rest.map((m) => (
-              <MuseCard key={m.id} muse={m} state={state} update={update} onOpen={onOpen} />
-            ))}
-          </div>
+          {Object.entries(groups).map(([category, people]) => (
+            <div key={category}>
+              <h2 className="section-title">{category}</h2>
+              <div className="card-grid">
+                {people.map((m) => (
+                  <MuseCard
+                    key={m.id} muse={m} state={state} update={update} onOpen={onOpen} onEdit={onEdit}
+                  />
+                ))}
+              </div>
+            </div>
+          ))}
 
           <div className="row" style={{ marginTop: "2.5rem", gap: "0.75rem" }}>
             <button
@@ -287,8 +337,14 @@ function SoloHome({
 }
 
 function MuseCard({
-  muse, state, update, onOpen,
-}: { muse: SoloMuse; state: SoloState; update: (s: SoloState) => void; onOpen: (id: string) => void }) {
+  muse, state, update, onOpen, onEdit,
+}: {
+  muse: SoloMuse;
+  state: SoloState;
+  update: (s: SoloState) => void;
+  onOpen: (id: string) => void;
+  onEdit: (id: string) => void;
+}) {
   const log = state.conversations[muse.id] ?? [];
   const last = log[log.length - 1];
   const remembered = state.memories.filter((m) => m.museId === muse.id).length;
@@ -320,6 +376,7 @@ function MuseCard({
     {/* Outside the card button — a delete control nested inside a button is
         not clickable, and screen readers announce it as one control. */}
     <div className="card-actions">
+      <button className="safe" onClick={() => onEdit(muse.id)}>edit</button>
       {hasThread && (
         <button
           onClick={() => {
@@ -356,8 +413,14 @@ OK also forgets what they learned. Cancel keeps the memories.`)) {
 /* ------------------------------------------------------------------ chat */
 
 function SoloChat({
-  muse, state, update, onBack,
-}: { muse: SoloMuse; state: SoloState; update: (s: SoloState) => void; onBack: () => void }) {
+  muse, state, update, onBack, onEdit,
+}: {
+  muse: SoloMuse;
+  state: SoloState;
+  update: (s: SoloState) => void;
+  onBack: () => void;
+  onEdit: () => void;
+}) {
   const log = state.conversations[muse.id] ?? [];
   const [draft, setDraft] = useState("");
   const [streaming, setStreaming] = useState("");
@@ -371,6 +434,11 @@ function SoloChat({
   const vibe: Vibe = state.vibes?.[muse.id] ?? DEFAULT_VIBE;
   const setVibe = (next: Vibe) =>
     update({ ...state, vibes: { ...(state.vibes ?? {}), [muse.id]: next } });
+
+  /* Standing state, set on the edit screen and unchanged by anything here. Read
+     fresh on every render so a change made in the middle of a conversation
+     applies to the next message rather than the next reload. */
+  const feelings = feelingsOf(state, muse.id);
 
   useEffect(() => {
     foot.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -441,6 +509,9 @@ function SoloChat({
           mood: vibe.mood,
           topic: vibe.topic,
           register: vibe.register,
+          /* How they are generally, as opposed to how this conversation is
+             going. Sent every turn: it is a state, not an event. */
+          feelings: hasFeelings(feelings) ? feelings : null,
           memories,
           userName: state.userName,
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
@@ -565,9 +636,13 @@ function SoloChat({
             {isDefaultVibe(vibe) ? null : (
               <span style={{ color: "var(--accent)" }}> · {vibeSummary(vibe)}</span>
             )}
+            {hasFeelings(feelings) && (
+              <span style={{ color: "var(--muted)" }}> · {feelingsSummary(feelings)}</span>
+            )}
           </div>
         </div>
         <div className="row" style={{ marginLeft: "auto", gap: "0.5rem" }}>
+          <button className="link-btn" onClick={onEdit} title={`Edit ${muse.name}`}>edit</button>
           <button className="link-btn" onClick={exportChat} disabled={!log.length} title="Export conversation">chat ↓</button>
           <button className="link-btn" onClick={exportPersona} title="Export persona">persona ↓</button>
         </div>
@@ -661,8 +736,8 @@ function SoloChat({
                     ? "Nothing set — they will be however they are."
                     : `From your next message: ${vibeSummary(vibe)}.`}
                 </strong>{" "}
-                Mood suits a person having a day; if you find yourself reaching for it constantly,
-                leave it on &ldquo;however they are&rdquo; and let it land where it lands.
+                This is for today only. For something standing &mdash; what they have going on at
+                the moment, or where things are between you &mdash; use <em>edit</em> at the top.
               </p>
             </div>
           )}
@@ -704,7 +779,7 @@ function NewCircle({
   onCancel: () => void;
   onCreate: (name: string, memberIds: string[]) => void;
 }) {
-  const everyone = [...state.muses, ...builtinMuses()];
+  const everyone = allMuses(state);
   const [picked, setPicked] = useState<string[]>([]);
   const [name, setName] = useState("");
 
@@ -754,7 +829,7 @@ function NewCircle({
       {eligible.length < 2 && (
         <p className="fine" style={{ marginTop: "1rem" }}>
           You need at least two people with a full profile. Build someone from a chat export, or
-          start a conversation with one of the four already here.
+          start a conversation with one of the people already here.
         </p>
       )}
 

@@ -3,7 +3,7 @@ import { z } from "zod";
 import { streamGuarded, userFacingError } from "@/lib/ai";
 import { looksLikeRefusal } from "@/lib/ai/refusal";
 import { buildMuseSystemPrompt } from "@/lib/muse/prompt";
-import { personaSystem } from "@/lib/presence/persona";
+import { personaSystem, type Feelings } from "@/lib/presence/persona";
 
 /* Solo mode's only server dependency.
  *
@@ -79,6 +79,15 @@ const bodySchema = z.object({
   mood: z.string().max(20).optional(),
   topic: z.string().max(20).optional(),
   register: z.string().max(20).optional(),
+  /* Standing emotional state. Separate from `mood` above, which is this
+     conversation only -- this one persists and the user sets it rarely. */
+  feelings: z
+    .object({
+      mood: z.string().max(20).default("any"),
+      warmth: z.string().max(20).default("normal"),
+      note: z.string().max(600).default(""),
+    })
+    .nullish(),
   memories: z.array(z.string().max(400)).max(12).default([]),
   userName: z.string().trim().max(80).nullish(),
   timezone: z.string().max(64).nullish(),
@@ -101,7 +110,10 @@ export async function POST(req: Request) {
   if (!parsed.success) {
     return Response.json({ error: "Check the request and try again." }, { status: 400 });
   }
-  const { muse, persona, knows, mood, topic, register, messages, memories, userName, timezone } = parsed.data;
+  const { muse, persona, knows, mood, topic, register, feelings, messages, memories, userName, timezone } =
+    parsed.data;
+
+  const standing: Feelings | undefined = feelings ?? undefined;
 
   /* Drop the model's own past refusals from the history. Once "I cannot
      roleplay this persona" is in the transcript the model continues in that
@@ -124,7 +136,7 @@ export async function POST(req: Request) {
         mood: mood || "any",
         topic: topic || "any",
         register: register || "texts",
-      }, timezone ?? undefined) +
+      }, timezone ?? undefined, standing) +
       (knows?.length
         ? `
 
@@ -170,7 +182,8 @@ You may mention them, ask after them, or have opinions about them. Do not invent
         memories,
         false,
         { mood: mood || "any", topic: topic || "any", register: register || "texts" },
-        timezone ?? undefined
+        timezone ?? undefined,
+        standing
       )
     : undefined;
 

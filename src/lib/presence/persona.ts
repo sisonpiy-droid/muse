@@ -161,6 +161,36 @@ export const MOODS = {
   prickly: { label: "Prickly", block: `You are irritable. Short, a bit sharp, not cruel. Something has annoyed you and it isn't them, mostly.` },
 };
 
+/* Where things stand between the two of you.
+ *
+ * Separate from mood on purpose: a person can be in a foul mood and still be
+ * warm with you, and can be perfectly cheerful and still keeping you at arm's
+ * length. Collapsing the two into one slider loses the second case entirely,
+ * which is the more interesting one. */
+export const WARMTHS = {
+  normal: { label: "Same as ever", block: "" },
+  close: {
+    label: "Especially close",
+    block: `Things are good between you at the moment and you are not hiding it. You reach for them first rather than waiting to be asked. You use their name, or whatever you call them, more than usual.`,
+  },
+  off: {
+    label: "A bit off with you",
+    block: `Something between you is unresolved and you have not decided to let it go yet. You are not cold, but you are shorter than usual and you do not go out of your way. If they are warm with you it lands, and you soften a little, and then you catch yourself.`,
+  },
+  distant: {
+    label: "Pulled away",
+    block: `You have pulled back. Replies are brief and correct rather than warm. You answer what was asked and you do not add anything. You are not punishing them and you would not describe yourself as upset, which is part of the problem. Do not explain the distance.`,
+  },
+  thawing: {
+    label: "Coming round",
+    block: `Something was wrong between you and it is mending. You are warmer than you have been, and slightly awkward about it. You make an effort and you do not draw attention to the fact that you are making one.`,
+  },
+  guilty: {
+    label: "Feeling guilty",
+    block: `You think you have let them down and it is sitting with you. You are more attentive than usual and you overdo the small kindnesses. You do not lead with an apology, because you are not sure how to start one.`,
+  },
+};
+
 export const TOPICS = {
   any: { label: "Whatever comes up", block: "" },
   catchup: { label: "My week", block: `They want to tell you about their life. Ask, then actually listen and follow up on the detail rather than moving on.` },
@@ -279,7 +309,10 @@ export function personaSystem(
   memories: string[] = [],
   tender = false,
   vibe: { mood: string; topic: string; register: string } = { mood: "any", topic: "any", register: "texts" },
-  timeZone?: string
+  timeZone?: string,
+  /* Standing state, set once and carried between conversations. Optional so
+     every existing call site keeps producing exactly the prompt it did. */
+  feelings?: Feelings
 ): string {
   const callsYou = p.callsYou?.trim() || p.you?.trim() || "";
   const arch = pick(ARCHETYPES, p.arch, ARCHETYPES.other);
@@ -305,7 +338,7 @@ HOW YOU ARE WRITING RIGHT NOW
 ${reg.block}
 ${reg.burst ? `- Send several short messages instead of one tidy one. Separate each with a line containing only ---` : `- One message only. Do not use --- separators.`}
 ${mood.block ? `\nWHAT SORT OF MOOD YOU'RE IN\n${mood.block}` : ""}
-${topic.block ? `\nWHAT THIS CONVERSATION IS FOR\n${topic.block}` : ""}
+${topic.block ? `\nWHAT THIS CONVERSATION IS FOR\n${topic.block}` : ""}${feelings ? feelingsBlock(feelings, p, vibe.mood === "any") : ""}
 
 ${about ? `WHAT ${p.you.toUpperCase()} SAYS YOU ARE LIKE
 ${about}
@@ -360,6 +393,75 @@ export const vibeSummary = (v: Vibe): string => {
   parts.push(pick(REGISTERS, v.register, REGISTERS.texts).label.toLowerCase());
   return parts.join(", ");
 };
+
+
+/* ------------------------------------------------------------ feelings */
+
+/* Feelings are a standing state; a Vibe is this conversation.
+ *
+ * The distinction is the whole point of having both. The vibe panel answers
+ * "how is this going right now" and is a dial you turn when you want something
+ * particular from a conversation. Feelings answer "what is going on with them
+ * at the moment", persist between sessions, and are meant to be set once and
+ * left alone for a week.
+ *
+ * `mood` overlaps with the vibe's mood deliberately, and the vibe wins for the
+ * turn it is set on -- a standing gloom should not override you explicitly
+ * asking for someone to be teasing today. When the vibe is left at "however
+ * they are", the standing mood is what fills that space, which is what makes it
+ * feel like a person having a period of their life rather than a slider.
+ */
+export interface Feelings {
+  /** A MOODS key, but standing rather than for one conversation. */
+  mood: string;
+  /** A WARMTHS key: where things are between the two of you. */
+  warmth: string;
+  /** In the user's own words: what is going on in this person's life. */
+  note: string;
+}
+
+export const DEFAULT_FEELINGS: Feelings = { mood: "any", warmth: "normal", note: "" };
+
+export const hasFeelings = (f: Feelings | undefined): boolean =>
+  Boolean(f && (f.mood !== "any" || f.warmth !== "normal" || f.note.trim()));
+
+export const feelingsSummary = (f: Feelings): string => {
+  const parts: string[] = [];
+  if (f.mood && f.mood !== "any") parts.push(pick(MOODS, f.mood, MOODS.any).label.toLowerCase());
+  if (f.warmth && f.warmth !== "normal") parts.push(pick(WARMTHS, f.warmth, WARMTHS.normal).label.toLowerCase());
+  const note = f.note.trim().split(/\s+/).filter(Boolean);
+  /* Truncated without an ellipsis this reads as a bug rather than a summary:
+     "her flat is being sold and" looks like something got cut off, which it
+     did. */
+  if (note.length) {
+    parts.push(
+      (note.length > 6 ? `${note.slice(0, 6).join(" ")}…` : note.join(" ")).toLowerCase()
+    );
+  }
+  return parts.join(" · ");
+};
+
+/** The standing-state block. `moodIsFree` is false when the conversation has
+ *  its own mood set, in which case the standing mood stands down for the turn
+ *  and only the warmth and the note carry over. */
+export function feelingsBlock(f: Feelings, p: PersonaDraft, moodIsFree: boolean): string {
+  const mood = moodIsFree && f.mood !== "any" ? pick(MOODS, f.mood, MOODS.any).block : "";
+  const warmth = pick(WARMTHS, f.warmth, WARMTHS.normal).block;
+  const note = f.note.trim();
+  if (!mood && !warmth && !note) return "";
+
+  return `
+
+WHERE YOU ARE IN YOUR OWN LIFE AT THE MOMENT
+This is not a passing mood. It has been true for a while, it is still true now,
+and it will still be true the next time you two talk.
+${[mood, warmth].filter(Boolean).join("\n")}${note ? `\n${p.you} knows this much about what you have going on:\n"""\n${note}\n"""` : ""}
+- This is your life, not a subject. It should change what you notice first, how
+  much patience you have, and what you are quietly preoccupied with.
+- Do not open with it and do not summarise it. Nobody announces their own state.
+  Let it come out sideways, in what you bring up and what you are short about.
+- If ${p.you} asks how you are, answer honestly from this rather than saying fine.`;
+}
 
 
 /* ------------------------------------------------------------- circles */

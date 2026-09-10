@@ -437,3 +437,6 @@ a { color: inherit; }
   text-decoration-color: var(--edge-lit);
 }
 .card-actions button:hover { color: var(--danger); }
+/* Every other card action deletes something. Editing does not, and turning it
+   the same warning red says it does. */
+.card-actions button.safe:hover { color: var(--accent); }

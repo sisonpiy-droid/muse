@@ -3,9 +3,9 @@
 import { useEffect, useRef, useState } from "react";
 
 import { Avatar } from "@/components/Avatar";
-import { REGISTERS, splitBurst } from "@/lib/presence/persona";
+import { REGISTERS, hasFeelings, splitBurst } from "@/lib/presence/persona";
 import {
-  deleteFrom, deleteMessage, editMessage, membersOf,
+  deleteFrom, deleteMessage, editMessage, feelingsOf, membersOf,
   type SoloCircle, type SoloMessage, type SoloMuse, type SoloState,
 } from "@/lib/solo/store";
 import { MessageActions } from "./MessageActions";
@@ -99,6 +99,10 @@ export function CircleChat({
             userName: state.userName,
             timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
             register: "texts",
+            /* Each speaker brings their own standing state into the room. One
+               person can be having a bad month while everyone else is fine,
+               which is most group chats. */
+            feelings: hasFeelings(feelingsOf(state, m.id)) ? feelingsOf(state, m.id) : null,
           }),
         });
 
