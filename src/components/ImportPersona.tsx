@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 
-import { readExportFile, sampleWindows, styleOf, type ParsedChat } from "@/lib/chat-import";
+import { UnreadableExport, parseText, readExportFile, sampleWindows, styleOf, type ParsedChat } from "@/lib/chat-import";
 import type { SoloMuse } from "@/lib/solo/store";
 
 /* Create a Muse from a real chat export.
@@ -11,7 +11,7 @@ import type { SoloMuse } from "@/lib/solo/store";
  * habits and a sampled excerpt are sent onward — never the whole export.
  */
 
-type Stage = "pick-file" | "pick-person" | "about" | "building" | "review";
+type Stage = "pick-file" | "paste" | "pick-person" | "about" | "building" | "review";
 type Mode = "memorial" | "living" | "character";
 
 export function ImportPersona({
@@ -30,16 +30,44 @@ export function ImportPersona({
   const [notes, setNotes] = useState("");
   const [brief, setBrief] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [hint, setHint] = useState<string | null>(null);
+  const [pasted, setPasted] = useState("");
   const filePick = useRef<HTMLInputElement>(null);
 
   async function onFile(file: File) {
     setError(null);
+    setHint(null);
     try {
       const result = await readExportFile(file);
       setParsed(result);
       setStage("pick-person");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Couldn't read that file.");
+      if (e instanceof UnreadableExport) {
+        /* WhatsApp's format varies by platform, locale and version, and this
+           parser will not have seen every one. Showing the line it choked on
+           turns a dead end into something identifiable. */
+        setError(e.message);
+        setHint(e.sampleLine ? `The first line looks like:  ${e.sampleLine}` : null);
+      } else {
+        setError(e instanceof Error ? e.message : "Couldn't read that file.");
+        setHint(null);
+      }
+    }
+  }
+
+  function onPaste() {
+    setError(null);
+    setHint(null);
+    try {
+      setParsed(parseText(pasted));
+      setStage("pick-person");
+    } catch (e) {
+      if (e instanceof UnreadableExport) {
+        setError(e.message);
+        setHint(e.sampleLine ? `The first line looks like:  ${e.sampleLine}` : null);
+      } else {
+        setError(e instanceof Error ? e.message : "Couldn't read that.");
+      }
     }
   }
 
@@ -127,7 +155,51 @@ export function ImportPersona({
             <strong>The file stays on this device.</strong> It is read in your browser; only a short
             excerpt and the measurements are sent on to build them.
           </p>
-          {error && <p className="error" role="alert">{error}</p>}
+
+          {error && (
+            <div style={{ marginTop: "1rem" }}>
+              <p className="error" role="alert">{error}</p>
+              {hint && (
+                <p className="fine" style={{ fontFamily: "monospace", wordBreak: "break-all" }}>{hint}</p>
+              )}
+              <p className="fine">
+                Exports differ between phones and languages. Pasting the text works even when the
+                file doesn&apos;t.
+              </p>
+            </div>
+          )}
+
+          <button className="link-btn" onClick={() => { setStage("paste"); setError(null); }}>
+            Paste the text instead
+          </button>
+        </>
+      )}
+
+      {stage === "paste" && (
+        <>
+          <h1 className="display" style={{ fontSize: "1.9rem" }}>Paste the conversation.</h1>
+          <p className="lede">
+            Open the exported .txt, select all, paste it here. It is read in this browser and never
+            uploaded.
+          </p>
+          <textarea
+            className="input"
+            rows={12}
+            value={pasted}
+            onChange={(e) => setPasted(e.target.value)}
+            placeholder={"[03/02/2023, 08:12:04] Dad: morning love\n[03/02/2023, 08:12:22] Dad: you up"}
+            style={{ fontFamily: "monospace", fontSize: "0.8rem" }}
+          />
+          {error && (
+            <div style={{ marginTop: "0.75rem" }}>
+              <p className="error" role="alert">{error}</p>
+              {hint && <p className="fine" style={{ fontFamily: "monospace", wordBreak: "break-all" }}>{hint}</p>}
+            </div>
+          )}
+          <div className="row" style={{ marginTop: "1.25rem" }}>
+            <button className="btn" onClick={onPaste} disabled={pasted.trim().length < 20}>Read it</button>
+            <button className="link-btn" onClick={() => { setStage("pick-file"); setError(null); }}>Back</button>
+          </div>
         </>
       )}
 

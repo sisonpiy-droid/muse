@@ -290,13 +290,37 @@ export function sampleWindows(messages: ChatMessage[], name: string, budget = 11
   return out.join("\n\n···\n\n");
 }
 
+/** What a file looked like when nothing could be read from it.
+ *
+ *  WhatsApp's export format varies by platform, locale and version, and this
+ *  parser will not have seen every one. When it fails the useful thing is not
+ *  "that didn't work" but a sample of the line it could not read, so the format
+ *  can be identified. Shown only on the user's own screen; nothing is sent. */
+export class UnreadableExport extends Error {
+  constructor(readonly sampleLine: string, readonly lineCount: number) {
+    super(
+      lineCount === 0
+        ? "That file is empty."
+        : `Read ${lineCount.toLocaleString()} lines but couldn't recognise any messages in them.`
+    );
+    this.name = "UnreadableExport";
+  }
+}
+
 /** Reads a .txt or .zip export. */
 export async function readExportFile(file: File): Promise<ParsedChat> {
-  const isZip = /\.zip$/i.test(file.name);
+  const isZip = /\.zip$/i.test(file.name) || file.type === "application/zip";
   const raw = isZip ? await unzipLargestTxt(await file.arrayBuffer()) : await file.text();
+  return parseText(raw);
+}
+
+/** Parses already-read text, so a format this parser cannot open as a file can
+ *  still be pasted in. */
+export function parseText(raw: string): ParsedChat {
   const parsed = parseExport(raw);
   if (!parsed.participants.length) {
-    throw new Error("Couldn't find any messages in that file. It may not be a WhatsApp export.");
+    const lines = raw.split(/\r?\n/).filter((l) => l.trim());
+    throw new UnreadableExport((lines[0] ?? "").slice(0, 120), lines.length);
   }
   return parsed;
 }

@@ -42,3 +42,6 @@ next-env.d.ts
 
 # Local Postgres data dir, if one is ever created here
 .pgdata/
+
+.vercel
+.env*

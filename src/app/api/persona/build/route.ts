@@ -15,6 +15,13 @@ import { getProvider, userFacingError } from "@/lib/ai";
 
 export const runtime = "nodejs";
 
+/* Building a brief is the slowest call in the product: a real export produces a
+   large prompt, and Gemini spends several hundred tokens reasoning before it
+   writes. Measured at 14s on a realistic payload, which is close enough to the
+   platform default that a bigger chat would be killed mid-generation and
+   surface as a network error with nothing to explain it. */
+export const maxDuration = 60;
+
 const bodySchema = z.object({
   name: z.string().trim().min(1).max(40),
   relationship: z.string().trim().min(1).max(60),

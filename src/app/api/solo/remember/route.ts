@@ -10,6 +10,8 @@ import { getProvider } from "@/lib/ai";
 
 export const runtime = "nodejs";
 
+export const maxDuration = 60;
+
 const bodySchema = z.object({
   messages: z
     .array(z.object({ role: z.enum(["user", "assistant"]), content: z.string().max(8000) }))
