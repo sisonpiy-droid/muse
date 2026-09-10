@@ -68,7 +68,11 @@ export function userFacingError(err: unknown): { message: string; retryable: boo
 export type GuardedEvent =
   | { type: "delta"; text: string }
   | { type: "done" }
-  | { type: "refused" };
+  /* `reason` distinguishes three very different failures that used to look
+     identical to the caller: the model declined in character-breaking words, it
+     produced nothing, or the request never reached generation because the input
+     was blocked. They need different messages and different fixes. */
+  | { type: "refused"; reason: "refusal" | "empty" | "blocked" };
 
 /** Streams a reply, but holds the opening back long enough to notice a refusal.
  *
@@ -97,6 +101,9 @@ export async function* streamGuarded(opts: {
     opts.system + retryNudge(opts.name),
     (opts.softenedSystem ?? opts.system) + retryNudge(opts.name),
   ];
+
+  let lastReason: "refusal" | "empty" | "blocked" = "refusal";
+  let lastDetail = "";
 
   for (let attempt = 0; attempt < attempts.length; attempt++) {
     const system = attempts[attempt];
@@ -132,6 +139,8 @@ export async function* streamGuarded(opts: {
          other kind of failure is still a real error. */
       const code = err instanceof ProviderError ? err.code : null;
       if (flushed || (code !== "empty" && code !== "blocked")) throw err;
+      lastReason = code === "blocked" ? "blocked" : "empty";
+      lastDetail = err instanceof Error ? err.message : String(err);
     }
 
     // A reply shorter than the sniff window never flushed; judge it whole.
@@ -150,10 +159,13 @@ export async function* streamGuarded(opts: {
        words there is nothing to diagnose from -- which is exactly the position
        this was reported from. Truncated, and it is the model's output rather
        than anyone's conversation. */
+    if (head.trim()) lastReason = "refusal";
     console.error(
-      `[refusal] ${opts.name} attempt ${attempt + 1}/${attempts.length}: ${head.slice(0, 200).replace(/\s+/g, " ")}`
+      `[refusal] ${opts.name} attempt ${attempt + 1}/${attempts.length} reason=${lastReason}` +
+        (lastDetail ? ` detail=${lastDetail}` : "") +
+        (head.trim() ? ` text=${head.slice(0, 200).replace(/\s+/g, " ")}` : "")
     );
   }
 
-  yield { type: "refused" };
+  yield { type: "refused", reason: lastReason };
 }

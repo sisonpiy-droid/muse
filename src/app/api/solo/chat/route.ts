@@ -190,9 +190,13 @@ You may mention them, ask after them, or have opinions about them. Do not invent
         })) {
           if (evt.type === "delta") send({ type: "delta", text: evt.text });
           else if (evt.type === "refused") {
+            const who = persona?.them ?? muse.name;
             send({
               type: "error",
-              message: `${persona?.them ?? muse.name} didn't come to the phone. Try saying it differently.`,
+              message:
+                evt.reason === "blocked"
+                  ? `That message couldn't be sent. Something in this conversation is tripping the model's content filter — try rewording the last thing you said.`
+                  : `${who} didn't come to the phone. Try saying it differently.`,
               retryable: true,
             });
           } else send({ type: "done" });

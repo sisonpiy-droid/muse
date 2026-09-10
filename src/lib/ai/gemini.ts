@@ -24,6 +24,25 @@ function headers() {
   return { "content-type": "application/json", "x-goog-api-key": key() };
 }
 
+
+/* Gemini blocks at MEDIUM by default, and that is the wrong threshold for this
+   product. A persona built from a real couple's messages carries their actual
+   affection, and the reply is affection back -- ordinary between partners, and
+   squarely inside what a medium threshold stops. The symptom is not an error
+   but an empty response: the prompt is rejected, three attempts fail in three
+   seconds, and the user is told their partner "didn't come to the phone".
+   Diagnosed from exactly that.
+
+   ONLY_HIGH, not NONE. High-confidence harmful content is still blocked; what
+   changes is that a consenting adult talking to a companion they built is no
+   longer caught by a setting meant for something else. */
+const SAFETY_SETTINGS = [
+  "HARM_CATEGORY_HARASSMENT",
+  "HARM_CATEGORY_HATE_SPEECH",
+  "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+  "HARM_CATEGORY_DANGEROUS_CONTENT",
+].map((category) => ({ category, threshold: "BLOCK_ONLY_HIGH" }));
+
 /** Gemini calls the assistant role "model" and takes the system prompt as its
  *  own field rather than a message. */
 function toGeminiBody(opts: GenerateOptions) {
@@ -42,6 +61,7 @@ function toGeminiBody(opts: GenerateOptions) {
       ...(opts.maxTokens ? { maxOutputTokens: opts.maxTokens } : {}),
     },
   };
+  body.safetySettings = SAFETY_SETTINGS;
   if (opts.system) body.systemInstruction = { parts: [{ text: opts.system }] };
   return body;
 }
@@ -76,9 +96,18 @@ async function post(path: string, body: unknown, signal?: AbortSignal) {
   return res;
 }
 
-function textOf(data: unknown): { text: string; finish?: string; usage?: GenerateResult["usage"] } {
+function textOf(data: unknown): {
+  text: string;
+  finish?: string;
+  blocked?: string;
+  usage?: GenerateResult["usage"];
+} {
   const d = data as {
     candidates?: { content?: { parts?: { text?: string }[] }; finishReason?: string }[];
+    /* Set when the *input* was rejected rather than the output. Without reading
+       it, a blocked prompt is indistinguishable from a model that said nothing,
+       which is what made this take three rounds to find. */
+    promptFeedback?: { blockReason?: string };
     usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; thoughtsTokenCount?: number };
   };
   const cand = d?.candidates?.[0];
@@ -90,6 +119,7 @@ function textOf(data: unknown): { text: string; finish?: string; usage?: Generat
   return {
     text,
     finish: cand?.finishReason,
+    blocked: d?.promptFeedback?.blockReason,
     usage: {
       inputTokens: d?.usageMetadata?.promptTokenCount,
       outputTokens: d?.usageMetadata?.candidatesTokenCount,
@@ -106,8 +136,11 @@ export const geminiProvider: AIProvider = {
     const data = await res.json();
     if (!res.ok) throw classify(res.status, (data as { error?: { message?: string } })?.error?.message || "no detail");
 
-    const { text: rawText, finish, usage } = textOf(data);
+    const { text: rawText, finish, blocked, usage } = textOf(data);
     const text = rawText.trim();
+    if (blocked) {
+      throw new ProviderError("blocked", `The request was blocked before generation (${blocked}).`);
+    }
     if (!text) {
       if (finish === "SAFETY") throw new ProviderError("blocked", "The reply was blocked on safety grounds.");
       if (finish === "MAX_TOKENS") {
@@ -134,14 +167,24 @@ export const geminiProvider: AIProvider = {
     }
 
     let emitted = false;
+    let blockedBy: string | undefined;
+    let lastFinish: string | undefined;
     for await (const payload of sseData(res.body)) {
       try {
-        const { text } = textOf(JSON.parse(payload));
+        const { text, blocked, finish } = textOf(JSON.parse(payload));
+        if (blocked) blockedBy = blocked;
+        if (finish) lastFinish = finish;
         if (text) { emitted = true; yield text; }
       } catch { /* a frame we cannot parse is not worth killing the stream for */ }
     }
 
-    if (!emitted) throw new ProviderError("empty", "The model streamed nothing back.");
+    if (!emitted) {
+      /* Naming the cause matters: a blocked prompt and a model that simply said
+         nothing look identical from the outside, and are fixed differently. */
+      if (blockedBy) throw new ProviderError("blocked", `The request was blocked before generation (${blockedBy}).`);
+      if (lastFinish === "SAFETY") throw new ProviderError("blocked", "The reply was stopped on safety grounds.");
+      throw new ProviderError("empty", `The model streamed nothing back (finishReason: ${lastFinish ?? "none"}).`);
+    }
   },
 
   async generateEmbedding(text: string): Promise<number[] | null> {
