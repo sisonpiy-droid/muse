@@ -351,3 +351,7 @@ a { color: inherit; }
 @media (prefers-contrast: more) {
   :root { --faint: #B0AABF; --edge: #4A4660; }
 }
+
+/* Two fields side by side — names, relationship — as Presence laid them out. */
+.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 0.85rem; }
+@media (max-width: 480px) { .pair { grid-template-columns: 1fr; } }

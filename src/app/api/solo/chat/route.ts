@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { getProvider, userFacingError } from "@/lib/ai";
 import { buildMuseSystemPrompt } from "@/lib/muse/prompt";
+import { personaSystem } from "@/lib/presence/persona";
 
 /* Solo mode's only server dependency.
  *
@@ -49,6 +50,26 @@ const bodySchema = z.object({
     .array(z.object({ role: z.enum(["user", "assistant"]), content: z.string().min(1).max(8000) }))
     .min(1)
     .max(60),
+  /* Someone built from real material sends Presence's whole profile. When it is
+     present it decides the prompt entirely -- the archetype, texture and mode
+     blocks are the reason that build sounds like the person rather than like an
+     assistant wearing their name. */
+  persona: z
+    .object({
+      them: z.string().max(60),
+      you: z.string().max(60),
+      relationship: z.string().max(120).default(""),
+      callsYou: z.string().max(60).optional(),
+      arch: z.string().max(30).default("other"),
+      texture: z.string().max(30).default("close"),
+      mode: z.string().max(30).default("memorial"),
+      samples: z.string().max(14000).optional(),
+      extra: z.string().max(4000).optional(),
+      metrics: z.string().max(4000).optional(),
+      brief: z.string().max(6000).optional(),
+    })
+    .nullish(),
+  register: z.string().max(20).optional(),
   memories: z.array(z.string().max(400)).max(12).default([]),
   userName: z.string().trim().max(80).nullish(),
   timezone: z.string().max(64).nullish(),
@@ -71,7 +92,7 @@ export async function POST(req: Request) {
   if (!parsed.success) {
     return Response.json({ error: "Check the request and try again." }, { status: 400 });
   }
-  const { muse, messages, memories, userName, timezone } = parsed.data;
+  const { muse, persona, register, messages, memories, userName, timezone } = parsed.data;
 
   const total = messages.reduce((n, m) => n + m.content.length, 0)
     + memories.reduce((n, m) => n + m.length, 0);
@@ -79,7 +100,13 @@ export async function POST(req: Request) {
     return Response.json({ error: "This conversation has got too long to send." }, { status: 413 });
   }
 
-  const system = buildMuseSystemPrompt({
+  const system = persona
+    ? personaSystem(persona, memories, false, {
+        mood: "any",
+        topic: "any",
+        register: register || "texts",
+      })
+    : buildMuseSystemPrompt({
     name: muse.name,
     description: muse.description,
     relationshipType: muse.relationshipType,
@@ -104,7 +131,7 @@ export async function POST(req: Request) {
     memories,
     localTime: new Date(),
     timezone: timezone ?? undefined,
-  });
+      });
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream({

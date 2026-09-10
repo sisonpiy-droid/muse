@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { Avatar } from "@/components/Avatar";
 import { ImportPersona } from "@/components/ImportPersona";
+import { REGISTERS, splitBurst } from "@/lib/presence/persona";
 import { safeFilename, transcriptMarkdown } from "@/lib/export";
 import {
   addMemories, builtinMuses, download, findMuse, loadState, relevantMemories, saveState,
@@ -42,9 +43,27 @@ export default function SoloPage() {
     return (
       <ImportPersona
         onCancel={() => setView({ kind: "home" })}
-        onCreate={(muse) => {
+        onCreate={(draft) => {
           const id = `made-${Date.now()}`;
-          update({ ...state, muses: [{ ...muse, id, builtin: false }, ...state.muses] });
+          /* The card fields are only for display; everything the model reads
+             comes from `persona`, which is Presence's whole profile. */
+          update({
+            ...state,
+            userName: state.userName ?? draft.you,
+            muses: [
+              {
+                id,
+                builtin: false,
+                persona: draft,
+                name: draft.them,
+                description: draft.relationship?.trim() || "Built from their messages.",
+                relationshipType: draft.relationship?.trim() || "someone close",
+                category: "Personal",
+                traits: [],
+              },
+              ...state.muses,
+            ],
+          });
           setView({ kind: "chat", museId: id });
         }}
       />
@@ -281,6 +300,10 @@ function SoloChat({
             role: m.from === "user" ? ("user" as const) : ("assistant" as const),
             content: m.content,
           })),
+          /* Present only for someone built from real material. When it is, the
+             server ignores the simple shape above and uses Presence's prompt. */
+          persona: muse.persona ?? null,
+          register: muse.persona ? "texts" : undefined,
           memories,
           userName: state.userName,
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
@@ -315,9 +338,21 @@ function SoloChat({
 
       const reply = acc.trim();
       if (reply) {
+        /* Presence tells a texting persona to send several short messages
+           separated by a line of ---, because that is how people actually text.
+           Splitting them here is what makes that instruction mean anything;
+           without it the separator just shows up in the message. */
+        const burst = muse.persona
+          ? splitBurst(reply, REGISTERS.texts.burst)
+          : [reply];
         const withMuse: SoloMessage[] = [
           ...withUser,
-          { id: `m-${Date.now()}`, from: "muse", content: reply, at: new Date().toISOString() },
+          ...burst.map((content, i) => ({
+            id: `m-${Date.now()}-${i}`,
+            from: "muse" as const,
+            content,
+            at: new Date().toISOString(),
+          })),
         ];
         next = { ...state, conversations: { ...state.conversations, [muse.id]: withMuse } };
         update(next);

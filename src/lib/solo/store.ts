@@ -1,6 +1,7 @@
 "use client";
 
 import { PERSONAS, type Persona } from "@/lib/personas";
+import type { PersonaDraft } from "@/lib/presence/persona";
 import { rankMemories, type RankableMemory } from "@/lib/memory/rank";
 
 /* Solo mode's storage layer — localStorage, no database, no account.
@@ -39,6 +40,11 @@ export interface SoloMuse extends Persona {
   id: string;
   /** Personas that shipped with the app cannot be edited or deleted. */
   builtin: boolean;
+  /* Someone built from real material carries Presence's full profile --
+     archetype, texture, mode, the verbatim samples, the measured statistics.
+     Present only for built characters; the four starters have none, and are
+     described by the fields above instead. */
+  persona?: PersonaDraft;
 }
 
 export interface SoloState {
