@@ -173,18 +173,47 @@ You may mention them, ask after them, or have opinions about them. Do not invent
     timezone: timezone ?? undefined,
       });
 
-  /* Same character with the bulk of the real message data trimmed. If a safety
-     filter is reacting to pages of someone's actual private messages, this is
-     the part to give up -- the brief still carries who they are. */
-  const softenedSystem = persona
-    ? personaSystem(
-        { ...persona, samples: persona.samples?.slice(0, 500), metrics: undefined, extra: undefined },
-        memories,
-        false,
-        { mood: mood || "any", topic: topic || "any", register: register || "texts" },
-        timezone ?? undefined,
-        standing
-      )
+  /* Progressively less of the real message data, for when the provider will not
+     accept the full profile.
+     
+     This ladder exists because of a reported failure that no retry could fix:
+     Gemini returned blockReason PROHIBITED_CONTENT on every attempt for a
+     persona built from a couple's chat export. That block is not the
+     configurable safety classifier -- safetySettings govern blockReason SAFETY,
+     and no threshold, BLOCK_NONE included, switches PROHIBITED_CONTENT off. The
+     only lever left is to send less verbatim material.
+     
+     The previous fallback trimmed samples to 500 characters and kept everything
+     else, which was barely a step down and got blocked exactly like the full
+     prompt did. So: first drop the measured statistics and the user's notes and
+     cut the samples hard, then drop the samples entirely and run on the brief
+     alone. A blander version of someone is worth having. Silence is not. */
+  const variant = (p: NonNullable<typeof persona>) =>
+    personaSystem(
+      p,
+      memories,
+      false,
+      { mood: mood || "any", topic: topic || "any", register: register || "texts" },
+      timezone ?? undefined,
+      standing
+    );
+
+  const bare = { ...persona, samples: undefined, metrics: undefined, extra: undefined };
+
+  const fallbacks = persona
+    ? [
+        variant({ ...persona, samples: persona.samples?.slice(0, 300), metrics: undefined, extra: undefined }),
+        variant(bare as NonNullable<typeof persona>),
+        /* Last rung. The relationship blocks are written material too, and the
+           partner one is the most loaded thing in the prompt for a persona
+           built from a couple's messages -- it talks about missing someone's
+           hands and being shameless with them, which is fine in a companion app
+           and is exactly the shape a classifier reacts to. "other" drops the
+           relationship script entirely and leans on the brief. Whoever this is
+           still has their name, their voice profile and their memories; what
+           they lose is the archetype colouring. */
+        variant({ ...bare, arch: "other", texture: "close" } as NonNullable<typeof persona>),
+      ]
     : undefined;
 
   const encoder = new TextEncoder();
@@ -197,20 +226,25 @@ You may mention them, ask after them, or have opinions about them. Do not invent
            transcript and poison every turn after it. */
         for await (const evt of streamGuarded({
           system,
-          softenedSystem,
+          fallbacks,
           messages: messagesForModel,
           name: persona?.them ?? muse.name,
         })) {
           if (evt.type === "delta") send({ type: "delta", text: evt.text });
           else if (evt.type === "refused") {
             const who = persona?.them ?? muse.name;
+            /* The old wording here blamed the last message and told the user
+               to reword it. On the reported case that was "hi", so they
+               reworded it several times and got the same wall. A prompt-level
+               block is about the saved profile, and now that the profile is
+               editable, saying so is something they can act on. */
             send({
               type: "error",
               message:
                 evt.reason === "blocked"
-                  ? `That message couldn't be sent. Something in this conversation is tripping the model's content filter — try rewording the last thing you said.`
+                  ? `Google's content filter is refusing ${who}'s saved profile, so nothing can be sent. It isn't what you wrote. Open edit and cut down the sample messages — that usually clears it.`
                   : `${who} didn't come to the phone. Try saying it differently.`,
-              retryable: true,
+              retryable: evt.reason !== "blocked",
             });
           } else send({ type: "done" });
         }

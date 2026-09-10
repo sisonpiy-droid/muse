@@ -426,6 +426,9 @@ function SoloChat({
   const [streaming, setStreaming] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /* Some failures are worth another go and some are not. Offering "Try again"
+     on a prompt-level block just runs the user into the same wall. */
+  const [canRetry, setCanRetry] = useState(true);
   const [lastSent, setLastSent] = useState<string | null>(null);
   const [vibeOpen, setVibeOpen] = useState(false);
   const foot = useRef<HTMLDivElement>(null);
@@ -452,6 +455,7 @@ function SoloChat({
 
     setBusy(true);
     setError(null);
+    setCanRetry(true);
     setDraft("");
     setLastSent(content);
     if (box.current) box.current.style.height = "auto";
@@ -521,6 +525,7 @@ function SoloChat({
       if (!res.ok || !res.body) {
         const data = await res.json().catch(() => ({}));
         setError(data.error ?? "Something went wrong. Try again.");
+        setCanRetry(true);
         setBusy(false);
         return;
       }
@@ -537,10 +542,13 @@ function SoloChat({
         for (const frame of frames) {
           const line = frame.split(/\r?\n/).find((l) => l.startsWith("data:"));
           if (!line) continue;
-          let evt: { type?: string; text?: string; message?: string };
+          let evt: { type?: string; text?: string; message?: string; retryable?: boolean };
           try { evt = JSON.parse(line.slice(5).trim()); } catch { continue; }
           if (evt.type === "delta" && evt.text) { acc += evt.text; setStreaming(acc); }
-          else if (evt.type === "error") setError(evt.message ?? "Something went wrong.");
+          else if (evt.type === "error") {
+            setError(evt.message ?? "Something went wrong.");
+            setCanRetry(evt.retryable !== false);
+          }
         }
       }
 
@@ -675,7 +683,12 @@ function SoloChat({
         {error && (
           <div style={{ marginTop: "1rem" }}>
             <p className="error" role="alert">{error}</p>
-            {lastSent && <button className="link-btn" onClick={() => send(lastSent)}>Try again</button>}
+            {lastSent && canRetry && (
+              <button className="link-btn" onClick={() => send(lastSent)}>Try again</button>
+            )}
+            {!canRetry && (
+              <button className="link-btn" onClick={onEdit}>Edit {muse.name}</button>
+            )}
           </div>
         )}
 

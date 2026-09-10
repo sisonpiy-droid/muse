@@ -86,85 +86,97 @@ export async function* streamGuarded(opts: {
   messages: ChatMessage[];
   /** Used in the retry reminder. */
   name: string;
-  /** A shorter prompt to fall back to before giving up entirely. Carries the
-   *  same character with less verbatim material, which is what tends to trip a
-   *  safety filter on a persona built from someone's real messages. */
-  softenedSystem?: string;
+  /* Progressively less verbatim material, tried in order once the full prompt
+     has failed. A persona built from someone's real messages can carry content
+     the provider will not accept at any threshold, and the only lever left is
+     to send less of it. A plainer version of the character is worth having;
+     silence is not. */
+  fallbacks?: string[];
+  /* Injected only by tests. The ladder below is the code that runs when
+     everything else has already failed, so it is never exercised by using the
+     app -- which is how a version of it that softened almost nothing survived
+     into production. Taking the provider as an argument is the seam that lets
+     it be driven through each failure on purpose. */
+  provider?: AIProvider;
 }): AsyncIterable<GuardedEvent> {
-  const provider = getProvider();
+  const provider = opts.provider ?? getProvider();
 
-  /* Three attempts: as asked, then with a reminder, then softened. A slightly
-     plainer reply is better than no reply, and a persona that goes silent on
-     its owner is the worst outcome available. */
-  const attempts = [
-    opts.system,
-    opts.system + retryNudge(opts.name),
-    (opts.softenedSystem ?? opts.system) + retryNudge(opts.name),
-  ];
+  const variants = [opts.system, ...(opts.fallbacks ?? [])];
 
   let lastReason: "refusal" | "empty" | "blocked" = "refusal";
   let lastDetail = "";
 
-  for (let attempt = 0; attempt < attempts.length; attempt++) {
-    const system = attempts[attempt];
-    if (attempt === 2 && !opts.softenedSystem) break;
+  for (let v = 0; v < variants.length; v++) {
+    /* The full prompt gets two passes: as written, then with the reminder.
+       Later variants already carry it, so a second identical pass would only
+       cost latency. */
+    const passes = v === 0 ? 2 : 1;
+    for (let pass = 0; pass < passes; pass++) {
+      const system = v > 0 || pass === 1 ? variants[v] + retryNudge(opts.name) : variants[v];
 
-    let head = "";
-    let flushed = false;
-    let sawAnything = false;
-    const buffered: string[] = [];
+      let head = "";
+      let flushed = false;
+      let sawAnything = false;
+      const buffered: string[] = [];
 
-    try {
-      for await (const delta of provider.streamResponse({ system, messages: opts.messages })) {
-        sawAnything = true;
-        if (flushed) {
-          yield { type: "delta", text: delta };
-          continue;
+      try {
+        for await (const delta of provider.streamResponse({ system, messages: opts.messages })) {
+          sawAnything = true;
+          if (flushed) {
+            yield { type: "delta", text: delta };
+            continue;
+          }
+
+          head += delta;
+          buffered.push(delta);
+          if (head.length < REFUSAL_SNIFF_CHARS) continue;
+
+          if (looksLikeRefusal(head)) break;      // abandon this attempt
+          flushed = true;
+          for (const b of buffered) yield { type: "delta", text: b };
         }
+      } catch (err) {
+        /* A stream that produces nothing, or is stopped by a safety filter, is a
+           refusal wearing a different hat -- and it was surfacing as "Something
+           went wrong. Try again." with no retry, because the throw escaped this
+           loop entirely. Treated as a refusal so it gets the second attempt.
+           Anything already flushed to the client cannot be retried, and any
+           other kind of failure is still a real error. */
+        const code = err instanceof ProviderError ? err.code : null;
+        if (flushed || (code !== "empty" && code !== "blocked")) throw err;
+        lastReason = code === "blocked" ? "blocked" : "empty";
+        lastDetail = err instanceof Error ? err.message : String(err);
+      }
 
-        head += delta;
-        buffered.push(delta);
-        if (head.length < REFUSAL_SNIFF_CHARS) continue;
-
-        if (looksLikeRefusal(head)) break;      // abandon this attempt
+      // A reply shorter than the sniff window never flushed; judge it whole.
+      if (!flushed && sawAnything && !looksLikeRefusal(head)) {
         flushed = true;
         for (const b of buffered) yield { type: "delta", text: b };
       }
-    } catch (err) {
-      /* A stream that produces nothing, or is stopped by a safety filter, is a
-         refusal wearing a different hat -- and it was surfacing as "Something
-         went wrong. Try again." with no retry, because the throw escaped this
-         loop entirely. Treated as a refusal so it gets the second attempt.
-         Anything already flushed to the client cannot be retried, and any
-         other kind of failure is still a real error. */
-      const code = err instanceof ProviderError ? err.code : null;
-      if (flushed || (code !== "empty" && code !== "blocked")) throw err;
-      lastReason = code === "blocked" ? "blocked" : "empty";
-      lastDetail = err instanceof Error ? err.message : String(err);
-    }
 
-    // A reply shorter than the sniff window never flushed; judge it whole.
-    if (!flushed && sawAnything && !looksLikeRefusal(head)) {
-      flushed = true;
-      for (const b of buffered) yield { type: "delta", text: b };
-    }
+      if (flushed) {
+        yield { type: "done" };
+        return;
+      }
 
-    if (flushed) {
-      yield { type: "done" };
-      return;
-    }
+      /* Logged because this is otherwise invisible. When a persona goes quiet
+         the only evidence is a message to the user, and without the model's
+         actual words there is nothing to diagnose from -- which is exactly the
+         position this was reported from. Truncated, and it is the model's
+         output rather than anyone's conversation. */
+      if (head.trim()) lastReason = "refusal";
+      console.error(
+        `[refusal] ${opts.name} variant ${v + 1}/${variants.length} pass ${pass + 1} reason=${lastReason}` +
+          (lastDetail ? ` detail=${lastDetail}` : "") +
+          (head.trim() ? ` text=${head.slice(0, 200).replace(/\s+/g, " ")}` : "")
+      );
 
-    /* Logged because this is otherwise invisible. When a persona goes quiet the
-       only evidence is a message to the user, and without the model's actual
-       words there is nothing to diagnose from -- which is exactly the position
-       this was reported from. Truncated, and it is the model's output rather
-       than anyone's conversation. */
-    if (head.trim()) lastReason = "refusal";
-    console.error(
-      `[refusal] ${opts.name} attempt ${attempt + 1}/${attempts.length} reason=${lastReason}` +
-        (lastDetail ? ` detail=${lastDetail}` : "") +
-        (head.trim() ? ` text=${head.slice(0, 200).replace(/\s+/g, " ")}` : "")
-    );
+      /* A block or an empty stream is about what the prompt contains, not how
+         it was asked. Repeating the same material behind a politer preamble
+         changes nothing and only spends latency, so drop to the next variant
+         and send less. Only a refusal in words is worth asking again. */
+      if (lastReason !== "refusal") break;
+    }
   }
 
   yield { type: "refused", reason: lastReason };
