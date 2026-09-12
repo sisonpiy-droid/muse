@@ -17,7 +17,10 @@
  * replying, the card keeps counting, and nothing anywhere says a word.
  */
 import assert from "node:assert";
-import { addMemories, MEMORIES_PER_MUSE, MEMORY_CHARS } from "../src/lib/solo/store.ts";
+import {
+  addMemories, deleteMemory, editMemory, forgetAll, memoriesOf,
+  MEMORIES_PER_MUSE, MEMORY_CHARS,
+} from "../src/lib/solo/store.ts";
 
 const results = [];
 const check = (n, f) => results.push([n, f]);
@@ -118,6 +121,113 @@ check("an empty extraction changes nothing", () => {
 check("a blank memory is not stored", () => {
   const s = addMemories(blank(), "aditi", [say("   "), say("")]);
   assert.equal(mineOf(s, "aditi").length, 0);
+});
+
+/* ------------------------------------------- seeing and correcting memories */
+
+/* Deleting is the one with a trap in it.
+ *
+ * Extraction runs over the last several messages every turn, and dedup only
+ * compares against memories that currently exist. So a memory removed on
+ * Tuesday gets re-proposed on Wednesday from the same conversation that
+ * produced it, matches nothing, and comes back. Delete would appear to work and
+ * then quietly undo itself, which is worse than not offering it -- the app
+ * would look like it was ignoring the user. §59 says once deleted it must never
+ * be retrieved, which means remembering the deletion, not just performing it.
+ */
+
+check("a deleted memory does not come back on the next extraction", () => {
+  const wrong = "User's sister is called Neha.";
+  let s = addMemories(blank(), "aditi", [say(wrong)]);
+  assert.equal(memoriesOf(s, "aditi").length, 1);
+
+  s = deleteMemory(s, memoriesOf(s, "aditi")[0].id);
+  assert.equal(memoriesOf(s, "aditi").length, 0, "it should be gone immediately");
+
+  // The next turn extracts the same fact from a conversation that still says it.
+  s = addMemories(s, "aditi", [say(wrong)]);
+  assert.equal(memoriesOf(s, "aditi").length, 0, "a deleted memory must stay deleted");
+});
+
+check("forgetting is case- and whitespace-insensitive, like the dedup it guards", () => {
+  let s = addMemories(blank(), "aditi", [say("User's sister is called Neha.")]);
+  s = deleteMemory(s, memoriesOf(s, "aditi")[0].id);
+  s = addMemories(s, "aditi", [say("  user's SISTER is called neha.  ")]);
+  assert.equal(memoriesOf(s, "aditi").length, 0);
+});
+
+check("forgetting one thing does not stop them learning anything else", () => {
+  let s = addMemories(blank(), "aditi", [say("User's sister is called Neha.")]);
+  s = deleteMemory(s, memoriesOf(s, "aditi")[0].id);
+  s = addMemories(s, "aditi", [say("User's sister is called Priya.")]);
+  assert.equal(memoriesOf(s, "aditi").length, 1, "the correction must be able to land");
+  assert.match(memoriesOf(s, "aditi")[0].content, /Priya/);
+});
+
+check("one character forgetting does not mute another", () => {
+  let s = addMemories(blank(), "aditi", [say("User works nights.")]);
+  s = deleteMemory(s, memoriesOf(s, "aditi")[0].id);
+  s = addMemories(s, "maya", [say("User works nights.")]);
+  assert.equal(memoriesOf(s, "maya").length, 1, "tombstones are per character");
+});
+
+check("a corrected memory is treated as certain", () => {
+  /* confidence is a ranking weight, so a hand-typed correction should also
+     outrank the guess it replaced rather than merely sitting beside it. */
+  let s = addMemories(blank(), "aditi", [say("User's sister is called Neha.", { confidence: 0.4 })]);
+  const id = memoriesOf(s, "aditi")[0].id;
+  s = editMemory(s, id, { content: "User's sister is called Priya." });
+  const m = memoriesOf(s, "aditi")[0];
+  assert.match(m.content, /Priya/);
+  assert.equal(m.confidence, 1, "the user's own words are not a guess");
+});
+
+check("editing only importance leaves the wording and its confidence alone", () => {
+  let s = addMemories(blank(), "aditi", [say("User is allergic to cats.", { confidence: 0.6 })]);
+  const id = memoriesOf(s, "aditi")[0].id;
+  s = editMemory(s, id, { importance: 5 });
+  const m = memoriesOf(s, "aditi")[0];
+  assert.equal(m.confidence, 0.6);
+  assert.equal(m.importance, 5);
+});
+
+check("importance cannot be edited outside the scale it is ranked on", () => {
+  let s = addMemories(blank(), "aditi", [say("User is allergic to cats.")]);
+  const id = memoriesOf(s, "aditi")[0].id;
+  assert.equal(memoriesOf(editMemory(s, id, { importance: 99 }), "aditi")[0].importance, 5);
+  assert.equal(memoriesOf(editMemory(s, id, { importance: -4 }), "aditi")[0].importance, 1);
+});
+
+check("a correction cannot be made too long for the routes to accept", () => {
+  let s = addMemories(blank(), "aditi", [say("short")]);
+  const id = memoriesOf(s, "aditi")[0].id;
+  s = editMemory(s, id, { content: "z".repeat(2000) });
+  assert.ok(memoriesOf(s, "aditi")[0].content.length <= MEMORY_CHARS);
+});
+
+check("editing something that is not there changes nothing", () => {
+  const s = addMemories(blank(), "aditi", [say("User is allergic to cats.")]);
+  assert.deepEqual(editMemory(s, "nope", { content: "x" }).memories, s.memories);
+  assert.equal(deleteMemory(s, "nope"), s);
+});
+
+check("forgetting everything clears them and stays cleared", () => {
+  let s = blank();
+  for (const t of ["User has a dog.", "User works nights.", "User hates coriander."]) {
+    s = addMemories(s, "aditi", [say(t)]);
+  }
+  s = forgetAll(s, "aditi");
+  assert.equal(memoriesOf(s, "aditi").length, 0);
+  s = addMemories(s, "aditi", [say("User has a dog.")]);
+  assert.equal(memoriesOf(s, "aditi").length, 0, "a wiped memory must not refill from the transcript");
+});
+
+check("memories are listed newest first", () => {
+  let s = blank();
+  s = addMemories(s, "aditi", [say("first")]);
+  s = { ...s, memories: s.memories.map((m) => ({ ...m, createdAt: "2020-01-01T00:00:00.000Z" })) };
+  s = addMemories(s, "aditi", [say("second")]);
+  assert.equal(memoriesOf(s, "aditi")[0].content, "second");
 });
 
 let pass = 0, fail = 0;

@@ -90,6 +90,18 @@ export interface SoloState {
   /* Standing emotional state, keyed by Muse. Unlike a vibe this persists: it
      is meant to be set once and left, and it is still true next week. */
   feelings?: Record<string, Feelings>;
+  /* What the user has deliberately made a character forget, keyed by Muse.
+     
+     Deleting a memory is not enough on its own. Extraction runs over the last
+     several messages every turn, and dedup only compares against memories that
+     currently exist -- so a memory removed on Tuesday is re-proposed on
+     Wednesday from the same conversation that produced it, matches nothing, and
+     comes back. Delete would appear to work and then silently undo itself,
+     which is worse than not offering it.
+     
+     PRD §59: once deleted it must never be retrieved. That means remembering
+     the deletion, not just performing it. */
+  forgotten?: Record<string, string[]>;
   /* Set only when stored data existed but could not be read. Never persisted;
      it exists to stop an empty state being written over something recoverable. */
   corrupt?: boolean;
@@ -164,6 +176,7 @@ export function loadState(): SoloState {
       circles: Array.isArray(parsed.circles) ? parsed.circles : [],
       edits: parsed.edits ?? {},
       feelings: parsed.feelings ?? {},
+      forgotten: parsed.forgotten ?? {},
     };
   } catch (err) {
     /* Unreadable, which is not the same as absent.
@@ -285,9 +298,18 @@ export function addMemories(
   const known = new Set(
     state.memories.filter((m) => m.museId === museId).map((m) => m.content.trim().toLowerCase())
   );
+  /* Anything the user has thrown away stays thrown away, even when the
+     conversation that produced it is still in the extraction window. */
+  const forgotten = new Set(state.forgotten?.[museId] ?? []);
+
   const fresh = incoming
     .map((m) => ({ ...m, content: (m.content || "").trim().slice(0, MEMORY_CHARS) }))
-    .filter((m) => m.content && !known.has(m.content.toLowerCase()));
+    .filter(
+      (m) =>
+        m.content &&
+        !known.has(m.content.toLowerCase()) &&
+        !forgotten.has(m.content.toLowerCase())
+    );
   if (!fresh.length) return state;
 
   const added: SoloMemory[] = fresh.map((m, i) => ({
@@ -329,6 +351,91 @@ export function download(filename: string, text: string, mime: string): void {
   a.remove();
   // Revoking synchronously cancels the download in some browsers.
   setTimeout(() => URL.revokeObjectURL(href), 0);
+}
+
+
+/* ------------------------------------------------ correcting what they know */
+
+/* A character's memories were invisible and permanent.
+ *
+ * The card said "remembers 12" and there was no way to see what those twelve
+ * were. A wrong one -- a sister's name misheard, a job the user left -- sat
+ * there shaping every reply, and the only way out was deleting the character
+ * and everything they knew along with it. For a product whose whole promise is
+ * that it remembers you, being unable to look at or correct that is the gap
+ * that matters most.
+ *
+ * The database-backed app has had this since the start (PATCH and DELETE on
+ * /api/memories/:id); solo mode, which is what anyone actually uses, had
+ * neither. These are the same semantics, locally.
+ */
+
+/** Rewriting something a character got wrong. */
+export function editMemory(
+  state: SoloState,
+  memoryId: string,
+  patch: { content?: string; importance?: number }
+): SoloState {
+  return {
+    ...state,
+    memories: state.memories.map((m) => {
+      if (m.id !== memoryId) return m;
+      const content = patch.content?.trim().slice(0, MEMORY_CHARS);
+      return {
+        ...m,
+        ...(content ? { content } : {}),
+        ...(patch.importance ? { importance: Math.min(5, Math.max(1, patch.importance)) } : {}),
+        /* Typed by the person it is about, so there is nothing to be unsure of.
+           Confidence is a ranking weight, so this also makes a corrected memory
+           beat the guess it replaced. */
+        ...(content ? { confidence: 1 } : {}),
+      };
+    }),
+  };
+}
+
+/** Forgetting one thing, permanently. */
+export function deleteMemory(state: SoloState, memoryId: string): SoloState {
+  const going = state.memories.find((m) => m.id === memoryId);
+  if (!going) return state;
+
+  const key = going.content.trim().toLowerCase();
+  const before = state.forgotten?.[going.museId] ?? [];
+  /* Capped, and oldest-first, because this list is only ever appended to.
+     Two hundred is far more than anyone will correct by hand, and a tombstone
+     that has fallen off is one the conversation has long since moved past. */
+  const after = [...before.filter((k) => k !== key), key].slice(-200);
+
+  return {
+    ...state,
+    memories: state.memories.filter((m) => m.id !== memoryId),
+    forgotten: { ...(state.forgotten ?? {}), [going.museId]: after },
+  };
+}
+
+/** Everything one character knows, newest first. */
+export function memoriesOf(state: SoloState, museId: string): SoloMemory[] {
+  return state.memories
+    .filter((m) => m.museId === museId)
+    .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+}
+
+/** Clears one character's memories without touching the conversation. Kept
+ *  separate from deleteConversation: forgetting what someone learned about you
+ *  and deleting what you said are different things to want. */
+export function forgetAll(state: SoloState, museId: string): SoloState {
+  const keys = state.memories
+    .filter((m) => m.museId === museId)
+    .map((m) => m.content.trim().toLowerCase());
+
+  return {
+    ...state,
+    memories: state.memories.filter((m) => m.museId !== museId),
+    forgotten: {
+      ...(state.forgotten ?? {}),
+      [museId]: [...(state.forgotten?.[museId] ?? []), ...keys].slice(-200),
+    },
+  };
 }
 
 
@@ -527,6 +634,7 @@ export function deleteMuse(state: SoloState, museId: string): SoloState {
     vibes: Object.fromEntries(Object.entries(state.vibes ?? {}).filter(([k]) => k !== museId)),
     feelings: Object.fromEntries(Object.entries(state.feelings ?? {}).filter(([k]) => k !== museId)),
     edits: Object.fromEntries(Object.entries(state.edits ?? {}).filter(([k]) => k !== museId)),
+    forgotten: Object.fromEntries(Object.entries(state.forgotten ?? {}).filter(([k]) => k !== museId)),
     circles: (state.circles ?? [])
       .map((c) => ({ ...c, memberIds: c.memberIds.filter((id) => id !== museId) }))
       /* A circle needs two people to be a circle. */

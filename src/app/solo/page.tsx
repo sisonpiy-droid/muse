@@ -6,6 +6,7 @@ import { Avatar } from "@/components/Avatar";
 import { CircleChat } from "@/components/CircleChat";
 import { EditMuse } from "@/components/EditMuse";
 import { ImportPersona } from "@/components/ImportPersona";
+import { Memories } from "@/components/Memories";
 import { MessageActions } from "@/components/MessageActions";
 import { VoiceNote } from "@/components/VoiceNote";
 import {
@@ -16,9 +17,9 @@ import { DEFAULT_VOICE } from "@/lib/presence/voices";
 import { safeFilename, transcriptMarkdown } from "@/lib/export";
 import {
   addMemories, allMuses, circleOf, deleteCircle, deleteConversation, deleteFrom,
-  deleteMessage, deleteMuse, download, editMessage, editMuse, feelingsOf,
-  findMuse, isEdited, knownTo, loadState, membersOf, parseBackup, relevantMemories,
-  resetMuse, saveState, setFeelings,
+  deleteMemory, deleteMessage, deleteMuse, download, editMemory, editMessage, editMuse,
+  feelingsOf, findMuse, forgetAll, isEdited, knownTo, loadState, membersOf, memoriesOf,
+  parseBackup, relevantMemories, resetMuse, saveState, setFeelings,
   type SoloMessage, type SoloMuse, type SoloState,
 } from "@/lib/solo/store";
 
@@ -46,6 +47,7 @@ type View =
   | { kind: "home" }
   | { kind: "chat"; museId: string }
   | { kind: "edit"; museId: string }
+  | { kind: "memories"; museId: string }
   | { kind: "import" }
   | { kind: "circle"; circleId: string }
   | { kind: "new-circle" };
@@ -223,6 +225,22 @@ export default function SoloPage() {
     );
   }
 
+  if (view.kind === "memories") {
+    const muse = findMuse(state, view.museId);
+    if (!muse) { setView({ kind: "home" }); return null; }
+    return shell(
+      <Memories
+        key={muse.id}
+        muse={muse}
+        memories={memoriesOf(state, muse.id)}
+        onEdit={(id, patch) => update((cur) => editMemory(cur, id, patch))}
+        onDelete={(id) => update((cur) => deleteMemory(cur, id))}
+        onForgetAll={() => update((cur) => forgetAll(cur, muse.id))}
+        onBack={() => setView({ kind: "chat", museId: muse.id })}
+      />
+    );
+  }
+
   if (view.kind === "chat") {
     const muse = findMuse(state, view.museId);
     if (!muse) { setView({ kind: "home" }); return null; }
@@ -233,6 +251,7 @@ export default function SoloPage() {
         update={update}
         onBack={() => setView({ kind: "home" })}
         onEdit={() => setView({ kind: "edit", museId: muse.id })}
+        onMemories={() => setView({ kind: "memories", museId: muse.id })}
       />
     );
   }
@@ -532,13 +551,14 @@ OK also forgets what they learned. Cancel keeps the memories.`)) {
 /* ------------------------------------------------------------------ chat */
 
 function SoloChat({
-  muse, state, update, onBack, onEdit,
+  muse, state, update, onBack, onEdit, onMemories,
 }: {
   muse: SoloMuse;
   state: SoloState;
   update: Update;
   onBack: () => void;
   onEdit: () => void;
+  onMemories: () => void;
 }) {
   const log = state.conversations[muse.id] ?? [];
   const [draft, setDraft] = useState("");
@@ -795,7 +815,16 @@ function SoloChat({
           <h1>{muse.name}</h1>
           <div className="rel">
             {muse.relationshipType}
-            {memoriesFor.length > 0 && ` · remembers ${memoriesFor.length}`}
+            {memoriesFor.length > 0 && (
+              <>
+                {" · "}
+                {/* The count was the only sign memory existed at all, and it led
+                    nowhere. It is the obvious door, so it is the door. */}
+                <button className="inline-link" onClick={onMemories}>
+                  remembers {memoriesFor.length}
+                </button>
+              </>
+            )}
             {isDefaultVibe(vibe) ? null : (
               <span style={{ color: "var(--accent)" }}> · {vibeSummary(vibe)}</span>
             )}
