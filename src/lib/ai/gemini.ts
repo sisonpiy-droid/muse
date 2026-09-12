@@ -15,6 +15,7 @@ const model = () => process.env.GEMINI_MODEL || "gemini-3.6-flash";
 /* text-embedding-004 was retired and 404s -- the same failure mode as the old
    chat model. Ask the API what it actually serves before changing this. */
 const embedModel = () => process.env.EMBEDDING_MODEL || "gemini-embedding-001";
+const speechModel = () => process.env.SPEECH_MODEL || "gemini-2.5-flash-preview-tts";
 const timeoutMs = () => Number(process.env.UPSTREAM_TIMEOUT_MS || 60000);
 
 /* The key travels as a header, never in the query string. A key in a URL is
@@ -94,6 +95,75 @@ async function post(path: string, body: unknown, signal?: AbortSignal) {
     signal: signal ?? AbortSignal.timeout(timeoutMs()),
   });
   return res;
+}
+
+/* ------------------------------------------------------------------ speech */
+
+/* Gemini returns speech as raw PCM -- "audio/L16;codec=pcm;rate=24000" -- which
+   is samples and nothing else. No browser will play that: <audio> needs a
+   container. Wrapping it in the 44-byte WAV header it is already shaped for is
+   the whole conversion, and it happens here rather than in the browser so the
+   client receives something it can point an <audio> element at directly. */
+function wav(pcm: Buffer, rate: number, channels = 1, bits = 16): Buffer {
+  const header = Buffer.alloc(44);
+  const byteRate = (rate * channels * bits) / 8;
+  const blockAlign = (channels * bits) / 8;
+
+  header.write("RIFF", 0);
+  header.writeUInt32LE(36 + pcm.length, 4);   // everything after this field
+  header.write("WAVE", 8);
+  header.write("fmt ", 12);
+  header.writeUInt32LE(16, 16);               // PCM header length
+  header.writeUInt16LE(1, 20);                // format 1 = uncompressed PCM
+  header.writeUInt16LE(channels, 22);
+  header.writeUInt32LE(rate, 24);
+  header.writeUInt32LE(byteRate, 28);
+  header.writeUInt16LE(blockAlign, 32);
+  header.writeUInt16LE(bits, 34);
+  header.write("data", 36);
+  header.writeUInt32LE(pcm.length, 40);
+
+  return Buffer.concat([header, pcm]);
+}
+
+export interface Speech {
+  audio: Buffer;
+  mime: "audio/wav";
+}
+
+/** Speaks one message in a named prebuilt voice. */
+export async function speak(text: string, voiceName: string): Promise<Speech> {
+  const res = await post(`models/${speechModel()}:generateContent`, {
+    contents: [{ parts: [{ text }] }],
+    generationConfig: {
+      responseModalities: ["AUDIO"],
+      speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName } } },
+    },
+    /* Deliberately no safetySettings. The text being spoken has already been
+       through generation and its filters; sending it back through a second set
+       would mean a reply that exists on screen and cannot be played, which
+       reads as a broken button rather than a policy. */
+  });
+
+  if (!res.ok) throw classify(res.status, await res.text());
+
+  const data = (await res.json()) as {
+    candidates?: { content?: { parts?: { inlineData?: { data?: string; mimeType?: string } }[] } }[];
+    promptFeedback?: { blockReason?: string };
+  };
+
+  const blocked = data?.promptFeedback?.blockReason;
+  if (blocked) throw new ProviderError("blocked", `Speech was blocked (${blocked}).`);
+
+  const inline = data?.candidates?.[0]?.content?.parts?.[0]?.inlineData;
+  if (!inline?.data) throw new ProviderError("empty", "No audio came back.");
+
+  /* Read the rate off the mime type rather than assuming 24000: it is stated on
+     every response and a wrong value plays back at the wrong pitch, which is a
+     confusing thing to debug from a recording that sounds almost right. */
+  const rate = Number(/rate=(\d+)/.exec(inline.mimeType ?? "")?.[1] ?? 24000);
+
+  return { audio: wav(Buffer.from(inline.data, "base64"), rate), mime: "audio/wav" };
 }
 
 function textOf(data: unknown): {

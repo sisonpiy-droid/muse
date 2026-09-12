@@ -55,7 +55,9 @@ export interface SoloCircle {
 
 /* The Presence fields are required on a starter and absent on a built
    character, which carries them inside `persona` instead. */
-type PresenceFields = "arch" | "texture" | "mode" | "brief" | "samples" | "extra";
+/* `voice` is here with the rest: starters ship with one, and anyone built
+   before voice notes existed has none, so every read falls back. */
+type PresenceFields = "arch" | "texture" | "mode" | "brief" | "samples" | "extra" | "voice";
 
 export interface SoloMuse
   extends Omit<Persona, PresenceFields>,
@@ -555,6 +557,8 @@ export function deleteCircle(state: SoloState, circleId: string): SoloState {
  */
 export interface MusePatch {
   name?: string;
+  /** A prebuilt voice id; see lib/presence/voices. */
+  voice?: string;
   relationshipType?: string;
   description?: string;
   traits?: string[];

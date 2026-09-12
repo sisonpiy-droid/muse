@@ -7,6 +7,8 @@ import {
   ARCHETYPES, DEFAULT_FEELINGS, MOODS, TEXTURES, WARMTHS,
   type Feelings,
 } from "@/lib/presence/persona";
+import { DEFAULT_VOICE, VOICES } from "@/lib/presence/voices";
+import { VoiceNote } from "@/components/VoiceNote";
 import type { MusePatch, SoloMuse } from "@/lib/solo/store";
 
 /* Changing who someone is, and how they are.
@@ -55,6 +57,7 @@ export function EditMuse({
     extra: p?.extra ?? muse.extra ?? "",
     arch: p?.arch ?? muse.arch ?? "other",
     texture: p?.texture ?? muse.texture ?? "close",
+    voice: muse.voice ?? DEFAULT_VOICE,
   };
 
   const [name, setName] = useState(was.name);
@@ -67,6 +70,7 @@ export function EditMuse({
   const [extra, setExtra] = useState(was.extra);
   const [arch, setArch] = useState(was.arch);
   const [texture, setTexture] = useState(was.texture);
+  const [voice, setVoice] = useState(was.voice);
   const [feel, setFeel] = useState<Feelings>(feelings ?? DEFAULT_FEELINGS);
 
   /* Functional updates throughout. Three quick chip clicks all read the same
@@ -89,6 +93,7 @@ export function EditMuse({
     extra !== was.extra ||
     arch !== was.arch ||
     texture !== was.texture ||
+    voice !== was.voice ||
     feel.mood !== feelings.mood ||
     feel.warmth !== feelings.warmth ||
     feel.note !== feelings.note;
@@ -111,6 +116,7 @@ export function EditMuse({
         extra: extra.trim(),
         arch,
         texture,
+        voice,
       },
       { ...feel, note: feel.note.trim() }
     );
@@ -279,6 +285,36 @@ export function EditMuse({
           <span style={labelStyle}>And how it feels</span>
           {chips(TEXTURES, texture, setTexture)}
         </div>
+      </div>
+
+      <div style={{ marginTop: "1.5rem" }}>
+        <span style={labelStyle}>What they sound like</span>
+        <div className="tags">
+          {VOICES.map((v) => (
+            <button
+              key={v.id}
+              type="button"
+              className="tag"
+              aria-pressed={voice === v.id}
+              onClick={() => setVoice(v.id)}
+              title={v.note}
+              style={voice === v.id ? { borderColor: "var(--accent)", color: "var(--accent)" } : undefined}
+            >
+              {v.label}
+            </button>
+          ))}
+        </div>
+        <p className="fine" style={{ marginTop: "0.6rem" }}>
+          {VOICES.find((v) => v.id === voice)?.note}. Used when you play a message as a voice note.
+          {" "}
+          {/* Hearing it beats reading a description of it, and the sample is
+              cached like any other clip so trying a few costs one call each. */}
+          <VoiceNote
+            text={`Hi, I'm ${name || muse.name}. This is what I sound like.`}
+            voice={voice}
+            name={name || muse.name}
+          />
+        </p>
       </div>
 
       {/* ---------------------------------------------------- how they feel */}

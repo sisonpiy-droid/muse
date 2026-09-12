@@ -464,3 +464,43 @@ a { color: inherit; }
 .notice strong { display: block; margin-bottom: 0.15rem; }
 .notice .btn { flex-shrink: 0; }
 @media (max-width: 560px) { .notice .btn { width: 100%; } }
+
+/* Voice notes. The control stays quiet until it is used — a column of play
+   buttons down the side of a thread turns a conversation into a media list. */
+.voice { display: inline-flex; align-items: center; gap: 0.4rem; margin-left: 0.5rem; }
+.voice button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.45rem;
+  height: 1.45rem;
+  padding: 0;
+  font-size: 0.6rem;
+  line-height: 1;
+  border: 1px solid var(--edge);
+  border-radius: 999px;
+  background: none;
+  color: var(--faint);
+  cursor: pointer;
+  transition: color 140ms var(--ease), border-color 140ms var(--ease);
+  vertical-align: middle;
+}
+.voice button:hover { color: var(--accent); border-color: var(--accent); }
+.voice button[data-state="playing"] { color: var(--accent); border-color: var(--accent); }
+.voice button[data-state="error"] { color: var(--danger); border-color: var(--danger); }
+.voice em { font-size: 0.68rem; color: var(--danger); font-style: normal; }
+
+/* Generating speech takes about a second a sentence, which is long enough that
+   the button has to say something is happening. */
+.voice-wait {
+  width: 0.55rem;
+  height: 0.55rem;
+  border: 1.5px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: voice-spin 620ms linear infinite;
+}
+@keyframes voice-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .voice-wait { animation-duration: 2s; }
+}

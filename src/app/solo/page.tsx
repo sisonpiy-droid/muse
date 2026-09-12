@@ -7,10 +7,12 @@ import { CircleChat } from "@/components/CircleChat";
 import { EditMuse } from "@/components/EditMuse";
 import { ImportPersona } from "@/components/ImportPersona";
 import { MessageActions } from "@/components/MessageActions";
+import { VoiceNote } from "@/components/VoiceNote";
 import {
   DEFAULT_VIBE, MOODS, REGISTERS, TOPICS, feelingsSummary, hasFeelings, splitBurst,
   vibeSummary, type Vibe,
 } from "@/lib/presence/persona";
+import { DEFAULT_VOICE } from "@/lib/presence/voices";
 import { safeFilename, transcriptMarkdown } from "@/lib/export";
 import {
   addMemories, allMuses, circleOf, deleteCircle, deleteConversation, deleteFrom,
@@ -821,6 +823,11 @@ function SoloChat({
           <div key={m.id} className={m.from === "user" ? "turn turn-user" : "turn turn-muse"}>
             {m.content}
             {m.edited && <span className="stamp"> · edited</span>}
+            {/* Only on their messages. Reading your own words back to you in
+                someone else's voice is a strange thing to offer. */}
+            {m.from === "muse" && (
+              <VoiceNote text={m.content} voice={voiceOf(muse)} name={muse.name} />
+            )}
             <MessageActions
               content={m.content}
               onEdit={(text) => update(editMessage(state, muse.id, m.id, text))}
@@ -1037,6 +1044,12 @@ function NewCircle({
 
 function isDefaultVibe(v: Vibe): boolean {
   return v.mood === DEFAULT_VIBE.mood && v.topic === DEFAULT_VIBE.topic && v.register === DEFAULT_VIBE.register;
+}
+
+/** What a character sounds like, falling back for anyone built before voice
+ *  notes existed rather than leaving them mute. */
+function voiceOf(muse: SoloMuse): string {
+  return muse.voice ?? DEFAULT_VOICE;
 }
 
 function lastAt(state: SoloState, museId: string): number {
