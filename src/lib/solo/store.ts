@@ -88,6 +88,9 @@ export interface SoloState {
   /* Standing emotional state, keyed by Muse. Unlike a vibe this persists: it
      is meant to be set once and left, and it is still true next week. */
   feelings?: Record<string, Feelings>;
+  /* Set only when stored data existed but could not be read. Never persisted;
+     it exists to stop an empty state being written over something recoverable. */
+  corrupt?: boolean;
 }
 
 const slug = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
@@ -160,17 +163,67 @@ export function loadState(): SoloState {
       edits: parsed.edits ?? {},
       feelings: parsed.feelings ?? {},
     };
-  } catch {
-    return empty();
+  } catch (err) {
+    /* Unreadable, which is not the same as absent.
+     *
+     * Returning a blank state here made the app open as though it were brand
+     * new, and the very next write -- a keystroke, a vibe chip -- saved that
+     * blank state over the top. Whatever was in there, damaged or merely
+     * unparseable by a newer build, was then genuinely gone. A truncated write
+     * or a half-synced profile is recoverable right up until the moment it is
+     * overwritten.
+     *
+     * `corrupt` tells the caller not to write, so the raw text stays on disk
+     * and can still be rescued. */
+    console.error("solo state could not be read", err);
+    return { ...empty(), corrupt: true };
   }
 }
 
-export function saveState(state: SoloState): void {
+/* Roughly where browsers stop accepting writes to one origin. Not a real limit
+   -- it varies by browser and by how much else the origin has stored -- so it is
+   used to warn early rather than to refuse anything. */
+export const STORAGE_BUDGET = 4_500_000;
+
+export type SaveResult =
+  | { ok: true; bytes: number; nearlyFull: boolean }
+  | { ok: false; reason: "quota" | "unavailable" | "corrupt"; bytes: number };
+
+/* Saving used to swallow its own failure.
+ *
+ * Every conversation and every memory lives in one localStorage key, and it only
+ * grows. When the browser finally refuses the write, the old code logged to a
+ * console nobody has open and carried on -- so the app kept working perfectly
+ * for the rest of the session and lost every word of it on reload, with no
+ * indication at any point that anything was wrong. For something whose whole
+ * promise is that it remembers you, that is the worst failure in the product.
+ *
+ * It now reports, and the caller is expected to say something. */
+export function saveState(state: SoloState): SaveResult {
+  /* Refuse to overwrite data we failed to read. The user is told, and can take
+     the file out of the browser's storage by hand if they want it back. */
+  if (state.corrupt) return { ok: false, reason: "corrupt", bytes: 0 };
+
+  let serialised: string;
   try {
-    localStorage.setItem(KEY, JSON.stringify(state));
+    serialised = JSON.stringify(state);
   } catch (err) {
-    // Quota, or storage disabled. The session keeps working in memory.
-    console.error("solo save failed", err);
+    console.error("solo save failed to serialise", err);
+    return { ok: false, reason: "unavailable", bytes: 0 };
+  }
+
+  const bytes = serialised.length;
+  try {
+    localStorage.setItem(KEY, serialised);
+    return { ok: true, bytes, nearlyFull: bytes > STORAGE_BUDGET };
+  } catch (err) {
+    /* QuotaExceededError is name-checked rather than instanceof-checked: Safari
+       throws a differently-named error for the same condition, and private
+       browsing throws on write even with space to spare. */
+    const name = err instanceof Error ? err.name : "";
+    const quota = /quota/i.test(name) || name === "NS_ERROR_DOM_QUOTA_REACHED";
+    console.error("solo save failed", name, bytes);
+    return { ok: false, reason: quota ? "quota" : "unavailable", bytes };
   }
 }
 
@@ -210,6 +263,18 @@ export function relevantMemories(state: SoloState, museId: string, query: string
   return rankMemories(query, mine, { limit: 8 }).map((r) => r.memory.content);
 }
 
+/* A memory is one fact in one sentence. Nothing enforced that, so the model
+   could write a paragraph and it was stored verbatim -- which then made every
+   later extraction request fail validation, permanently. Clamped at the only
+   place memories are created. */
+export const MEMORY_CHARS = 400;
+
+/* Memories are never deleted otherwise, so a character talked to for a year
+   accumulates thousands, every one of them ranked on every single turn. Kept to
+   what a person would plausibly hold: the most important, and within that the
+   most recent. */
+export const MEMORIES_PER_MUSE = 300;
+
 export function addMemories(
   state: SoloState,
   museId: string,
@@ -218,24 +283,37 @@ export function addMemories(
   const known = new Set(
     state.memories.filter((m) => m.museId === museId).map((m) => m.content.trim().toLowerCase())
   );
-  const fresh = incoming.filter((m) => m.content && !known.has(m.content.trim().toLowerCase()));
+  const fresh = incoming
+    .map((m) => ({ ...m, content: (m.content || "").trim().slice(0, MEMORY_CHARS) }))
+    .filter((m) => m.content && !known.has(m.content.toLowerCase()));
   if (!fresh.length) return state;
 
-  return {
-    ...state,
-    memories: [
-      ...state.memories,
-      ...fresh.map((m) => ({
-        id: `mem-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        museId,
-        content: m.content,
-        type: m.type,
-        importance: m.importance,
-        confidence: m.confidence,
-        createdAt: new Date().toISOString(),
-      })),
-    ],
-  };
+  const added: SoloMemory[] = fresh.map((m, i) => ({
+    id: `mem-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 8)}`,
+    museId,
+    content: m.content,
+    type: m.type,
+    importance: m.importance,
+    confidence: m.confidence,
+    createdAt: new Date().toISOString(),
+  }));
+
+  const mine = [...state.memories.filter((m) => m.museId === museId), ...added];
+  const others = state.memories.filter((m) => m.museId !== museId);
+
+  /* `mine`, not `added` -- `others` is everyone else's memories, so appending
+     only the new ones here would drop everything this character already knew on
+     every successful extraction. */
+  if (mine.length <= MEMORIES_PER_MUSE) return { ...state, memories: [...others, ...mine] };
+
+  /* Over the cap: keep the important ones, and break ties by recency. Dropping
+     the least important thing said longest ago is the closest this gets to how
+     forgetting actually works. */
+  const kept = [...mine]
+    .sort((a, b) => (b.importance - a.importance) || (Date.parse(b.createdAt) - Date.parse(a.createdAt)))
+    .slice(0, MEMORIES_PER_MUSE);
+
+  return { ...state, memories: [...others, ...kept] };
 }
 
 export function download(filename: string, text: string, mime: string): void {
@@ -249,6 +327,106 @@ export function download(filename: string, text: string, mime: string): void {
   a.remove();
   // Revoking synchronously cancels the download in some browsers.
   setTimeout(() => URL.revokeObjectURL(href), 0);
+}
+
+
+/* ------------------------------------------------------------- restoring */
+
+/* The other half of "Export everything".
+ *
+ * That button wrote the entire state to a JSON file and nothing in the app
+ * could ever read it back -- the only file input anywhere parses WhatsApp
+ * exports. So the one safety net the product offered was a file you could not
+ * use, and a user who backed up religiously still lost everything to a cleared
+ * browser. With no accounts and a storage ceiling that will eventually be hit,
+ * this is what makes the data recoverable at all.
+ */
+export interface RestoreSummary {
+  people: number;
+  messages: number;
+  memories: number;
+  circles: number;
+}
+
+export type RestoreResult =
+  | { ok: true; state: SoloState; summary: RestoreSummary }
+  | { ok: false; error: string };
+
+/** Parses and validates an exported backup. Structural only -- the point is to
+ *  refuse a file that would corrupt the app, not to police its contents. */
+export function parseBackup(text: string): RestoreResult {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    return { ok: false, error: "That file isn't readable JSON. Pick the file the export button made." };
+  }
+
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return { ok: false, error: "That doesn't look like a MUSE backup." };
+  }
+  const p = raw as Partial<SoloState>;
+
+  /* A chat export dropped in here by mistake is the likely wrong file, and it
+     has none of these. Checking two keys distinguishes them without demanding a
+     backup from a newer version match exactly. */
+  if (!Array.isArray(p.muses) || typeof p.conversations !== "object" || p.conversations === null) {
+    return { ok: false, error: "That doesn't look like a MUSE backup — it has no people or conversations in it." };
+  }
+
+  const conversations: Record<string, SoloMessage[]> = {};
+  for (const [id, log] of Object.entries(p.conversations as Record<string, unknown>)) {
+    if (!Array.isArray(log)) continue;
+    conversations[id] = log.filter(
+      (m): m is SoloMessage =>
+        Boolean(m) && typeof m === "object" &&
+        typeof (m as SoloMessage).content === "string" &&
+        ((m as SoloMessage).from === "user" || (m as SoloMessage).from === "muse")
+    );
+  }
+
+  const muses = (p.muses as SoloMuse[]).filter(
+    (m) => m && typeof m.id === "string" && typeof m.name === "string"
+  ).map(migrate);
+
+  const memories = Array.isArray(p.memories)
+    ? (p.memories as SoloMemory[]).filter(
+        (m) => m && typeof m.content === "string" && typeof m.museId === "string"
+      )
+    : [];
+
+  const state: SoloState = {
+    userName: typeof p.userName === "string" ? p.userName : null,
+    muses,
+    conversations,
+    memories,
+    vibes: (p.vibes as SoloState["vibes"]) ?? {},
+    circles: Array.isArray(p.circles) ? (p.circles as SoloCircle[]) : [],
+    edits: (p.edits as SoloState["edits"]) ?? {},
+    feelings: (p.feelings as SoloState["feelings"]) ?? {},
+  };
+
+  return {
+    ok: true,
+    state,
+    summary: {
+      /* Built characters only. The starters ship with the build and are not in
+         the backup, so counting them would overstate what is being restored. */
+      people: muses.length,
+      messages: Object.values(conversations).reduce((n, l) => n + l.length, 0),
+      memories: memories.length,
+      circles: state.circles?.length ?? 0,
+    },
+  };
+}
+
+/** How much room the saved state is taking, for warning before it runs out. */
+export function storageBytes(): number {
+  try {
+    return localStorage.getItem(KEY)?.length ?? 0;
+  } catch {
+    return 0;
+  }
 }
 
 

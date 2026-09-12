@@ -28,6 +28,56 @@ import { ARCHETYPES, MODES, PROMPTS, TEXTURES, detectArch, type PersonaDraft } f
 
 type Step = 0 | 1 | 2 | 3 | 9 | 10 | 11; // 10 = building, 11 = review
 
+/* Which participant is the one being built.
+ *
+ * This used to be `participants.find(p => p.name !== draft.you)`, against a
+ * list sorted by message count. Export labels are profile push-names, address
+ * book entries or bare phone numbers, so they are almost never character-equal
+ * to the first name someone types into a free-text box -- which meant the test
+ * failed, the fallback took participants[0], and in a couple's export that is
+ * whichever of the two sent more messages. Roughly half the time that is the
+ * user, and the result is a character called Aditi measured from, and told to
+ * copy the texture of, the user's own writing. It is invisible afterwards: the
+ * brief reads plausibly because it describes a real person.
+ *
+ * It is also permanent. `metrics` is injected into every system prompt as
+ * "these are counts, not impressions. Match them", and nothing in the edit
+ * screen exposes it, so the only repair is deleting the character and losing
+ * everything they remember.
+ *
+ * So: match on who we are looking FOR, not who we are ruling out, and return
+ * null rather than guessing when no label looks like either name.
+ */
+export const nameKey = (s: string) =>
+  s.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, " ").split(/\s+/).filter(Boolean);
+
+export function guessParticipant(
+  participants: { name: string; count: number }[],
+  them: string,
+  you: string
+): string | null {
+  if (!participants.length) return null;
+  const theirs = nameKey(them);
+  const yours = nameKey(you);
+  const shares = (label: string, tokens: string[]) => {
+    const l = nameKey(label);
+    return tokens.some((t) => t.length > 1 && l.some((x) => x === t || x.startsWith(t) || t.startsWith(x)));
+  };
+
+  // Someone whose label looks like the name we were given.
+  const byName = participants.find((p) => shares(p.name, theirs));
+  if (byName) return byName.name;
+
+  /* Nobody matches. If exactly one participant is clearly NOT the user, it is
+     them by elimination -- the usual two-person export. */
+  const notYou = participants.filter((p) => !shares(p.name, yours));
+  if (notYou.length === 1) return notYou[0].name;
+
+  /* Otherwise this is a guess, and a wrong guess here is baked in forever.
+     Better to ask. */
+  return null;
+}
+
 /* The same caps /api/persona/build enforces.
  *
  * They lived only on the server, so the samples box -- a plain textarea people
@@ -79,8 +129,8 @@ export function ImportPersona({
     try {
       const result = await readExportFile(file);
       setParsed(result);
-      const guess = result.participants.find((p) => p.name !== draft.you) ?? result.participants[0];
-      if (guess) choosePerson(result, guess.name);
+      const guess = guessParticipant(result.participants, draft.them, draft.you);
+      if (guess) choosePerson(result, guess);
     } catch (e) { readFailure(e); }
   }
 
@@ -89,8 +139,8 @@ export function ImportPersona({
     try {
       const result = parseText(pasted);
       setParsed(result);
-      const guess = result.participants.find((p) => p.name !== draft.you) ?? result.participants[0];
-      if (guess) choosePerson(result, guess.name);
+      const guess = guessParticipant(result.participants, draft.them, draft.you);
+      if (guess) choosePerson(result, guess);
       setPasteMode(false);
     } catch (e) { readFailure(e); }
   }
@@ -306,7 +356,14 @@ export function ImportPersona({
           {draft.mode !== "character" && (
             <>
               <input ref={filePick} id="chat-file" type="file" accept=".txt,.zip" className="sr-only"
-                onChange={(e) => { const f = e.target.files?.[0]; if (f) onFile(f); }} />
+                onChange={(e) => {
+                const f = e.target.files?.[0];
+                /* Cleared so picking the same file again still fires a change
+                   event. Without it a failed read could not be retried with the
+                   same export at all -- the control simply did nothing. */
+                e.target.value = "";
+                if (f) onFile(f);
+              }} />
               <div className="row">
                 <button className="btn-ghost" onClick={() => filePick.current?.click()}>Choose the export</button>
                 <button className="link-btn" onClick={() => { setPasteMode(!pasteMode); setError(null); }}>
@@ -339,8 +396,14 @@ export function ImportPersona({
 
               {parsed && (
                 <div style={{ marginTop: "1.25rem" }}>
-                  <p className="fine" style={{ marginBottom: "0.5rem" }}>
-                    {parsed.messages.length.toLocaleString()} messages read. Which one is {draft.them || "them"}?
+                  <p
+                    className="fine"
+                    style={!picked ? { marginBottom: "0.5rem", color: "var(--accent)" } : { marginBottom: "0.5rem" }}
+                  >
+                    {parsed.messages.length.toLocaleString()} messages read.{" "}
+                    {picked
+                      ? `Which one is ${draft.them || "them"}?`
+                      : `Which of these is ${draft.them || "them"}? Pick one — this decides whose writing gets copied.`}
                   </p>
                   <div className="tags">
                     {parsed.participants.slice(0, 8).map((p) => (
@@ -351,9 +414,24 @@ export function ImportPersona({
                     ))}
                   </div>
                   {picked && draft.metrics && (
-                    <p className="fine" style={{ marginTop: "0.8rem", color: "var(--accent)" }}>
-                      Read how {picked} writes. {draft.metrics.split("\n")[1] ?? ""}
-                    </p>
+                    <>
+                      <p className="fine" style={{ marginTop: "0.8rem", color: "var(--accent)" }}>
+                        Read how {picked} writes. {draft.metrics.split("\n")[1] ?? ""}
+                      </p>
+                      {/* The wrong pick here is unrecoverable -- the measured
+                          statistics go into every future prompt and no screen
+                          can edit them -- so a mismatch is worth saying out
+                          loud rather than leaving in a small grey line. */}
+                      {!nameKey(picked).some((t) =>
+                        nameKey(draft.them).some((x) => x === t || x.startsWith(t) || t.startsWith(x))
+                      ) && (
+                        <p className="error" style={{ marginTop: "0.4rem" }}>
+                          That doesn&apos;t look like {draft.them || "them"}. Check you haven&apos;t picked
+                          yourself — whoever is selected here is who {draft.them || "they"} will write like,
+                          and it can&apos;t be changed later.
+                        </p>
+                      )}
+                    </>
                   )}
                 </div>
               )}
@@ -394,8 +472,21 @@ export function ImportPersona({
           </div>
 
           <div className="row" style={{ marginTop: "1.5rem" }}>
-            <button className="btn" onClick={() => setStep(3)}>Next</button>
-            <button className="link-btn" onClick={() => setStep(1)}>Back</button>
+            {/* An export that was read but whose speaker was never chosen would
+                otherwise go on to build a character with no samples and no
+                measurements at all, which succeeds and produces a generic
+                person wearing the right name. */}
+            <button
+              className="btn"
+              onClick={() => {
+                if (parsed && !picked) { setNudge(`Pick which one is ${draft.them || "them"} first.`); return; }
+                setNudge(""); setStep(3);
+              }}
+            >
+              Next
+            </button>
+            <button className="link-btn" onClick={() => { setNudge(""); setStep(1); }}>Back</button>
+            {nudge && <span className="error" style={{ margin: 0 }}>{nudge}</span>}
           </div>
         </>
       )}

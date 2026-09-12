@@ -440,3 +440,27 @@ a { color: inherit; }
 /* Every other card action deletes something. Editing does not, and turning it
    the same warning red says it does. */
 .card-actions button.safe:hover { color: var(--accent); }
+
+/* Save failures, and the warning before one. Running out of localStorage is
+   silent and total -- the app keeps working for the rest of the session and
+   loses everything on reload -- so this sits above whichever view is open
+   rather than waiting for the user to visit the home screen. */
+.notice {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  margin: 0 auto;
+  max-width: 44rem;
+  padding: 0.85rem 1.1rem;
+  border: 1px solid var(--accent);
+  border-radius: 12px;
+  background: var(--surface);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+.notice-bad { border-color: var(--danger); }
+.notice strong { display: block; margin-bottom: 0.15rem; }
+.notice .btn { flex-shrink: 0; }
+@media (max-width: 560px) { .notice .btn { width: 100%; } }

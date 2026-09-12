@@ -54,15 +54,29 @@ export function tokenize(text: string): string[] {
     .filter((t) => t.length > 2 && !STOP.has(t));
 }
 
-/** Fallback when embeddings are unavailable. Jaccard-ish overlap, normalised by
- *  the query so a long memory is not punished for containing other things. */
+/** Fallback when embeddings are unavailable.
+ *
+ *  Overlap coefficient: shared terms over the SMALLER of the two sets.
+ *
+ *  This used to divide by the query alone, which made the score collapse as the
+ *  query grew. Solo mode retrieves against the last four messages, so a real
+ *  query is 15-30 terms while a memory is one sentence of about six -- meaning
+ *  the highest score a memory could possibly reach, with every one of its terms
+ *  present, was under the 0.25 gate. Memories were mathematically unretrievable
+ *  from the second message of a thread onward. It worked on the opening message
+ *  of a fresh thread, which is exactly what a demo and a single-query unit test
+ *  both look like.
+ *
+ *  Dividing by the smaller set asks the question that actually matters: how much
+ *  of this memory is present in what we are talking about. That does not decay
+ *  as more context is added. */
 export function lexicalSimilarity(query: string, content: string): number {
   const q = new Set(tokenize(query));
-  if (q.size === 0) return 0;
   const c = new Set(tokenize(content));
+  if (q.size === 0 || c.size === 0) return 0;
   let hits = 0;
-  for (const t of q) if (c.has(t)) hits++;
-  return hits / q.size;
+  for (const t of c) if (q.has(t)) hits++;
+  return hits / Math.min(q.size, c.size);
 }
 
 /** Half-life decay. Old memories fade but never vanish -- a birthday from a year
@@ -109,11 +123,41 @@ export function standoutIndices(similarities: number[], minZ: number, flatSpread
   return out;
 }
 
+/* Lexical relevance takes either route in.
+ *
+ * Standing out is the stronger signal: one proper noun shared with a six-term
+ * memory scores 0.17 and is obviously what the conversation is about, but no
+ * fixed floor would admit it. The zero check is needed because scores here are
+ * exactly zero when nothing is shared and standoutIndices returns a lone memory
+ * unconditionally -- without it, a character with one memory recites it in
+ * answer to everything.
+ *
+ * But a flat set is not always an undifferentiated one. With embeddings, every
+ * score landing in the same place means the query was vague. Lexically it can
+ * also mean twenty memories are all genuinely about football and the user just
+ * asked about football -- and returning nothing there would be absurd. So a
+ * plain high score gets in on its own. That floor is only meaningful because
+ * the measure is now scale-invariant: 0.34 is "a third of this memory's terms
+ * are in the query", which means the same thing whatever the query's length. */
+function lexicalKeep(similarities: number[], opts: RankOptions): Set<number> {
+  const keep = new Set(
+    standoutIndices(similarities, opts.minZ ?? 0.6, opts.flatSpread ?? 0.02).filter(
+      (i) => similarities[i] > 0
+    )
+  );
+  for (let i = 0; i < similarities.length; i++) {
+    if (similarities[i] >= (opts.lexicalFloor ?? 0.34)) keep.add(i);
+  }
+  return keep;
+}
+
 export interface RankOptions {
   queryEmbedding?: number[] | null;
   now?: Date;
   /** Lexical mode only: an absolute floor, since lexical scores reach a true 0. */
   threshold?: number;
+  /** Plain-score admission for the lexical path; see lexicalKeep. */
+  lexicalFloor?: number;
   /** Embedding mode: how many standard deviations above the mean counts as relevant. */
   minZ?: number;
   /** Embedding mode: below this spread, treat the set as undifferentiated. */
@@ -148,9 +192,25 @@ export function rankMemories<T extends RankableMemory>(
       : lexicalSimilarity(query, m.content)
   );
 
+  /* Both paths judge by the gap now.
+   *
+   * The lexical side used a fixed 0.25 floor, which is the same mistake an
+   * absolute cosine threshold was, for the same reason: the scale moves with the
+   * query. One proper noun shared with a six-term memory is a strong signal and
+   * scores 0.17; a long rambling query full of common words can score higher
+   * against something irrelevant. What separates them is not the number, it is
+   * whether one memory stands above the rest for THIS query.
+   *
+   * The extra floor matters here in a way it does not for embeddings: lexical
+   * scores are exactly zero when nothing is shared, and standoutIndices returns
+   * a lone memory unconditionally. Without it, a character with one memory would
+   * recite it in answer to everything. An explicit `threshold` still wins, so a
+   * caller that wants the old behaviour can ask for it. */
   const keep = useEmbeddings
     ? new Set(standoutIndices(similarities, opts.minZ ?? 0.6, opts.flatSpread ?? 0.012))
-    : new Set(similarities.map((s, i) => (s >= (opts.threshold ?? 0.25) ? i : -1)).filter((i) => i >= 0));
+    : opts.threshold !== undefined
+      ? new Set(similarities.map((s, i) => (s >= opts.threshold! ? i : -1)).filter((i) => i >= 0))
+      : lexicalKeep(similarities, opts);
 
   const scored: RankedMemory<T>[] = [];
   for (let i = 0; i < memories.length; i++) {

@@ -111,6 +111,116 @@ check("limit is respected and order is by score", () => {
   assert.ok(out[0].score >= out[1].score && out[1].score >= out[2].score);
 });
 
+/* Retrieval has to survive a conversation, not just its opening line.
+ *
+ * lexicalSimilarity used to divide by the query's token count, and solo mode
+ * retrieves against the last four messages. So the score fell as the thread grew
+ * and a one-sentence memory could not clear the 0.25 gate against a realistic
+ * 15-30 term query no matter how relevant it was. It worked on the first message
+ * of a fresh thread -- a demo, and every test here before these ones -- and was
+ * dead for the life of the character afterwards, while the card kept saying
+ * "remembers 47". These pin the property that was missing: relevance must not
+ * depend on how much has been said. */
+
+const bruno = "User's dog is called Bruno.";
+
+check("relevance stops decaying once the query is bigger than the memory", () => {
+  /* The property that was missing. Under the old measure every extra word in
+     the query lowered the score without limit -- 1/2, then 1/8, then 1/20 --
+     so a thread could always outgrow its own memories. Dividing by the smaller
+     set means that past |query| >= |memory| the score is hits/|memory| and
+     stops moving, however much more gets said. It does drop once from the
+     opening line, where the query is the smaller set; what matters is that it
+     converges instead of collapsing. */
+  const four = [
+    "how is bruno",
+    "he is good, ate my shoe though",
+    "ha, classic. anyway how was your day",
+    "long. i am shattered honestly",
+  ].join("\n");
+  const ten = [four,
+    "did you eat",
+    "not yet, going to order something in a bit",
+    "get the thai place, the one near the station",
+    "yeah maybe. what are you up to tomorrow",
+    "nothing much, might go for a run if it stays dry",
+    "sounds good, i might join you actually",
+  ].join("\n");
+
+  const a = lexicalSimilarity(four, bruno);
+  const b = lexicalSimilarity(ten, bruno);
+  assert.ok(a > 0, "sanity: bruno is named in the window");
+  assert.equal(b, a, `score must not move as the thread grows: ${a} -> ${b}`);
+
+  // And it is still actually retrieved at that length, which is the point.
+  const out = rankMemories(ten, [
+    mem({ id: "bruno", content: bruno }),
+    mem({ id: "other", content: "User works as a structural engineer." }),
+  ], {});
+  assert.equal(out[0]?.memory.id, "bruno", "retrieval must survive a real conversation");
+});
+
+check("the four-message window still retrieves the obvious memory", () => {
+  const query = [
+    "hey love, how was the thing today?",
+    "it was fine, long day though",
+    "i am trying to figure out what to get priya for the wedding",
+  ].join("\n");
+
+  const out = rankMemories(query, [
+    mem({ id: "priya", content: "User's sister Priya is getting married in December." }),
+    mem({ id: "job", content: "User works as a structural engineer." }),
+    mem({ id: "cat", content: "User is allergic to cats." }),
+  ], {});
+
+  assert.ok(out.length > 0, "the user named Priya and the Priya memory was dropped");
+  assert.equal(out[0].memory.id, "priya");
+});
+
+check("one shared proper noun is enough to stand out", () => {
+  /* 1 hit against a six-term memory scores 0.17 -- under any sane fixed floor,
+     and obviously the right answer when nothing else scores at all. */
+  const out = rankMemories(
+    "did you hear back about the thing in december yet or are they still deciding",
+    [
+      mem({ id: "hit", content: "User's sister Priya is getting married in December." }),
+      mem({ id: "a", content: "User drinks coffee black." }),
+      mem({ id: "b", content: "User supports Arsenal." }),
+    ],
+    {}
+  );
+  assert.equal(out[0]?.memory.id, "hit");
+});
+
+check("a long query about nothing in the set still injects nothing", () => {
+  const out = rankMemories(
+    "i went for a walk and then sat in the park for a bit reading my book",
+    [
+      mem({ id: "a", content: "User's dog is called Bruno." }),
+      mem({ id: "b", content: "User works as a structural engineer." }),
+    ],
+    {}
+  );
+  assert.equal(out.length, 0, "unrelated context must not drag memories in");
+});
+
+check("a character with one memory does not recite it at everything", () => {
+  /* standoutIndices returns a lone memory unconditionally, so the zero check is
+     what stops the only memory being attached to every single turn. */
+  const out = rankMemories("what do you want for dinner", [
+    mem({ id: "only", content: "User's sister Priya is getting married in December." }),
+  ], {});
+  assert.equal(out.length, 0);
+});
+
+check("a memory is not punished for containing other things", () => {
+  const wordy = lexicalSimilarity(
+    "bruno",
+    "User's dog is called Bruno and he is a nine year old collie from Leeds."
+  );
+  assert.ok(wordy > 0, "a longer memory containing the term must still match");
+});
+
 let pass = 0, fail = 0;
 for (const [name, fn] of results) {
   try { await fn(); console.log(`  PASS  ${name}`); pass++; }

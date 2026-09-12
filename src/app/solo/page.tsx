@@ -15,8 +15,8 @@ import { safeFilename, transcriptMarkdown } from "@/lib/export";
 import {
   addMemories, allMuses, circleOf, deleteCircle, deleteConversation, deleteFrom,
   deleteMessage, deleteMuse, download, editMessage, editMuse, feelingsOf,
-  findMuse, isEdited, knownTo, loadState, membersOf, relevantMemories, resetMuse,
-  saveState, setFeelings,
+  findMuse, isEdited, knownTo, loadState, membersOf, parseBackup, relevantMemories,
+  resetMuse, saveState, setFeelings,
   type SoloMessage, type SoloMuse, type SoloState,
 } from "@/lib/solo/store";
 
@@ -31,6 +31,15 @@ import {
  * personalities that remember you and get more personal as you talk.
  */
 
+/* Accepts a function of the current state as well as a plain value, so a caller
+   that writes back after an await cannot resurrect a stale snapshot. */
+export type Update = (next: SoloState | ((cur: SoloState) => SoloState)) => void;
+
+/** What /api/solo/chat accepts for one message. Enforced here too, because a
+ *  stored message the route rejects is not a failed send -- it stays in the
+ *  window and fails every send after it. */
+const MAX_MESSAGE = 8000;
+
 type View =
   | { kind: "home" }
   | { kind: "chat"; museId: string }
@@ -42,20 +51,93 @@ type View =
 export default function SoloPage() {
   const [state, setState] = useState<SoloState | null>(null);
   const [view, setView] = useState<View>({ kind: "home" });
+  /* Whether the last write actually landed. Everything in here is one
+     localStorage key that only grows, and when the browser finally refuses it
+     the app carries on working perfectly for the rest of the session and loses
+     the lot on reload. Silence there is the worst failure the product has. */
+  const [saveIssue, setSaveIssue] = useState<null | "quota" | "unavailable" | "nearly" | "corrupt">(null);
+
+  /* Skips the write that would immediately follow the first read. */
+  const loaded = useRef(false);
 
   useEffect(() => { setState(loadState()); }, []);
 
-  function update(next: SoloState) {
-    setState(next);
-    saveState(next);
-  }
+  /* Saving is a consequence of the state changing, not something every call site
+     remembers to do. That matters for more than tidiness: memory extraction
+     writes back seconds after the turn it belongs to, and it used to hand back a
+     whole state object captured before the network call. Anything the user did
+     while it was in flight -- a message sent, a reply received -- was silently
+     discarded when it landed. Callers now pass a function of the current state
+     instead, and the save happens once, here, on whatever actually committed. */
+  useEffect(() => {
+    if (!state) return;
+    if (!loaded.current) { loaded.current = true; return; }
+    const saved = saveState(state);
+    const issue = saved.ok ? (saved.nearlyFull ? "nearly" : null) : saved.reason;
+    /* Only when it actually changes. This runs on every state change, which is
+       every keystroke-driven write, and setting the same value each time would
+       schedule a render per save for no reason. */
+    setSaveIssue((cur) => (cur === issue ? cur : issue));
+  }, [state]);
+
+  const update: Update = (next) =>
+    setState((cur) => (typeof next === "function" ? next(cur as SoloState) : next));
+
+  const banner = saveIssue && state && (
+    <div className={saveIssue === "nearly" ? "notice" : "notice notice-bad"} role="alert">
+      <div>
+        {saveIssue === "quota" && (
+          <>
+            <strong>This browser is full, and nothing new is being saved.</strong> Everything
+            since you opened the app will be gone on reload. Take a backup now, then delete a
+            conversation you have finished with to make room.
+          </>
+        )}
+        {saveIssue === "unavailable" && (
+          <>
+            <strong>This browser is refusing to store anything.</strong> Private browsing does
+            this. Nothing said here will survive closing the tab.
+          </>
+        )}
+        {saveIssue === "corrupt" && (
+          <>
+            <strong>Your saved data is here but couldn&apos;t be read.</strong> Nothing is being
+            written over it, so it is not lost — but this session will not be saved either. If you
+            have a backup file, restoring it from the home screen is the way back.
+          </>
+        )}
+        {saveIssue === "nearly" && (
+          <>
+            <strong>Storage is nearly full.</strong> Take a backup while everything still fits,
+            and clear out a conversation or two.
+          </>
+        )}
+      </div>
+      <button
+        className="btn"
+        hidden={saveIssue === "corrupt"}
+        onClick={() => download(
+          safeFilename("muse-backup", "json"),
+          JSON.stringify(state, null, 2),
+          "application/json"
+        )}
+      >
+        Back up now
+      </button>
+    </div>
+  );
+
+  /* The banner has to ride above whichever view is showing -- running out of
+     room mid-conversation is exactly when it matters and exactly when the user
+     is not on the home screen. */
+  const shell = (node: React.ReactNode) => (<>{banner}{node}</>);
 
   // Nothing renders until localStorage has been read, so the first paint is
   // never a wrong empty state that flips a tick later.
   if (!state) return <main className="shell" />;
 
   if (view.kind === "import") {
-    return (
+    return shell(
       <ImportPersona
         onCancel={() => setView({ kind: "home" })}
         onCreate={(draft) => {
@@ -88,13 +170,13 @@ export default function SoloPage() {
   if (view.kind === "circle") {
     const circle = circleOf(state, view.circleId);
     if (!circle) { setView({ kind: "home" }); return null; }
-    return (
+    return shell(
       <CircleChat circle={circle} state={state} update={update} onBack={() => setView({ kind: "home" })} />
     );
   }
 
   if (view.kind === "new-circle") {
-    return (
+    return shell(
       <NewCircle
         state={state}
         onCancel={() => setView({ kind: "home" })}
@@ -116,7 +198,7 @@ export default function SoloPage() {
   if (view.kind === "edit") {
     const muse = findMuse(state, view.museId);
     if (!muse) { setView({ kind: "home" }); return null; }
-    return (
+    return shell(
       <EditMuse
         key={muse.id}
         muse={muse}
@@ -142,7 +224,7 @@ export default function SoloPage() {
   if (view.kind === "chat") {
     const muse = findMuse(state, view.museId);
     if (!muse) { setView({ kind: "home" }); return null; }
-    return (
+    return shell(
       <SoloChat
         muse={muse}
         state={state}
@@ -153,7 +235,7 @@ export default function SoloPage() {
     );
   }
 
-  return (
+  return shell(
     <SoloHome
       state={state}
       update={update}
@@ -172,7 +254,7 @@ function SoloHome({
   state, update, onOpen, onEdit, onImport, onOpenCircle, onNewCircle,
 }: {
   state: SoloState;
-  update: (s: SoloState) => void;
+  update: Update;
   onOpen: (id: string) => void;
   onEdit: (id: string) => void;
   onImport: () => void;
@@ -304,7 +386,7 @@ function SoloHome({
             </div>
           ))}
 
-          <div className="row" style={{ marginTop: "2.5rem", gap: "0.75rem" }}>
+          <div className="row" style={{ marginTop: "2.5rem", gap: "0.75rem", flexWrap: "wrap" }}>
             <button
               className="btn-ghost"
               onClick={() => download(
@@ -315,10 +397,45 @@ function SoloHome({
             >
               Export everything
             </button>
+
+            {/* The other half of that button. Without it the export was a file
+                nobody could use, and a cleared browser was total loss even for
+                someone who had backed up. */}
+            <label className="btn-ghost" style={{ cursor: "pointer" }}>
+              Restore a backup
+              <input
+                type="file"
+                accept=".json,application/json"
+                className="sr-only"
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = "";
+                  if (!file) return;
+                  const result = parseBackup(await file.text());
+                  if (!result.ok) { alert(result.error); return; }
+                  const { people, messages, memories, circles } = result.summary;
+                  const has = (state.muses.length || Object.keys(state.conversations).length);
+                  const warning = has
+                    ? "\n\nThis REPLACES everything currently in this browser. Export first if you are not sure."
+                    : "";
+                  if (!confirm(
+                    `Restore ${people} ${people === 1 ? "person" : "people"}, ${messages} messages, ` +
+                    `${memories} memories and ${circles} ${circles === 1 ? "circle" : "circles"}?${warning}`
+                  )) return;
+                  update(result.state);
+                }}
+              />
+            </label>
             <button
               className="link-btn"
               onClick={() => {
-                if (!confirm("Delete every conversation and memory in this browser? This cannot be undone.")) return;
+                /* It also deletes every character the user built from an
+                   export, which the old wording never mentioned. */
+                const built = state.muses.length;
+                const msg = built
+                  ? `Delete everything in this browser?\n\nThat includes the ${built} ${built === 1 ? "character" : "characters"} you built from a chat export, every conversation, and everything they remember. It cannot be undone.`
+                  : "Delete every conversation and memory in this browser? This cannot be undone.";
+                if (!confirm(msg)) return;
                 update({ userName: state.userName, muses: [], conversations: {}, memories: [] });
               }}
             >
@@ -341,7 +458,7 @@ function MuseCard({
 }: {
   muse: SoloMuse;
   state: SoloState;
-  update: (s: SoloState) => void;
+  update: Update;
   onOpen: (id: string) => void;
   onEdit: (id: string) => void;
 }) {
@@ -417,7 +534,7 @@ function SoloChat({
 }: {
   muse: SoloMuse;
   state: SoloState;
-  update: (s: SoloState) => void;
+  update: Update;
   onBack: () => void;
   onEdit: () => void;
 }) {
@@ -449,7 +566,13 @@ function SoloChat({
 
   const memoriesFor = state.memories.filter((m) => m.museId === muse.id);
 
-  async function send(text: string) {
+  /* `resend` is a retry of a message already in the thread.
+   *
+   * The failed attempt saved the user's message before the request went out, so
+   * the retry button appending it again added a second copy every single time.
+   * Two failures in a row left three. It is the saved conversation that is
+   * wrong afterwards, not just the screen. */
+  async function send(text: string, resend = false) {
     const content = text.trim();
     if (!content || busy) return;
 
@@ -460,12 +583,19 @@ function SoloChat({
     setLastSent(content);
     if (box.current) box.current.style.height = "auto";
 
-    const withUser: SoloMessage[] = [
-      ...log,
-      { id: `u-${Date.now()}`, from: "user", content, at: new Date().toISOString() },
-    ];
-    let next: SoloState = { ...state, conversations: { ...state.conversations, [muse.id]: withUser } };
-    update(next);
+    const withUser: SoloMessage[] = resend
+      ? log
+      : [...log, { id: `u-${Date.now()}`, from: "user", content, at: new Date().toISOString() }];
+
+    /* Functional, like every other write in here: a turn takes seconds and
+       anything committed during it -- a memory landing, an edit -- would be
+       reverted by writing back a snapshot taken before it started. */
+    if (!resend) {
+      update((cur) => ({
+        ...cur,
+        conversations: { ...cur.conversations, [muse.id]: withUser },
+      }));
+    }
 
     // The last few turns plus the new message, so retrieval follows the subject
     // rather than a two-word reply carrying no signal.
@@ -479,9 +609,15 @@ function SoloChat({
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           muse: {
-            name: muse.name,
-            description: muse.description,
-            relationshipType: muse.relationshipType,
+            name: muse.name.slice(0, 40),
+            description: muse.description.slice(0, 400),
+            /* Clamped to what the route accepts rather than sent as stored.
+               These caps are one-sided -- the wizard let a relationship run to
+               120 characters while the route rejects past 40 -- and the reply
+               path has no tolerance for a rejection: the offending value is in
+               localStorage, so every future request carries it and 400s too.
+               One long word typed once during setup ended the character. */
+            relationshipType: muse.relationshipType.slice(0, 40) || "someone close",
             languages: muse.languages ?? ["English"],
             personality: {
               traits: muse.traits ?? [],
@@ -494,7 +630,9 @@ function SoloChat({
           // Bounded window, same reason as the server app (§9).
           messages: withUser.slice(-20).map((m) => ({
             role: m.from === "user" ? ("user" as const) : ("assistant" as const),
-            content: m.content,
+            /* Same reasoning: one pasted message over the route's limit sat in
+               the window and killed every turn after it, permanently. */
+            content: m.content.slice(0, MAX_MESSAGE),
           })),
           /* Present only for someone built from real material. When it is, the
              server ignores the simple shape above and uses Presence's prompt. */
@@ -506,9 +644,12 @@ function SoloChat({
             : null,
           /* Everyone they share a circle with. Being in a circle should mean
              they know those people exist in here too, not only in the group. */
-          knows: knownTo(state, muse.id).map((k) => ({
-            name: k.name,
-            relationship: k.relationshipType,
+          /* Capped: someone in circles with nine or more other people
+             exceeded the route's limit and could no longer hold a one-to-one
+             conversation at all. */
+          knows: knownTo(state, muse.id).slice(0, 8).map((k) => ({
+            name: k.name.slice(0, 60),
+            relationship: k.relationshipType.slice(0, 120),
           })),
           mood: vibe.mood,
           topic: vibe.topic,
@@ -516,7 +657,11 @@ function SoloChat({
           /* How they are generally, as opposed to how this conversation is
              going. Sent every turn: it is a state, not an event. */
           feelings: hasFeelings(feelings) ? feelings : null,
-          memories,
+          /* Clamped on read as well as on write. The write-side clamp is new,
+             so anything already in someone's browser is still over the limit,
+             and a single one of those 400s the whole request the moment it
+             ranks into the top eight. */
+          memories: memories.map((m) => m.slice(0, 400)),
           userName: state.userName,
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         }),
@@ -572,8 +717,10 @@ function SoloChat({
             at: new Date().toISOString(),
           })),
         ];
-        next = { ...state, conversations: { ...state.conversations, [muse.id]: withMuse } };
-        update(next);
+        update((cur) => ({
+          ...cur,
+          conversations: { ...cur.conversations, [muse.id]: withMuse },
+        }));
         setStreaming("");
 
         /* Extraction runs after the reply is on screen and never blocks it, the
@@ -588,12 +735,18 @@ function SoloChat({
                   role: m.from === "user" ? "user" : "assistant",
                   content: m.content,
                 })),
-                known: memoriesFor.map((m) => m.content),
+                /* Bounded on the way out as well as clamped on the way in.
+                   This list is only there to stop the model re-proposing
+                   something already known, and sending a year of them every
+                   turn is bandwidth spent on nothing. */
+                known: memoriesFor.slice(-60).map((m) => m.content),
               }),
             });
             const { memories: found } = await r.json();
             if (Array.isArray(found) && found.length) {
-              update(addMemories(next, muse.id, found));
+              /* Read at commit time, not from the snapshot this turn started
+                 with -- see the save effect above. */
+              update((cur) => addMemories(cur, muse.id, found));
             }
           } catch { /* a missed memory is not worth an error banner */ }
         })();
@@ -684,7 +837,7 @@ function SoloChat({
           <div style={{ marginTop: "1rem" }}>
             <p className="error" role="alert">{error}</p>
             {lastSent && canRetry && (
-              <button className="link-btn" onClick={() => send(lastSent)}>Try again</button>
+              <button className="link-btn" onClick={() => send(lastSent, true)}>Try again</button>
             )}
             {!canRetry && (
               <button className="link-btn" onClick={onEdit}>Edit {muse.name}</button>
@@ -763,6 +916,7 @@ function SoloChat({
           id="solo-composer"
           ref={box}
           rows={1}
+          maxLength={MAX_MESSAGE}
           value={draft}
           placeholder={`Write to ${muse.name}`}
           onChange={(e) => {
@@ -801,8 +955,18 @@ function NewCircle({
      one flat voice in the room. */
   const eligible = everyone.filter((m) => m.persona);
 
+  /* The route carries a roster of everyone else in the room and caps it, so a
+     circle of nine could be created and then never produce a single reply --
+     every turn rejected, permanently, with nothing saying why. Capped where the
+     circle is made instead. Eight is also about where a group conversation
+     stops being one. */
+  const MAX_CIRCLE = 8;
+
   const toggle = (id: string) =>
-    setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
+    setPicked((p) =>
+      p.includes(id) ? p.filter((x) => x !== id) : p.length >= MAX_CIRCLE ? p : [...p, id]
+    );
+  const full = picked.length >= MAX_CIRCLE;
 
   const suggested = picked.length
     ? picked.map((id) => eligible.find((m) => m.id === id)?.name).filter(Boolean).join(" & ")
@@ -827,6 +991,7 @@ function NewCircle({
             key={m.id}
             className="muse-card"
             onClick={() => toggle(m.id)}
+            disabled={full && !picked.includes(m.id)}
             style={picked.includes(m.id) ? { borderColor: "var(--accent)" } : undefined}
           >
             <Avatar name={m.name} />
@@ -864,6 +1029,7 @@ function NewCircle({
         >
           {picked.length < 2 ? "Pick at least two" : `Put ${picked.length} in a room`}
         </button>
+        {full && <span className="fine">Eight is the most a room holds.</span>}
       </div>
     </main>
   );

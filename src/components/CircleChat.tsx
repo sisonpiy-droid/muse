@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { Avatar } from "@/components/Avatar";
 import { REGISTERS, hasFeelings, splitBurst } from "@/lib/presence/persona";
+import type { Update } from "@/app/solo/page";
 import {
   deleteFrom, deleteMessage, editMessage, feelingsOf, membersOf,
   type SoloCircle, type SoloMessage, type SoloMuse, type SoloState,
@@ -27,7 +28,7 @@ export function CircleChat({
 }: {
   circle: SoloCircle;
   state: SoloState;
-  update: (s: SoloState) => void;
+  update: Update;
   onBack: () => void;
 }) {
   const members = membersOf(state, circle);
@@ -73,8 +74,14 @@ export function CircleChat({
       ...log,
       { id: `u-${Date.now()}`, from: "user", content, at: new Date().toISOString() },
     ];
-    let next: SoloState = { ...state, conversations: { ...state.conversations, [circle.id]: running } };
-    update(next);
+    /* Written against whatever is current rather than the snapshot this turn
+       opened with. A circle turn runs several speakers back to back and can take
+       half a minute, and anything committed elsewhere in that window -- a memory
+       landing, an edit -- was being overwritten by a stale copy. */
+    const commit = (msgs: SoloMessage[]) =>
+      update((cur) => ({ ...cur, conversations: { ...cur.conversations, [circle.id]: msgs } }));
+
+    commit(running);
 
     const speakers = chooseSpeakers(content, running);
 
@@ -88,13 +95,19 @@ export function CircleChat({
           body: JSON.stringify({
             circleName: circle.name,
             speaker: { id: m.id, persona: { ...m.persona, you: m.persona.you || state.userName || "them" } },
+            /* Capped to what the route accepts. Circles built before the
+               limit existed can be larger, and sending the full roster would
+               reject every turn forever rather than just crowding the room. */
             others: members
               .filter((o) => o.id !== m.id)
+              .slice(0, 7)
               .map((o) => ({ id: o.id, name: o.name, relationship: o.relationshipType })),
             /* The whole room's transcript, including what anyone said earlier
                in this same turn -- so the second speaker is replying to the
                first rather than to the same message twice. */
-            log: running.slice(-40).map((x) => ({ from: x.from, speakerId: x.speakerId, content: x.content })),
+            log: running.slice(-40).map((x) => ({
+              from: x.from, speakerId: x.speakerId, content: x.content.slice(0, 8000),
+            })),
             names: Object.fromEntries(members.map((o) => [o.id, o.name])),
             userName: state.userName,
             timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
@@ -149,8 +162,7 @@ export function CircleChat({
               at: new Date().toISOString(),
             })),
           ];
-          next = { ...next, conversations: { ...next.conversations, [circle.id]: running } };
-          update(next);
+          commit(running);
         }
       } catch {
         setError("You're offline.");

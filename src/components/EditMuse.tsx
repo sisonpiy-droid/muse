@@ -93,8 +93,13 @@ export function EditMuse({
     feel.warmth !== feelings.warmth ||
     feel.note !== feelings.note;
 
+  /* The brief IS the character for someone built from an export -- it is what
+     the model reads. Clearing it leaves a person with a name and nothing to be,
+     and it saved silently. */
+  const wouldEmpty = Boolean(was.brief.trim()) && !brief.trim();
+
   function save() {
-    if (!name.trim()) return;
+    if (!name.trim() || wouldEmpty) return;
     onSave(
       {
         name: name.trim(),
@@ -226,6 +231,12 @@ export function EditMuse({
           maxLength={6000}
         />
       </label>
+      {wouldEmpty && (
+        <p className="error" style={{ marginTop: "-0.4rem" }}>
+          This is the whole of who {muse.name} is &mdash; clearing it leaves a name and nothing
+          else. Put something back before saving.
+        </p>
+      )}
       <p className="fine" style={{ marginTop: "-0.4rem" }}>
         The field that does the most work. Be forensic about mechanics &mdash; capitalisation,
         punctuation, message length, whether they send four short messages or one long one.
@@ -306,8 +317,8 @@ export function EditMuse({
 
       {/* ----------------------------------------------------------- saving */}
       <div className="row" style={{ marginTop: "2rem", gap: "0.75rem" }}>
-        <button className="btn" onClick={save} disabled={!name.trim() || !dirty}>
-          {dirty ? "Save changes" : "Nothing changed"}
+        <button className="btn" onClick={save} disabled={!name.trim() || !dirty || wouldEmpty}>
+          {wouldEmpty ? "Needs a description" : dirty ? "Save changes" : "Nothing changed"}
         </button>
         <button className="btn-ghost" onClick={onCancel}>Cancel</button>
         {resettable && (
