@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { Avatar } from "@/components/Avatar";
+import { BuildFigure } from "@/components/BuildFigure";
 import { CircleChat } from "@/components/CircleChat";
 import { EditMuse } from "@/components/EditMuse";
 import { ImportPersona } from "@/components/ImportPersona";
@@ -49,6 +50,7 @@ type View =
   | { kind: "edit"; museId: string }
   | { kind: "memories"; museId: string }
   | { kind: "import" }
+  | { kind: "figure" }
   | { kind: "circle"; circleId: string }
   | { kind: "new-circle" };
 
@@ -171,6 +173,35 @@ export default function SoloPage() {
     );
   }
 
+  if (view.kind === "figure") {
+    return shell(
+      <BuildFigure
+        onCancel={() => setView({ kind: "home" })}
+        onCreate={(draft) => {
+          const id = `figure-${Date.now()}`;
+          update((cur) => ({
+            ...cur,
+            userName: cur.userName ?? draft.you,
+            muses: [
+              {
+                id,
+                builtin: false,
+                persona: draft,
+                name: draft.them,
+                description: draft.interests?.trim() || "Built from what they have said in public.",
+                relationshipType: draft.relationship?.trim() || "someone in public life",
+                category: "Public",
+                traits: [],
+              },
+              ...cur.muses,
+            ],
+          }));
+          setView({ kind: "chat", museId: id });
+        }}
+      />
+    );
+  }
+
   if (view.kind === "circle") {
     const circle = circleOf(state, view.circleId);
     if (!circle) { setView({ kind: "home" }); return null; }
@@ -263,6 +294,7 @@ export default function SoloPage() {
       onOpen={(id) => setView({ kind: "chat", museId: id })}
       onEdit={(id) => setView({ kind: "edit", museId: id })}
       onImport={() => setView({ kind: "import" })}
+      onFigure={() => setView({ kind: "figure" })}
       onOpenCircle={(id) => setView({ kind: "circle", circleId: id })}
       onNewCircle={() => setView({ kind: "new-circle" })}
     />
@@ -272,13 +304,14 @@ export default function SoloPage() {
 /* ------------------------------------------------------------------ home */
 
 function SoloHome({
-  state, update, onOpen, onEdit, onImport, onOpenCircle, onNewCircle,
+  state, update, onOpen, onEdit, onImport, onFigure, onOpenCircle, onNewCircle,
 }: {
   state: SoloState;
   update: Update;
   onOpen: (id: string) => void;
   onEdit: (id: string) => void;
   onImport: () => void;
+  onFigure: () => void;
   onOpenCircle: (id: string) => void;
   onNewCircle: () => void;
 }) {
@@ -330,16 +363,27 @@ function SoloHome({
 
       {state.userName && (
         <>
-          <h2 className="section-title">Build someone real</h2>
-          <button className="muse-card" onClick={onImport} style={{ borderStyle: "dashed" }}>
-            <div style={{ minWidth: 0 }}>
-              <h3>From a chat export</h3>
-              <p>
-                Upload a WhatsApp export and MUSE reads how they actually wrote — length,
-                punctuation, the habits nobody can describe.
-              </p>
-            </div>
-          </button>
+          <h2 className="section-title">Build someone</h2>
+          <div className="card-grid">
+            <button className="muse-card" onClick={onImport} style={{ borderStyle: "dashed" }}>
+              <div style={{ minWidth: 0 }}>
+                <h3>From a chat export</h3>
+                <p>
+                  Upload a WhatsApp export and MUSE reads how they actually wrote — length,
+                  punctuation, the habits nobody can describe.
+                </p>
+              </div>
+            </button>
+            <button className="muse-card" onClick={onFigure} style={{ borderStyle: "dashed" }}>
+              <div style={{ minWidth: 0 }}>
+                <h3>Someone in public life</h3>
+                <p>
+                  An actor, a writer, a founder. Built from what they have said in public, to talk
+                  to about their work — as a mentor, a teacher or a friend.
+                </p>
+              </div>
+            </button>
+          </div>
 
           {talked.length > 0 && (
             <>
@@ -988,8 +1032,15 @@ function NewCircle({
 
   /* Only people with a full profile can be in a circle. A Muse without one has
      no archetype or samples for the group prompt to work from, and would be the
-     one flat voice in the room. */
-  const eligible = everyone.filter((m) => m.persona);
+     one flat voice in the room.
+     
+     Public figures are out too, for a different reason: circleBlock tells every
+     member "You know these people and they know you", which for a real named
+     person sitting in a room with the user's father is a fabricated
+     relationship between a real human being and a private one. Everything else
+     in the figure mode works to stop it inventing its own life; putting it in a
+     circle would invent one for it. */
+  const eligible = everyone.filter((m) => m.persona && m.persona.mode !== "figure");
 
   /* The route carries a roster of everyone else in the room and caps it, so a
      circle of nine could be created and then never produce a single reply --

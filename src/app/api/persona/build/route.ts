@@ -3,7 +3,7 @@ import { z } from "zod";
 import { getProvider, userFacingError } from "@/lib/ai";
 import { ProviderError } from "@/lib/ai/types";
 import { looksLikeRefusal } from "@/lib/ai/refusal";
-import { ARCHETYPES, MODES, PROMPTS, TEXTURES, briefSystem } from "@/lib/presence/persona";
+import { ARCHETYPES, MODES, NOT_ENOUGH, PROMPTS, TEXTURES, briefSystem } from "@/lib/presence/persona";
 
 /* Build a voice profile from real material.
  *
@@ -35,11 +35,17 @@ const bodySchema = z.object({
   callsYou: z.string().trim().max(60).optional(),
   arch: z.string().trim().max(30).default("other"),
   texture: z.string().trim().max(30).default("close"),
-  mode: z.enum(["memorial", "living", "character"]),
+  mode: z.enum(["memorial", "living", "character", "figure"]),
   /** Required for `living`: whether they know and agreed. */
   consent: z.boolean().nullish(),
 
   samples: z.string().max(14000).optional(),
+  /* Public figures only. `era` is which version of them is meant -- "in
+     interviews", "early career" -- which sharpens recall more than anything
+     else the user can cheaply supply. `quoted` is a transcript they pasted,
+     which is the only attested material in a figure build. */
+  era: z.string().max(120).optional(),
+  quoted: z.string().max(20000).optional(),
   extra: z.string().max(4000).optional(),
   metrics: z.string().max(4000).optional(),
   prompts: z.record(z.string(), z.string().max(400)).optional(),
@@ -71,6 +77,41 @@ function buildFieldError(field: string, code?: string): string {
     default:
       return "Check the details and try again.";
   }
+}
+
+/* A handful of lines in their register, for a figure with nothing pasted.
+ *
+ * A separate call on purpose, and one that is handed the finished brief. Asked
+ * for a profile and sample lines together, a model writes the lines from its
+ * general idea of the person -- charming, self-deprecating, interchangeable
+ * with the next famous person in the same field -- and then bends the profile
+ * to match. Made to derive the mechanics first and obey them second, the lines
+ * have something specific to be. It is still an impression; it is a much
+ * better-constrained one.
+ *
+ * Failure is not fatal: no lines means a thinner character, not a broken one. */
+async function registerLines(name: string, brief: string): Promise<string> {
+  const { text } = await getProvider().generateResponse({
+    system: `You write sample lines that demonstrate how someone speaks, for a portrayal of a real person in public life.
+
+You will be given a profile of how they talk. Obey it exactly -- it is the specification, not a suggestion.
+
+Write 8 to 12 lines they could plausibly say in an ordinary conversation. One per line, nothing else, no numbering, no quotation marks, no names in front.
+
+- These are demonstrations of manner, not quotations. Do not reproduce anything they are actually on record as having said.
+- Nothing about their private life, and nothing that reads as news or as a position on anything current.
+- A line any friendly, articulate person could have said is a wasted line. Every one should be recognisably this person and false of someone else in the same field.
+- Vary the length the way the profile says they vary it. Include the short throwaway ones; those carry more texture than the polished ones.
+- Ordinary conversation, not an interview answer. They are talking to one person.`,
+    messages: [{ role: "user", content: `The person is ${name}.\n\nHow they talk:\n${brief}` }],
+  });
+
+  return (text || "")
+    .split("\n")
+    .map((l) => l.trim().replace(/^[-*\d.)\s]+/, "").replace(/^["']|["']$/g, ""))
+    .filter((l) => l.length > 1)
+    .slice(0, 12)
+    .join("\n");
 }
 
 export async function POST(req: Request) {
@@ -153,6 +194,26 @@ function trimSpread(samples: string, budget: number): string {
   return kept.length ? kept.join(SEP) : text.slice(0, budget);
 }
 
+  /* A public figure's material is not the same shape. There is usually no
+     export, the model is working from the public record rather than only from
+     what it was handed, and the fields that matter are which version of them
+     the user means and anything they pasted. */
+  const figureMaterial = [
+    `Name: ${src.them}`,
+    src.relationship ? `Known for: ${src.relationship}` : "",
+    src.era?.trim() ? `The version of them to write: ${src.era.trim()}` : "",
+    `They will be talking to ${src.you} as: ${archLabel}`,
+    src.quoted?.trim()
+      ? `\nA transcript of them actually speaking. This is attested and outranks your own recollection wherever they disagree:\n${src.quoted.trim().slice(0, 6000)}`
+      : "",
+    src.extra?.trim()
+      ? `\nHow they come across, written by someone who follows them:\n${src.extra.trim()}`
+      : "",
+    src.metrics?.trim()
+      ? `\nMeasured from that transcript — treat these as fact:\n${src.metrics.trim()}`
+      : "",
+  ].filter(Boolean).join("\n");
+
   /* Presence's material block, field for field and in the same order. */
   const material = [
     `Name: ${src.them}`,
@@ -187,7 +248,9 @@ function trimSpread(samples: string, budget: number): string {
    * The last rung carries no verbatim messages, which is worse and still a
    * character. The measured statistics survive, so it is still recognisably how
    * that person writes. */
-  const ladder = [
+  const isFigure = src.mode === "figure";
+
+  const ladder = isFigure ? [figureMaterial] : [
     material,
     material.replace(trimSpread(src.samples ?? "", 4500), trimSpread(src.samples ?? "", 1200)),
     material.replace(trimSpread(src.samples ?? "", 4500), "(withheld)"),
@@ -221,13 +284,37 @@ function trimSpread(samples: string, budget: number): string {
       /* Too short to be a voice profile. The prompt asks for 180-240 words, so
          anything this small is a truncation or a shrug, and saving it produces
          a character with almost nothing to go on. */
+      /* The model saying it does not know them well enough. Better than a
+         confident stranger wearing a real name, which the user cannot detect
+         and which the rest of the pipeline would faithfully preserve forever. */
+      if (isFigure && brief.replace(/[^A-Z_]/g, "").startsWith(NOT_ENOUGH)) {
+        return Response.json(
+          {
+            error: `There isn't enough about ${src.them} on the public record to build them from, and guessing would invent a person rather than portray one. Pasting an interview into "something they actually said" usually fixes it.`,
+            code: "not_enough",
+          },
+          { status: 422 }
+        );
+      }
+
       if (brief.length < 120) {
         console.error(`persona build came back too short (rung ${i + 1}):`, brief.length);
         lastError = new ProviderError("empty", "brief too short to use");
         continue;
       }
 
-      return Response.json({ brief });
+      /* Nothing was pasted, so there is no verbatim material and the character
+         would run on the brief alone -- which drifts to assistant-voice over a
+         long conversation, because the samples block is what holds texture
+         across turns. Reconstructed lines are worse than real ones and better
+         than none, and personaSystem labels them as reconstruction rather than
+         as things the person said. */
+      if (isFigure && !src.quoted?.trim()) {
+        const lines = await registerLines(src.them, brief).catch(() => "");
+        return Response.json({ brief, lines, verbatim: false });
+      }
+
+      return Response.json({ brief, verbatim: true });
     } catch (err) {
       const code = err instanceof ProviderError ? err.code : null;
       console.error(`persona build failed (rung ${i + 1}/${ladder.length})`, code ?? err);

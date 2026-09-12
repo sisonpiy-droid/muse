@@ -232,6 +232,107 @@ export interface StyleReport {
   last: number;
 }
 
+/* Reading a transcript rather than a chat export.
+ *
+ * For a public figure there is no export, and the whole build rests on what
+ * replaces it. The honest answer is a real interview: something they actually
+ * said, in their own words, at length.
+ *
+ * The measurement machinery does not care where messages came from -- styleOf
+ * and sampleWindows take ChatMessage[] and nothing else -- so a transcript
+ * parsed into that shape gets measured exactly like an export does, and the
+ * metrics block stays a measurement instead of becoming an impression. That is
+ * the single thing separating a portrayal that sounds like them from one that
+ * sounds like what a model thinks a famous person sounds like.
+ *
+ * Three shapes turn up, and all three are handled:
+ *   NAME: text            transcripts, magazine Q&As, subtitle dumps
+ *   NAME                  a speaker on their own line, words underneath
+ *   text with no labels   auto-captions of someone talking, which is one
+ *                         speaker by definition
+ */
+
+/** A label followed by a colon: "SRK:", "Shah Rukh Khan:", "INTERVIEWER:". */
+const SPEAKER_RE = /^\s*([^:\n]{1,40}?)\s*:\s*(.*)$/;
+
+/** A label alone on its own line, words beneath it. Deliberately strict --
+ *  short, no sentence punctuation -- so a real line of speech is not mistaken
+ *  for a name. */
+const BARE_LABEL_RE = /^\s*([\p{Lu}][\p{L}.'\- ]{0,38})\s*$/u;
+
+/* Timing lines and cue numbers from subtitle files.
+   
+   Matched by what they are made of rather than by shape: SRT writes
+   "00:00:04,120 --> 00:00:07,400" and WebVTT writes a full stop instead of the
+   comma, and a regex built around one of those silently lets the other through
+   -- where SPEAKER_RE then reads "00" as the speaker and the rest as something
+   they said. A line with no letters in it is not speech. */
+const TIMECODE_RE = /^[\d:,.\-> \[\]]+$/;
+
+export function parseTranscript(raw: string, fallbackName: string): ParsedChat {
+  const lines = raw.replace(/\r/g, "").split("\n");
+  const msgs: ChatMessage[] = [];
+  let pending: string | null = null;
+
+  for (const line of lines) {
+    const text = line.trim();
+    if (!text || TIMECODE_RE.test(text)) continue;
+
+    const labelled = text.match(SPEAKER_RE);
+    if (labelled && labelled[2].trim()) {
+      msgs.push({ who: labelled[1].trim(), at: 0, text: labelled[2].trim() });
+      pending = null;
+      continue;
+    }
+
+    const bare = text.match(BARE_LABEL_RE);
+    if (bare && !/[.!?,]$/.test(text)) {
+      pending = bare[1].trim();
+      continue;
+    }
+
+    if (pending) {
+      msgs.push({ who: pending, at: 0, text });
+      continue;
+    }
+
+    /* An unlabelled line belongs to whoever was speaking, not to the person
+       being built -- otherwise a wrapped sentence in an interview invents a
+       second participant with the subject's name and measures half their words
+       as somebody else's.
+       
+       It continues the message above while that message is unfinished, and
+       starts a new one once it has ended. That matters most for auto-captions,
+       which arrive as arbitrary fragments with no labels at all: grouping them
+       into sentences is what makes "typical message length" mean anything. */
+    const last = msgs[msgs.length - 1];
+    if (last && !/[.!?]$/.test(last.text)) {
+      last.text += " " + text;
+    } else {
+      msgs.push({ who: last ? last.who : fallbackName, at: 0, text });
+    }
+  }
+
+  const messages = msgs.filter((m) => m.text && !isNoise(m.text));
+
+  const tally = new Map<string, Participant>();
+  for (const m of messages) {
+    const e = tally.get(m.who) ?? { name: m.who, count: 0, chars: 0, first: Infinity, last: 0 };
+    e.count++;
+    e.chars += m.text.length;
+    tally.set(m.who, e);
+  }
+
+  return {
+    messages,
+    /* By characters, not by count. An interviewer asks many short questions and
+       the person answering says far more -- ranking by count would put the
+       interviewer first in almost every transcript. */
+    participants: [...tally.values()].sort((a, b) => b.chars - a.chars),
+    unreadable: 0,
+  };
+}
+
 /** Measures how one participant writes, as instructions a model can follow. */
 export function styleOf(messages: ChatMessage[], name: string): StyleReport {
   const mine = messages.filter((m) => m.who === name);

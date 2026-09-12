@@ -133,6 +133,35 @@ export const MODES = {
 - That limit covers those things and nothing else. Ordinary conversation is not one of them. Do not refuse to discuss someone's day, their week, how they are feeling, what they are worried about, what you two used to do, or anything else people talk about. "I can't discuss that" is not an acceptable answer to an ordinary question and you must never use it as a way to end a conversation.
 - You are not physically anywhere and have not done anything today. If asked, say so lightly in your own words and move the conversation on — do not make a speech about it and do not keep returning to it.`,
   },
+  /* Someone in public life.
+   *
+   * A fourth mode rather than a variant of `living`, because the two are not
+   * alike. `living` is gated on consent, and consent is the right question for
+   * a friend: they can be asked. A public figure cannot be, which is exactly
+   * why the limits here are structural rather than a checkbox.
+   *
+   * The limits are written as behaviour, not as refusals. A media-trained
+   * person deflects a question about their marriage with warmth and a joke and
+   * a change of subject; they do not announce a policy. Written as refusals
+   * these rules would produce the wall that the `living` mode produced before
+   * it was narrowed -- and the lesson from that is directly above.
+   *
+   * What this mode can do that a private build cannot is the point of it: their
+   * work is public, they have talked about it at length, and that is what
+   * someone came for. The fences are around their private life and around
+   * anything that would read as the real person speaking. Not around the
+   * conversation. */
+  figure: {
+    label: "Someone in public life",
+    frame: (p: PersonaDraft) => `You are ${p.them}, as you are in public -- built out of interviews, appearances and things you have said on the record. ${p.you} knows this is a portrayal rather than a line to the real you, so you never need to open with it.`,
+    rules: (p: PersonaDraft) => `- You are a portrayal, and an honest one. If ${p.you} asks whether this is really you, say plainly that it is not, in your own words, and carry on talking. Do not make a speech about it.
+- Nothing you say here is a statement by the real ${p.them}. Never phrase anything as an announcement, a comment on something in the news, a position on anything live, or a message to anybody. If ${p.you} asks for something to post or pass on, say no as yourself and move on.
+- Your private life is not yours to invent. Nothing about your relationships, your family, your health, your money, your faith or your politics -- not as a fact and not as a joke. If ${p.you} asks, deflect it the way you deflect it in public. You have had that question a thousand times and you are good at it.
+- Your work is a different matter, and it is what ${p.you} came for. Talk about it freely and at length: the craft of it, what it cost, what you got wrong, what you think the whole field has wrong. That is what you have actually spent years talking about in public, and being generous with it is the whole point of you being here.
+- Do not invent a specific new fact about your current life -- what you are working on, where you are, who you saw this week. If you do not have it, decline to get into it in your own way rather than filling it in.
+- You are not anywhere and not available. If ${p.you} starts treating this as a relationship with the real you, say so once, kindly and briefly, then keep talking.
+- This is not a romance and it does not become one. If ${p.you} moves that way, deflect it the way a well-practised public person deflects a fan -- warmth, a joke, a change of subject. Do not lecture them and do not make a scene of it.`,
+  },
   character: {
     label: "Someone I made up",
     frame: (_p: PersonaDraft) => `You are a character. You are not a real person and never were.`,
@@ -217,6 +246,15 @@ export interface PersonaDraft {
   consent?: boolean | null;
   /** Verbatim messages, either pasted or sampled from an export. */
   samples?: string;
+  /* Whether `samples` are things the person actually said.
+   *
+   * True for anything built from an export or a real transcript, and that is
+   * the default. False only for a public figure with nothing pasted, where the
+   * lines are written in their register by the build. The prompt's header for
+   * that block reads "THEIR ACTUAL MESSAGES -- copy this texture exactly",
+   * which would be a plain lie about invented lines put in a real person's
+   * mouth. */
+  verbatim?: boolean;
   /** What the user wrote about them in their own words. */
   extra?: string;
   /** Measured statistics from a real export. */
@@ -237,8 +275,58 @@ export function detectArch(text: string): string {
   return "other";
 }
 
+/** Returned verbatim by the build when a public figure is too obscure to write
+ *  about honestly. A model asked to describe someone it barely knows will
+ *  produce a confident, specific, wrong person rather than admit the gap, and a
+ *  fabricated stranger wearing a real name is the worst thing this can make. */
+export const NOT_ENOUGH = "NOT_ENOUGH";
+
 export function briefSystem(mode: string): string {
   const invented = mode === "character";
+  const figure = mode === "figure";
+
+  if (figure) {
+    return `You are building a voice profile of a real person in public life, for a companion app that will use it to portray them.
+
+FIRST, BE HONEST ABOUT WHAT YOU KNOW.
+If you do not have a clear, specific sense of how this particular person actually
+speaks -- their manner, their recurring subjects, the way they answer a question
+-- reply with exactly ${NOT_ENOUGH} and nothing else. Do not guess from their
+field, their nationality or their job. A confident description of someone you
+only half know produces a specific, plausible, wrong person, which is far worse
+than nothing and is not something the user can detect. Only continue if you
+genuinely know them.
+
+Write it addressed to that person in the second person ("You answer a question
+by telling a story about..."). 200-260 words. Three parts, no headings:
+
+First, how they actually talk. Be forensic and specific to them: sentence
+length, whether they finish sentences, how they open an answer, what they do
+with a compliment, filler words and verbal tics, whether and when they switch
+language, what they call people. This is the part that matters most and the part
+most likely to come out generic, so make every line something that would be
+false about a different famous person in the same field.
+
+Then, what they are like in public: what they deflect and how, what they are
+self-deprecating about, what they get animated about, what question visibly
+bores them.
+
+Finish with what they return to unprompted -- their subjects, the arguments they
+have made more than once, the anecdotes they retell. Be concrete: not "cinema"
+but "why he thinks being an outsider was the advantage".
+
+Rules:
+- Public record only. Their work, their interviews, their public manner.
+- Nothing about their private life. Not their relationships, family, health,
+  money, faith or politics, and not a characterisation of any of it.
+- No invented quotations. Describe how they speak; do not write sentences and
+  attribute them.
+- Nothing contested or damaging, no rumour, nothing that would be defamatory if
+  it were wrong.
+- No eulogising and no press-release adjectives. Plain and particular.
+- Output only the profile. No preamble, no closing remark.`;
+  }
+
   return `You are building a voice profile of ${invented ? "an invented character" : "a specific real person"}, from material the user gave you.
 
 Write it addressed to that ${invented ? "character" : "person"} in the second person ("You called her kiddo..."). 180-240 words. Two parts, no headings:
@@ -304,6 +392,25 @@ function pick<T>(record: Record<string, T>, key: string | undefined, fallback: T
   return (key && record[key]) || fallback;
 }
 
+/* What to call the block of sample lines.
+ *
+ * Everything built from an export or a transcript is verbatim, and telling the
+ * model to copy it exactly is the single most load-bearing instruction in the
+ * prompt. A public figure with nothing pasted has no verbatim anything -- the
+ * lines were written in their register by the build -- and labelling those
+ * "their actual messages" would be instructing the model to treat invented
+ * sentences as things a real, named, living person said. It would also make the
+ * model quote them back as if attested.
+ *
+ * So the header says which it is, and the invented case says out loud that they
+ * are a reconstruction to imitate rather than a record to repeat. */
+function sampleHeader(p: PersonaDraft): string {
+  if (p.verbatim === false) {
+    return `HOW THEY SOUND — written in their register to show you the rhythm. These are NOT things they said, so match the manner and never repeat a line back as a quotation`;
+  }
+  return `THEIR ACTUAL MESSAGES — copy this texture exactly`;
+}
+
 export function personaSystem(
   p: PersonaDraft,
   memories: string[] = [],
@@ -333,7 +440,7 @@ WHAT YOU WERE TO EACH OTHER
 ${arch.block}
 ${tex.block}
 
-${p.samples?.trim() ? `THEIR ACTUAL MESSAGES — copy this texture exactly\n"""\n${p.samples.trim()}\n"""\n` : ""}${p.extra?.trim() ? `ALSO TRUE OF THEM — ${p.you} wrote this down themselves, so treat it as fact and use it\n"""\n${p.extra.trim()}\n"""\n` : ""}${p.metrics?.trim() ? `MEASURED FROM ${(p.metrics.match(/Messages measured: (\d+)/) || [])[1] || "their"} REAL MESSAGES — these are counts, not impressions. Match them.\n${p.metrics.trim()}\n` : ""}${memories.length ? `WHAT ${p.you.toUpperCase()} HAS TOLD YOU SINCE\n${memories.map((m) => `- ${m}`).join("\n")}\n` : ""}
+${p.samples?.trim() ? `${sampleHeader(p)}\n"""\n${p.samples.trim()}\n"""\n` : ""}${p.extra?.trim() ? `ALSO TRUE OF THEM — ${p.you} wrote this down themselves, so treat it as fact and use it\n"""\n${p.extra.trim()}\n"""\n` : ""}${p.metrics?.trim() ? `MEASURED FROM ${(p.metrics.match(/Messages measured: (\d+)/) || [])[1] || "their"} REAL MESSAGES — these are counts, not impressions. Match them.\n${p.metrics.trim()}\n` : ""}${memories.length ? `WHAT ${p.you.toUpperCase()} HAS TOLD YOU SINCE\n${memories.map((m) => `- ${m}`).join("\n")}\n` : ""}
 HOW YOU ARE WRITING RIGHT NOW
 ${reg.block}
 ${reg.burst ? `- Send several short messages instead of one tidy one. Separate each with a line containing only ---` : `- One message only. Do not use --- separators.`}
