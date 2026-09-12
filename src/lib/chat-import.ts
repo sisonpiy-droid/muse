@@ -33,6 +33,9 @@ export interface Participant {
 export interface ParsedChat {
   messages: ChatMessage[];
   participants: Participant[];
+  /** Lines that looked like messages but could not be read. Surfaced rather
+   *  than swallowed: a format this parser has not seen should be visible. */
+  unreadable: number;
 }
 
 /* ---------------------------------------------------------------- unzip */
@@ -90,11 +93,69 @@ export async function unzipLargestTxt(buf: ArrayBuffer): Promise<string> {
 const LINE_RE =
   /^‎?\[?(\d{1,4}[/.\-]\d{1,2}[/.\-]\d{2,4}),?\s+(\d{1,2}:\d{2}(?::\d{2})?)\s*([APap]\.?[Mm]\.?)?\]?\s*(?:[-–]\s*)?([^:\n]{1,60}?):\s?([\s\S]*)$/;
 
+/* Attachment placeholders, in whatever language the phone was set to.
+ *
+ * This list used to be English only, so an export from a phone set to Hindi,
+ * Spanish or Portuguese counted every photo, voice note and sticker as a real
+ * message. In a chat with any photos in it that is a large share of the total,
+ * and it lands in the measured statistics -- median message length, "starts
+ * lowercase", the distinctive-words list -- which are then handed to the model
+ * as "counts, not impressions. Match them."
+ *
+ * Android wraps its placeholder in angle brackets in every locale, so that is
+ * the general rule and needs no translations. iOS writes a localised phrase
+ * instead, so those are listed for the languages this is most likely to meet.
+ */
+const BRACKETED = /^‎?<[^>]{1,80}>$/;
+
 const NOISE_RE =
-  /^(‎)?(<Media omitted>|image omitted|video omitted|audio omitted|sticker omitted|GIF omitted|document omitted|Contact card omitted|This message was deleted|You deleted this message|missed voice call|missed video call|null)$/i;
+  new RegExp(
+    "^(‎)?(" +
+      [
+        "image omitted", "video omitted", "audio omitted", "sticker omitted",
+        "GIF omitted", "document omitted", "Contact card omitted",
+        "This message was deleted", "You deleted this message",
+        "missed voice call", "missed video call", "null",
+        "छवि छोड़ी गई",
+        "वीडियो छोड़ा गया",
+        "ऑडियो छोड़ा गया",
+        "स्टिकर छोड़ा गया",
+        "इस संदेश को मिटा दिया गया",
+        "imagen omitida", "video omitido", "audio omitido", "sticker omitido",
+        "Se eliminó este mensaje", "imagem ocultada", "áudio ocultado",
+        "Esta mensagem foi apagada", "image absente", "vidéo absente",
+        "Ce message a été supprimé", "Bild weggelassen",
+        "Diese Nachricht wurde gelöscht", "gambar tidak disertakan",
+        "Pesan ini telah dihapus",
+      ].join("|") +
+      ")$",
+    "i"
+  );
+
+/** Is this message an attachment placeholder rather than something said? */
+const isNoise = (text: string) => BRACKETED.test(text) || NOISE_RE.test(text);
 
 const SYSTEM_RE =
-  /(end-to-end encrypted|created group|added you|changed the subject|changed this group|joined using this group|left$|changed their phone number|security code changed|You're now an admin|messages and calls are)/i;
+  /(end-to-end encrypted|created group|added you|changed the subject|changed this group|joined using this group|changed their phone number|security code changed|You're now an admin|messages and calls are)/i;
+
+/* "X left" is a system line, and /left$/ against every line also matched any
+   wrapped line of a real message ending in that word -- "go left", "there was
+   nothing left" -- and deleted it. No bound on length or word count separates
+   those from "Piyush Kapoor left", because nothing about the text does.
+   
+   What separates them is the timestamp. A leave notice is its own line and
+   carries one; a line that wrapped off the message above it never does. So this
+   is only ever applied to timestamped lines, below. */
+const LEAVE_RE = /\bleft$/i;
+
+/* A line that begins like a message header but did not parse.
+ *
+ * These fell through to the continuation branch and were glued onto the end of
+ * the previous person's message, so one unrecognised timestamp variant both
+ * corrupted the message before it and attributed its words to the wrong person.
+ * Skipped and counted instead, so a format this parser has not seen is visible
+ * rather than quietly folded into someone's voice. */
+const HEADER_ISH = /^‎?\[?\s*\d{1,4}[/.\-]\d{1,2}[/.\-]\d{2,4}[,\s]/;
 
 function stampOf(dateStr: string, timeStr: string, ampm?: string): number {
   const [a, b, rawYear] = dateStr.split(/[/.\-]/).map(Number);
@@ -118,18 +179,26 @@ function stampOf(dateStr: string, timeStr: string, ampm?: string): number {
 export function parseExport(raw: string): ParsedChat {
   const lines = raw.replace(/\r/g, "").split("\n");
   const msgs: ChatMessage[] = [];
+  let unreadable = 0;
 
   for (const line of lines) {
     const m = line.match(LINE_RE);
     if (m) {
       msgs.push({ who: m[4].trim(), at: stampOf(m[1], m[2], m[3]), text: (m[5] || "").trim() });
+    } else if (HEADER_ISH.test(line)) {
+      /* Timestamped, but no "Name:" in it. Either a system notice, or a message
+         in a format this parser does not know. The second kind is worth
+         counting: appending it would corrupt the message above and put its
+         words in someone else's mouth, and silently dropping it would hide that
+         the export was only partly understood. */
+      if (!SYSTEM_RE.test(line) && !LEAVE_RE.test(line.trim())) unreadable++;
     } else if (msgs.length && line.trim() && !SYSTEM_RE.test(line)) {
       // A message that wrapped onto its own line belongs to the one before it.
       msgs[msgs.length - 1].text += "\n" + line.trim();
     }
   }
 
-  const messages = msgs.filter((m) => m.text && !NOISE_RE.test(m.text.trim()));
+  const messages = msgs.filter((m) => m.text && !isNoise(m.text.trim()));
 
   const tally = new Map<string, Participant>();
   for (const m of messages) {
@@ -140,7 +209,11 @@ export function parseExport(raw: string): ParsedChat {
     tally.set(m.who, e);
   }
 
-  return { messages, participants: [...tally.values()].sort((a, b) => b.count - a.count) };
+  return {
+    messages,
+    participants: [...tally.values()].sort((a, b) => b.count - a.count),
+    unreadable,
+  };
 }
 
 /* ---------------------------------------------------------------- measure */
@@ -222,6 +295,24 @@ export function styleOf(messages: ChatMessage[], name: string): StyleReport {
   }
   const topOpeners = Object.entries(openers)
     .sort((a, b) => b[1] - a[1]).slice(0, 5).filter(([, c]) => c > 2).map(([w]) => w);
+
+  /* Percentages from a handful of messages are noise wearing a number.
+   *
+   * These go into the prompt under "these are counts, not impressions. Match
+   * them", so a participant with nine messages produced "Starts a message
+   * lowercase: 100% of the time" and the model obeyed it exactly. That happens
+   * easily: pick the wrong speaker in a group export, or build from a chat
+   * where the other person barely wrote. Below a usable sample the honest thing
+   * is to say the sample is small and let the brief lean on the messages
+   * themselves. */
+  if (mine.length < 25) {
+    return {
+      text: `Messages measured: ${mine.length}. That is too few to measure habits from, so there are no statistics here — go by the sample messages themselves and do not infer rules from how few there are.`,
+      n: mine.length,
+      first: 0,
+      last: 0,
+    };
+  }
 
   const text = [
     `Messages measured: ${mine.length}`,

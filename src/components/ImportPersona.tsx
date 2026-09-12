@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   UnreadableExport, parseText, readExportFile, sampleWindows, styleOf,
@@ -88,6 +88,27 @@ const MAX_SAMPLES = 14000;
 const MAX_EXTRA = 4000;
 const MAX_PROMPT = 400;
 
+/* The wizard's own state, kept across a reload.
+ *
+ * Everything typed across four steps -- and the generated brief, which costs
+ * fifteen seconds and a model call -- lived only in React state. A refresh, an
+ * accidental back gesture or a phone dropping the tab lost all of it with no
+ * warning, and the only way forward was to start again from the first screen.
+ *
+ * sessionStorage rather than localStorage on purpose: this is scratch work for
+ * one sitting, not something to find waiting weeks later. The parsed export is
+ * deliberately not kept -- it is large, and the file is still on the device. */
+const DRAFT_KEY = "muse.import-draft/1";
+
+function loadDraft(): PersonaDraft | null {
+  try {
+    const raw = sessionStorage.getItem(DRAFT_KEY);
+    return raw ? (JSON.parse(raw) as PersonaDraft) : null;
+  } catch {
+    return null;
+  }
+}
+
 export function ImportPersona({
   onCreate,
   onCancel,
@@ -96,7 +117,7 @@ export function ImportPersona({
   onCancel: () => void;
 }) {
   const [step, setStep] = useState<Step>(0);
-  const [draft, setDraft] = useState<PersonaDraft>({
+  const [draft, setDraft] = useState<PersonaDraft>(() => loadDraft() ?? {
     them: "", you: "", relationship: "", callsYou: "",
     arch: "other", texture: "close", mode: "", consent: null,
     samples: "", extra: "", metrics: "", prompts: {},
@@ -107,9 +128,30 @@ export function ImportPersona({
   const [nudge, setNudge] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [hint, setHint] = useState<string | null>(null);
+  /* Reading, parsing and measuring a real export all run on the main thread, so
+     a large one froze the tab with nothing on screen to say why. */
+  const [reading, setReading] = useState(false);
+  /* Whether the samples box holds something the user typed. Picking a
+     participant fills it from the export, and used to do so unconditionally --
+     silently throwing away anything written by hand first. */
+  const [samplesTouched, setSamplesTouched] = useState(false);
+  const [showAll, setShowAll] = useState(false);
   const [pasteMode, setPasteMode] = useState(false);
   const [pasted, setPasted] = useState("");
   const filePick = useRef<HTMLInputElement>(null);
+
+  /* Written on every change rather than at step boundaries -- a reload does not
+     wait for one. Failures are ignored: not being able to keep scratch work is
+     not worth an error in front of someone mid-setup. */
+  useEffect(() => {
+    try { sessionStorage.setItem(DRAFT_KEY, JSON.stringify(draft)); } catch { /* not worth reporting */ }
+  }, [draft]);
+
+  /* Cleared once the wizard is done with, either way. Leaving it behind would
+     mean the next person built starts pre-filled with the last one's answers. */
+  const forgetDraft = () => {
+    try { sessionStorage.removeItem(DRAFT_KEY); } catch { /* nothing to do */ }
+  };
 
   const D = (k: keyof PersonaDraft, v: unknown) => setDraft((d) => ({ ...d, [k]: v }));
   const P = (k: string, v: string) => setDraft((d) => ({ ...d, prompts: { ...d.prompts, [k]: v } }));
@@ -124,14 +166,28 @@ export function ImportPersona({
     }
   }
 
+  /* WhatsApp exports are text; anything this size is a mistake, and trying to
+     parse it locks the tab for long enough to look like a crash. */
+  const MAX_EXPORT_BYTES = 40 * 1024 * 1024;
+
   async function onFile(file: File) {
     setError(null); setHint(null);
+    if (file.size > MAX_EXPORT_BYTES) {
+      setError(
+        `That file is ${Math.round(file.size / 1_048_576)}MB, which is too big to read in the browser. Export a shorter date range, or choose "without media" when WhatsApp asks.`
+      );
+      return;
+    }
+    setReading(true);
+    /* Yield a frame so the busy state paints before the main thread is taken. */
+    await new Promise((r) => setTimeout(r, 0));
     try {
       const result = await readExportFile(file);
       setParsed(result);
       const guess = guessParticipant(result.participants, draft.them, draft.you);
       if (guess) choosePerson(result, guess);
     } catch (e) { readFailure(e); }
+    finally { setReading(false); }
   }
 
   function onPasteExport() {
@@ -151,7 +207,9 @@ export function ImportPersona({
     const style = styleOf(result.messages, name);
     setDraft((d) => ({
       ...d,
-      samples: sampleWindows(result.messages, name),
+      /* Anything typed by hand outperforms a sample, and replacing it without
+         asking loses work the user cannot get back. */
+      samples: samplesTouched ? d.samples : sampleWindows(result.messages, name),
       metrics: style.text,
       them: d.them?.trim() ? d.them : name,
     }));
@@ -191,7 +249,17 @@ export function ImportPersona({
     <main className="shell">
       <header className="row" style={{ justifyContent: "space-between" }}>
         <p className="mark">Presence</p>
-        <button className="link-btn" onClick={onCancel}>Cancel</button>
+        <button
+          className="link-btn"
+          onClick={() => {
+            const started = draft.them.trim() || draft.samples?.trim() || brief.trim();
+            if (started && !confirm("Leave this? What you have filled in will be lost.")) return;
+            forgetDraft();
+            onCancel();
+          }}
+        >
+          Cancel
+        </button>
       </header>
 
       {step < 4 && (
@@ -365,7 +433,9 @@ export function ImportPersona({
                 if (f) onFile(f);
               }} />
               <div className="row">
-                <button className="btn-ghost" onClick={() => filePick.current?.click()}>Choose the export</button>
+                <button className="btn-ghost" onClick={() => filePick.current?.click()} disabled={reading}>
+                  {reading ? "Reading…" : "Choose the export"}
+                </button>
                 <button className="link-btn" onClick={() => { setPasteMode(!pasteMode); setError(null); }}>
                   {pasteMode ? "Hide" : "Paste the text instead"}
                 </button>
@@ -406,13 +476,41 @@ export function ImportPersona({
                       : `Which of these is ${draft.them || "them"}? Pick one — this decides whose writing gets copied.`}
                   </p>
                   <div className="tags">
-                    {parsed.participants.slice(0, 8).map((p) => (
+                    {(showAll ? parsed.participants : parsed.participants.slice(0, 8)).map((p) => (
                       <button key={p.name} type="button" className="tag" aria-pressed={picked === p.name}
                         onClick={() => choosePerson(parsed, p.name)} style={chip(picked === p.name)}>
                         {p.name} · {p.count.toLocaleString()}
                       </button>
                     ))}
                   </div>
+
+                  {/* A group export can have thirty people in it, and the one
+                      you came for is not always among the eight loudest. */}
+                  {!showAll && parsed.participants.length > 8 && (
+                    <button
+                      className="link-btn"
+                      style={{ marginTop: "0.5rem" }}
+                      onClick={() => setShowAll(true)}
+                    >
+                      Show all {parsed.participants.length}
+                    </button>
+                  )}
+
+                  {/* Lines that looked like messages and could not be read.
+                      They are skipped rather than folded into the message above,
+                      and saying so beats letting a half-understood export pass
+                      as a whole one. */}
+                  {parsed.unreadable > 0 && (
+                    <p className="fine" style={{ marginTop: "0.6rem" }}>
+                      {parsed.unreadable.toLocaleString()}{" "}
+                      {parsed.unreadable === 1 ? "line" : "lines"} couldn&apos;t be read and{" "}
+                      {parsed.unreadable === 1 ? "was" : "were"} skipped
+                      {parsed.unreadable > parsed.messages.length / 10
+                        ? " — that is a lot, so this export may be in a format this doesn't fully understand yet."
+                        : "."}
+                    </p>
+                  )}
+
                   {picked && draft.metrics && (
                     <>
                       <p className="fine" style={{ marginTop: "0.8rem", color: "var(--accent)" }}>
@@ -443,7 +541,7 @@ export function ImportPersona({
             <textarea className="input" rows={6} value={draft.samples ?? ""}
               placeholder={"are you up\ni've got the crossword out\n7 down is beating me\nDAD"}
               maxLength={MAX_SAMPLES}
-              onChange={(e) => D("samples", e.target.value)} />
+              onChange={(e) => { setSamplesTouched(true); D("samples", e.target.value); }} />
             <p className="fine" style={{ marginTop: "0.7rem" }}>
               This teaches them how to write. Optional.
               {(draft.samples?.length ?? 0) > MAX_SAMPLES * 0.9 && (
@@ -533,7 +631,7 @@ export function ImportPersona({
             style={{ fontFamily: "var(--serif)", lineHeight: 1.6, fontSize: "1rem" }} />
           <div className="row" style={{ marginTop: "1.25rem" }}>
             <button className="btn" disabled={!brief.trim()}
-              onClick={() => onCreate({ ...draft, brief })}>Talk to {draft.them}</button>
+              onClick={() => { forgetDraft(); onCreate({ ...draft, brief }); }}>Talk to {draft.them}</button>
             <button className="link-btn" onClick={() => setStep(2)}>Add more material</button>
           </div>
         </>
