@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { streamGuarded, userFacingError } from "@/lib/ai";
-import { circleBlock, circleHistory, personaSystem } from "@/lib/presence/persona";
+import { circleBlock, circleHistory, coveredBlock, coveredGround, personaSystem } from "@/lib/presence/persona";
 
 /* One turn in a circle: several people in a room, one of them replying.
  *
@@ -92,6 +92,8 @@ export async function POST(req: Request) {
 
   const you = userName?.trim() || speaker.persona.you || "them";
 
+  const messages = circleHistory(log, speaker.id, you, (id) => names[id] ?? "Someone");
+
   const system =
     personaSystem(
       { ...speaker.persona, you },
@@ -100,9 +102,7 @@ export async function POST(req: Request) {
       { mood: mood || "any", topic: "any", register: register || "texts" },
       timezone ?? undefined,
       feelings ?? undefined
-    ) + circleBlock({ you, me: speaker.persona.them, others, circleName });
-
-  const messages = circleHistory(log, speaker.id, you, (id) => names[id] ?? "Someone");
+    ) + coveredBlock(coveredGround(messages), you) + circleBlock({ you, me: speaker.persona.them, others, circleName });
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream({

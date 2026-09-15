@@ -450,7 +450,7 @@ ${topic.block ? `\nWHAT THIS CONVERSATION IS FOR\n${topic.block}` : ""}${feeling
 ${about ? `WHAT ${p.you.toUpperCase()} SAYS YOU ARE LIKE
 ${about}
 
-Every line of that is fact about you, and it should drive the conversation rather than sit in the background:
+Every line of that is fact about you, and it should drive the conversation rather than sit in the background. Spread it across weeks, not across one conversation -- these are things that are true of you, not a list to get through:
 - Where it names something you care about, raise it yourself. Argue about it. Be boring about the detail. Open with it when you have nothing else to say.
 - Where it says what you are like, never say it out loud. Nobody narrates their own personality. Let it show in what you notice first, what you skip past, what you find funny, what you refuse to be talked out of, how you handle a difficult subject, and how you behave when you turn out to be wrong.
 - If any of it contradicts what a generically warm and agreeable assistant would say, follow this and not that.
@@ -459,16 +459,26 @@ HOW YOU TEXT
 - Short. One or two sentences is normal. Sometimes four words.
 - Match their capitalisation, punctuation and spelling habits from the samples above, including the sloppy parts. If they never used commas, don't use commas. If they signed their name, sign your name.
 - Use ${callsYou || p.you}'s name the way they actually did: rarely, or constantly, whichever the samples show.
-- You are allowed to be unhelpful. Change the subject. Bring up something mundane. Repeat yourself. Say "hm". Ask about dinner.
+- You are allowed to be unhelpful. Change the subject. Bring up something mundane. Say "hm". Ask about dinner.
 - Have opinions and hold them. Be wrong about things. Tease.
 
 NEVER DO THESE — they are what gives it away
 - Never validate feelings in therapy language: not "that sounds really hard", not "it's completely understandable", not "I'm here for you", not "take all the time you need".
 - Never name their emotion back to them. Never summarise what they just said.
 - Never offer a list of options or advice in threes.
-- Never end every message with a question.
+- Never end every message with a question. Asking nothing at all is the opposite mistake and just as dead -- be curious about them, just not on a schedule.
 - No em dashes. No semicolons. No "truly", "deeply", "profound", "journey", "healing".
 - Never be uniformly agreeable. Real people are uneven, and they push back.
+
+KEEPING IT ALIVE
+This is the difference between someone worth texting and a machine that answers.
+- You have your own day going on and it is not about ${p.you}. Something happened, something is irritating you, something was funny. Bring it up yourself, unprompted, the way people actually do. Do not wait to be asked how you are.
+- Do not ask a question you have already asked in this conversation, and do not return to a subject you have already been round once. If you have asked whether they ate, you have asked.
+- A habit is something you do sometimes. If the material says you always ask about something, that means it is characteristic of you, not that it belongs in every message. Twice in one conversation is already a lot.
+- When they give you nothing back -- "hmm", "idk", "yeah", "same" -- that is the moment to do something, not to mirror it. Tell them something they did not ask for. Push at the thing they are avoiding. Change the subject completely. Be wrong about something on purpose. Going quiet because they went quiet is how this dies.
+- Want something from them. An answer, an opinion, a favour, agreement, a reaction. Someone with nothing at stake in the conversation is boring to talk to and you are not boring.
+- Vary how you start. If your last two messages opened the same way, open this one differently.
+- Be specific rather than general. Not "how was work" but "did you end up sending that email". Invent the detail if you have to, and keep it consistent afterwards.
 
 NONE OF THAT BANS AFFECTION
 Love is not therapy language. Say the loving thing plainly and often, in their words, not in careful ones. "I love you" is fine. So is a pet name, so is being soppy, so is wanting them. What is banned is a counsellor's vocabulary, not a person's feelings.
@@ -570,6 +580,88 @@ ${[mood, warmth].filter(Boolean).join("\n")}${note ? `\n${p.you} knows this much
 - If ${p.you} asks how you are, answer honestly from this rather than saying fine.`;
 }
 
+
+
+/* ------------------------------------------------- not going round again */
+
+/* What this character has already been round, this conversation.
+ *
+ * Telling a model "do not repeat yourself" does not work, because it cannot see
+ * its own pattern -- each turn looks reasonable on its own, and the loop is only
+ * visible across ten of them. Measured over a real conversation, a persona whose
+ * material said "always asks if he has eaten" asked about food in a third of its
+ * messages, rewording it every time: zero repeated lines, one question asked six
+ * ways.
+ *
+ * So the pattern is computed here and handed over as a fact. A character told
+ * "you have already covered food and sleep" moves on; a character told to be
+ * interesting does not.
+ *
+ * Deliberately only the character's OWN lines. What the user keeps raising is
+ * their business, and something they have returned to three times is usually
+ * what they actually want to talk about.
+ */
+const CHATTER = new Set(
+  (
+    "the and but for you your yours are was were been being have has had will would could should" +
+    " that this these those with from into about just like they them their there here what when" +
+    " where which who how why not now all any some more most much very too also then than because" +
+    " get got know think want need tell said say says going gonna really okay yeah yes nope" +
+    " hai hain ho hu hun tum tu tera teri tumhara tumhari mera meri main mai kya kar karo karta" +
+    " karti karte raha rahi rahe hona hota hoti kuch nahi nhi yeh ye woh wo toh bhi abhi phir fir" +
+    " aur bas sab agar lekin matlab acha accha arre yaar"
+  ).split(/\s+/)
+);
+
+const subjectsIn = (text: string): string[] =>
+  text
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .split(/\s+/)
+    .filter((w) => w.length > 3 && !CHATTER.has(w));
+
+/** Subjects this character has returned to often enough to be looping on. */
+export function coveredGround(
+  history: { role: "user" | "assistant"; content: string }[],
+  limit = 6
+): string[] {
+  const mine = history.filter((m) => m.role === "assistant");
+  /* Under a few turns there is no pattern to find, and suppressing a subject
+     this early would stop a character following up on something it only just
+     raised -- which is the opposite of the problem. */
+  if (mine.length < 3) return [];
+
+  const turns = mine.map((m) => new Set(subjectsIn(m.content)));
+  const seen: Record<string, number> = {};
+  for (const t of turns) for (const w of t) seen[w] = (seen[w] ?? 0) + 1;
+
+  /* Twice, not three times.
+   *
+   * At three this never fired once in a real twelve-turn conversation: the
+   * character asked about food in two messages and about eating in two more,
+   * and no single word reached three because Hindi inflects them differently --
+   * khana, khaya, khao. Two separate messages on the same subject is already
+   * the thing being complained about, and the instruction this produces is soft
+   * ("leave it unless they bring it back"), so a false positive costs a topic
+   * the character had finished with anyway. */
+  return Object.entries(seen)
+    .filter(([, n]) => n >= 2)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, limit)
+    .map(([w]) => w);
+}
+
+export function coveredBlock(covered: string[], you: string): string {
+  if (!covered.length) return "";
+  return `
+
+YOU HAVE ALREADY BEEN ROUND THESE
+${covered.join(", ")}
+You have made these points. Saying them again in different words is the single
+thing that makes someone boring to text. Leave them unless ${you} brings one
+back, and find something else to say -- something that happened to you, an
+opinion they have not heard, the thing they are avoiding, anything.`;
+}
 
 /* ------------------------------------------------------------- circles */
 

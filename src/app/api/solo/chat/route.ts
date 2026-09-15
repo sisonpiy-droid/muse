@@ -3,7 +3,7 @@ import { z } from "zod";
 import { streamGuarded, userFacingError } from "@/lib/ai";
 import { looksLikeRefusal } from "@/lib/ai/refusal";
 import { buildMuseSystemPrompt } from "@/lib/muse/prompt";
-import { personaSystem, type Feelings } from "@/lib/presence/persona";
+import { coveredBlock, coveredGround, personaSystem, type Feelings } from "@/lib/presence/persona";
 
 /* Solo mode's only server dependency.
  *
@@ -137,6 +137,9 @@ export async function POST(req: Request) {
         topic: topic || "any",
         register: register || "texts",
       }, timezone ?? undefined, standing) +
+      /* Computed from the character's own past turns, not asked of the model.
+         A model cannot see its own loop -- each turn reads fine alone. */
+      coveredBlock(coveredGround(messagesForModel), userName || "they") +
       (knows?.length
         ? `
 
