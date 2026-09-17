@@ -52,6 +52,7 @@ type View =
   | { kind: "edit"; museId: string }
   | { kind: "memories"; museId: string }
   | { kind: "import" }
+  | { kind: "invent" }
   | { kind: "figure" }
   | { kind: "circle"; circleId: string }
   | { kind: "new-circle" };
@@ -144,9 +145,12 @@ export default function SoloPage() {
   // never a wrong empty state that flips a tick later.
   if (!state) return <main className="shell" />;
 
-  if (view.kind === "import") {
+  if (view.kind === "import" || view.kind === "invent") {
     return shell(
       <ImportPersona
+        /* Same wizard either way. Inventing someone just skips the question it
+           already knows the answer to. */
+        startMode={view.kind === "invent" ? "character" : undefined}
         onCancel={() => setView({ kind: "home" })}
         onCreate={(draft) => {
           const id = `made-${Date.now()}`;
@@ -296,6 +300,7 @@ export default function SoloPage() {
       onOpen={(id) => setView({ kind: "chat", museId: id })}
       onEdit={(id) => setView({ kind: "edit", museId: id })}
       onImport={() => setView({ kind: "import" })}
+      onInvent={() => setView({ kind: "invent" })}
       onFigure={() => setView({ kind: "figure" })}
       onOpenCircle={(id) => setView({ kind: "circle", circleId: id })}
       onNewCircle={() => setView({ kind: "new-circle" })}
@@ -306,13 +311,14 @@ export default function SoloPage() {
 /* ------------------------------------------------------------------ home */
 
 function SoloHome({
-  state, update, onOpen, onEdit, onImport, onFigure, onOpenCircle, onNewCircle,
+  state, update, onOpen, onEdit, onImport, onInvent, onFigure, onOpenCircle, onNewCircle,
 }: {
   state: SoloState;
   update: Update;
   onOpen: (id: string) => void;
   onEdit: (id: string) => void;
   onImport: () => void;
+  onInvent: () => void;
   onFigure: () => void;
   onOpenCircle: (id: string) => void;
   onNewCircle: () => void;
@@ -448,6 +454,13 @@ function SoloHome({
             <button className="make" onClick={onFigure}>
               <b>Someone in public life</b>
               <span>Built from what they said in public</span>
+            </button>
+            {/* This was always possible and had no door. You had to open "From
+                a chat export", get to the second question, and pick "Someone I
+                made up" — behind a button that promises a file upload. */}
+            <button className="make" onClick={onInvent}>
+              <b>Someone you make up</b>
+              <span>Invent them — no export needed</span>
             </button>
             <button className="make" onClick={onNewCircle}>
               <b>A circle</b>

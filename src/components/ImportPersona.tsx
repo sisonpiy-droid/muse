@@ -112,14 +112,20 @@ function loadDraft(): PersonaDraft | null {
 export function ImportPersona({
   onCreate,
   onCancel,
+  /* Pre-set when the user came through a door that already answered the
+     question. Inventing someone lived behind "From a chat export" -> step 1 ->
+     "Someone I made up", which is an odd place to look for it and meant the
+     wizard opened by asking for a file that does not exist. */
+  startMode,
 }: {
   onCreate: (draft: PersonaDraft) => void;
   onCancel: () => void;
+  startMode?: string;
 }) {
   const [step, setStep] = useState<Step>(0);
   const [draft, setDraft] = useState<PersonaDraft>(() => loadDraft() ?? {
     them: "", you: "", relationship: "", callsYou: "",
-    arch: "other", texture: "close", mode: "", consent: null,
+    arch: "other", texture: "close", mode: startMode ?? "", consent: null,
     samples: "", extra: "", metrics: "", prompts: {},
   });
   const [parsed, setParsed] = useState<ParsedChat | null>(null);
@@ -307,7 +313,11 @@ export function ImportPersona({
                   : !draft.them.trim() ? "Their name first." : "Your name first.");
                 return;
               }
-              setNudge(""); setStep(1);
+              setNudge("");
+              /* Step 1 asks who this is and whether they consented. Someone who
+                 came through the "make someone up" door has answered both, so
+                 asking again is a screen that only has one possible answer. */
+              setStep(startMode ? 2 : 1);
             }}>Next</button>
             {nudge && <span className="error" style={{ margin: 0 }}>{nudge}</span>}
           </div>
@@ -583,7 +593,7 @@ export function ImportPersona({
             >
               Next
             </button>
-            <button className="link-btn" onClick={() => { setNudge(""); setStep(1); }}>Back</button>
+            <button className="link-btn" onClick={() => { setNudge(""); setStep(startMode ? 0 : 1); }}>Back</button>
             {nudge && <span className="error" style={{ margin: 0 }}>{nudge}</span>}
           </div>
         </>
