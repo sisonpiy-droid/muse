@@ -56,6 +56,13 @@ export interface ExtractedMemory {
   type: "PERMANENT" | "PREFERENCE" | "GOAL" | "RELATIONSHIP" | "EVENT";
   importance: number; // 1-5
   confidence: number; // 0-1
+  /* Indexes into the `known` list this fact makes untrue.
+     
+     People change jobs and leave cities, and without this the old fact simply
+     stays: a user who quit engineering for photography ended up with a
+     character that believed both at once, and both got injected into the same
+     prompt. Usually empty. */
+  replaces?: number[];
 }
 
 export interface AIProvider {
@@ -68,7 +75,9 @@ export interface AIProvider {
 
   /** Returns null when the provider has no embedding model configured, so
    *  memory retrieval can fall back to lexical scoring rather than break. */
-  generateEmbedding(text: string): Promise<number[] | null>;
+  /** `dims` requests a narrower vector; below full width the result is
+   *  unit-normalised, which cosine similarity assumes. */
+  generateEmbedding(text: string, dims?: number): Promise<number[] | null>;
 
   summarize(text: string, instruction?: string): Promise<string>;
 

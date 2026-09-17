@@ -221,6 +221,35 @@ check("a memory is not punished for containing other things", () => {
   assert.ok(wordy > 0, "a longer memory containing the term must still match");
 });
 
+check("standing out is not enough on its own", () => {
+  /* Measured with real 256-dimension vectors over five memories: a query that
+     should recall nothing ("what should i cook tonight") scored 0.632 at z 1.63,
+     while a genuinely relevant one ("my puppy chewed the sofa") scored 0.703 at
+     z 1.51. The false positive had the HIGHER z, because z only asks whether one
+     memory beat its neighbours and with a small set something always does. Both
+     gates, or neither works. */
+  const near = [1, 0, 0];
+  const store = [
+    mem({ id: "hit", content: "a", embedding: [0.64, 0.77, 0] }),   // cos ~0.64
+    mem({ id: "b", content: "b", embedding: [0.60, 0.80, 0] }),
+    mem({ id: "c", content: "c", embedding: [0.59, 0.81, 0] }),
+  ];
+  // The top scorer stands out, but no one clears an absolute bar of 0.66.
+  assert.equal(rankMemories("x", store, { queryEmbedding: near }).length, 0);
+  // Lower the bar and the same set is admitted, so the gate is what changed.
+  assert.ok(rankMemories("x", store, { queryEmbedding: near, minCosine: 0.5 }).length > 0);
+});
+
+check("a strong match still gets through both gates", () => {
+  const store = [
+    mem({ id: "hit", content: "a", embedding: [0.98, 0.2, 0] }),
+    mem({ id: "b", content: "b", embedding: [0.2, 0.98, 0] }),
+    mem({ id: "c", content: "c", embedding: [0, 0.3, 0.95] }),
+  ];
+  const out = rankMemories("x", store, { queryEmbedding: [1, 0, 0] });
+  assert.equal(out[0]?.memory.id, "hit");
+});
+
 let pass = 0, fail = 0;
 for (const [name, fn] of results) {
   try { await fn(); console.log(`  PASS  ${name}`); pass++; }

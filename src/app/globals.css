@@ -176,7 +176,18 @@ a { color: inherit; }
 
 /* ---------------------------------------------------------------- cards */
 
-.card-grid { display: grid; gap: 0.7rem; }
+/* minmax(0, 1fr), not 1fr.
+   
+   A grid item's default min-width is min-content, and the last-message preview
+   on a card is `white-space: nowrap` — so its min-content width is the whole
+   unbroken sentence, the track grew to fit it, and the page scrolled sideways
+   on every phone by however long the last thing anyone said was. Measured at
+   375px wide: a card with no preview was 338px and correct, the one under
+   "Continue talking" was 378px. */
+.card-grid { display: grid; gap: 0.7rem; grid-template-columns: minmax(0, 1fr); }
+.card-wrap, .muse-card { min-width: 0; }
+/* Same reason one level down: the text column of a card is a flex item. */
+.muse-card > div { min-width: 0; }
 
 .muse-card {
   display: flex;
@@ -551,3 +562,43 @@ a { color: inherit; }
   cursor: pointer;
 }
 .inline-link:hover { color: var(--accent); }
+
+/* Making someone new: a strip, not three full-width panels.
+   
+   These used to open the home screen as tall cards, which put the people you
+   actually talk to nearly two screens down on a phone. You build a character
+   once and then talk to them for months, so the weight was backwards. */
+.make-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr));
+  gap: 0.6rem;
+}
+.make {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+  padding: 0.75rem 0.9rem;
+  text-align: left;
+  font: inherit;
+  color: var(--muted);
+  background: none;
+  border: 1px dashed var(--edge);
+  border-radius: var(--r-md);
+  cursor: pointer;
+  transition: border-color 140ms var(--ease), color 140ms var(--ease), background 140ms var(--ease);
+}
+.make b { font-weight: 500; font-size: 0.86rem; color: var(--ink); }
+.make span { font-size: 0.72rem; color: var(--faint); line-height: 1.4; }
+.make:hover { border-color: var(--accent); background: var(--surface); }
+.make:hover b { color: var(--accent); }
+
+/* Card controls belong to their card. They sit outside its <button> because a
+   button inside a button is not clickable, but they should still read as part
+   of it rather than as loose text floating in the gap. */
+.card-wrap { position: relative; }
+.card-actions { padding: 0.4rem 0.25rem 0; opacity: 0.55; transition: opacity 140ms var(--ease); }
+.card-wrap:hover .card-actions,
+.card-wrap:focus-within .card-actions { opacity: 1; }
+/* Touch has no hover, and a control you cannot discover is not a control. */
+@media (hover: none) { .card-actions { opacity: 1; } }

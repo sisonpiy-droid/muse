@@ -27,6 +27,10 @@ export interface SoloMemory {
   importance: number;
   confidence: number;
   createdAt: string;
+  /* 256 dimensions, unit length. Absent on anything stored before recall
+     worked on meaning, and on any turn where embedding failed -- ranking falls
+     back to word overlap rather than breaking, so this stays optional. */
+  embedding?: number[];
 }
 
 export interface SoloMessage {
@@ -260,7 +264,42 @@ export function findMuse(state: SoloState, id: string): SoloMuse | undefined {
 /** The memories worth sending with this turn (§13). Lexical, since solo mode
  *  has no embeddings; the gate is the same absolute threshold rankMemories
  *  applies whenever it is scoring lexically. */
-export function relevantMemories(state: SoloState, museId: string, query: string): string[] {
+/* Is there anything in this to recall against?
+ *
+ * "hmm", "yeah", "ok" carry no subject, but they still produce a vector, and
+ * that vector still lands nearest to something -- measured, "hmm" scored 0.704
+ * against "User has been trying to quit smoking", higher than a genuinely
+ * relevant query scored on its right answer. A character bringing up your
+ * smoking because you said "hmm" is worse than one that says nothing.
+ *
+ * It is also most of the latency saved: embedding the query costs about half a
+ * second, and a good share of messages in a real conversation are exactly these.
+ */
+const FILLER = new Set(
+  ("the and but for you your are was were have has had will would just like they them there here" +
+   " what when where which who how why not now all any some more most very too also then than" +
+   " because get got know think want need tell said say going really okay yeah yes nope nah" +
+   " hai hain ho hu tum tera mera main kya kar karo raha rahi rahe kuch nahi nhi yeh woh toh" +
+   " bhi abhi phir aur bas sab agar lekin acha arre yaar hmm hmmm mmm lol haan").split(/\s+/)
+);
+
+export function worthRecalling(query: string): boolean {
+  return query
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .split(/\s+/)
+    .some((w) => w.length > 3 && !FILLER.has(w));
+}
+
+export function relevantMemories(
+  state: SoloState,
+  museId: string,
+  query: string,
+  /* When present, ranking compares meaning instead of shared words. Word
+     overlap missed three of five ordinary paraphrases -- "my puppy chewed the
+     sofa" never reached "User's dog is called Bruno". */
+  queryEmbedding?: number[] | null
+): string[] {
   const mine: RankableMemory[] = state.memories
     .filter((m) => m.museId === museId)
     .map((m) => ({
@@ -269,13 +308,37 @@ export function relevantMemories(state: SoloState, museId: string, query: string
       type: m.type,
       importance: m.importance,
       confidence: m.confidence,
-      embedding: null,
+      embedding: m.embedding ?? null,
       createdAt: new Date(m.createdAt),
       lastRetrievedAt: null,
     }));
 
   if (!mine.length) return [];
-  return rankMemories(query, mine, { limit: 8 }).map((r) => r.memory.content);
+  /* rankMemories uses embeddings only when the query AND every memory has one,
+     because mixing cosine and overlap scores in a single ranking compares
+     incomparable scales. Until a backfill finishes, that means lexical. */
+  return rankMemories(query, mine, { limit: 8, queryEmbedding: queryEmbedding ?? undefined })
+    .map((r) => r.memory.content);
+}
+
+/** Memories with no vector yet, oldest first, for backfilling in batches. */
+export function needsEmbedding(state: SoloState, museId: string, limit = 32): SoloMemory[] {
+  return state.memories
+    .filter((m) => m.museId === museId && !m.embedding?.length)
+    .slice(0, limit);
+}
+
+/** Attaches vectors to memories by id, ignoring any that failed. */
+export function attachEmbeddings(
+  state: SoloState,
+  vectors: Record<string, number[] | null>
+): SoloState {
+  return {
+    ...state,
+    memories: state.memories.map((m) =>
+      vectors[m.id]?.length ? { ...m, embedding: vectors[m.id] as number[] } : m
+    ),
+  };
 }
 
 /* A memory is one fact in one sentence. Nothing enforced that, so the model
@@ -293,22 +356,29 @@ export const MEMORIES_PER_MUSE = 300;
 export function addMemories(
   state: SoloState,
   museId: string,
-  incoming: { content: string; type: string; importance: number; confidence: number }[]
+  incoming: {
+    content: string; type: string; importance: number; confidence: number;
+    /* Indexes into `known` that this fact makes untrue. */
+    replaces?: number[];
+  }[],
+  /* The list the indexes point into -- exactly what was sent for extraction, in
+     the same order. Without it a `replaces` index means nothing. */
+  known: string[] = []
 ): SoloState {
-  const known = new Set(
+  const alreadyHave = new Set(
     state.memories.filter((m) => m.museId === museId).map((m) => m.content.trim().toLowerCase())
   );
   /* Anything the user has thrown away stays thrown away, even when the
      conversation that produced it is still in the extraction window. */
-  const forgotten = new Set(state.forgotten?.[museId] ?? []);
+  const tombstoned = new Set(state.forgotten?.[museId] ?? []);
 
   const fresh = incoming
     .map((m) => ({ ...m, content: (m.content || "").trim().slice(0, MEMORY_CHARS) }))
     .filter(
       (m) =>
         m.content &&
-        !known.has(m.content.toLowerCase()) &&
-        !forgotten.has(m.content.toLowerCase())
+        !alreadyHave.has(m.content.toLowerCase()) &&
+        !tombstoned.has(m.content.toLowerCase())
     );
   if (!fresh.length) return state;
 
@@ -322,13 +392,48 @@ export function addMemories(
     createdAt: new Date().toISOString(),
   }));
 
-  const mine = [...state.memories.filter((m) => m.museId === museId), ...added];
+  /* Things that have stopped being true.
+   *
+   * People change jobs, leave cities, quit smoking. Without this the old fact
+   * simply stayed alongside the new one and both were injected into the same
+   * prompt -- measured: a user who said they had quit engineering for
+   * photography ended up with a character holding "User works as a structural
+   * engineer" and "User is now a full-time photographer" at once, with nothing
+   * marking either as dead.
+   *
+   * Superseded memories are deleted rather than flagged, and tombstoned like
+   * any other deletion, so the conversation that produced them cannot put them
+   * straight back. */
+  const superseded = new Set<string>();
+  for (const m of fresh) {
+    for (const i of m.replaces ?? []) {
+      const stale = known[i];
+      if (stale) superseded.add(stale.trim().toLowerCase());
+    }
+  }
+
+  const survives = (m: SoloMemory) =>
+    m.museId !== museId || !superseded.has(m.content.trim().toLowerCase());
+
+  const mine = [
+    ...state.memories.filter((m) => m.museId === museId && survives(m)),
+    ...added,
+  ];
   const others = state.memories.filter((m) => m.museId !== museId);
 
   /* `mine`, not `added` -- `others` is everyone else's memories, so appending
      only the new ones here would drop everything this character already knew on
      every successful extraction. */
-  if (mine.length <= MEMORIES_PER_MUSE) return { ...state, memories: [...others, ...mine] };
+  const forgotten = superseded.size
+    ? {
+        ...(state.forgotten ?? {}),
+        [museId]: [...(state.forgotten?.[museId] ?? []), ...superseded].slice(-200),
+      }
+    : state.forgotten;
+
+  if (mine.length <= MEMORIES_PER_MUSE) {
+    return { ...state, memories: [...others, ...mine], forgotten };
+  }
 
   /* Over the cap: keep the important ones, and break ties by recency. Dropping
      the least important thing said longest ago is the closest this gets to how
@@ -337,7 +442,7 @@ export function addMemories(
     .sort((a, b) => (b.importance - a.importance) || (Date.parse(b.createdAt) - Date.parse(a.createdAt)))
     .slice(0, MEMORIES_PER_MUSE);
 
-  return { ...state, memories: [...others, ...kept] };
+  return { ...state, memories: [...others, ...kept], forgotten };
 }
 
 export function download(filename: string, text: string, mime: string): void {

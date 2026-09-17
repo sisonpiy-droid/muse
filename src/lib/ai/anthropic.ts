@@ -109,7 +109,7 @@ export const anthropicProvider: AIProvider = {
     if (!emitted) throw new ProviderError("empty", "The model streamed nothing back.");
   },
 
-  async generateEmbedding(): Promise<number[] | null> {
+  async generateEmbedding(_text?: string, _dims?: number): Promise<number[] | null> {
     /* Anthropic has no first-party embedding endpoint. Returning null makes the
        retriever fall back to lexical scoring rather than fail -- and if this
        deployment also has a Gemini key, getEmbeddingProvider() prefers that. */

@@ -257,10 +257,11 @@ export const geminiProvider: AIProvider = {
     }
   },
 
-  async generateEmbedding(text: string): Promise<number[] | null> {
+  async generateEmbedding(text: string, dims?: number): Promise<number[] | null> {
     if (!key()) return null;
     const res = await post(`models/${encodeURIComponent(embedModel())}:embedContent`, {
       content: { parts: [{ text }] },
+      ...(dims ? { outputDimensionality: dims } : {}),
     });
     if (!res.ok) {
       // Retrieval falls back to lexical scoring rather than failing the request:
@@ -269,7 +270,16 @@ export const geminiProvider: AIProvider = {
       return null;
     }
     const data = (await res.json()) as { embedding?: { values?: number[] } };
-    return data?.embedding?.values ?? null;
+    const values = data?.embedding?.values ?? null;
+    if (!values || !dims) return values;
+
+    /* Only the full-width vector comes back normalised. A truncated one does
+       not, and cosine similarity on unnormalised vectors compares lengths as
+       well as directions -- which is not what it is being asked. Measured at
+       256 dims: raw norm 0.34, so every score would be scaled by an arbitrary
+       amount that varies per memory. */
+    const norm = Math.sqrt(values.reduce((sum, v) => sum + v * v, 0));
+    return norm > 0 ? values.map((v) => v / norm) : values;
   },
 
   async summarize(text: string, instruction?: string): Promise<string> {
@@ -298,8 +308,11 @@ export async function extractMemoriesVia(
   existingMemories: string[]
 ): Promise<ExtractedMemory[]> {
   const convo = transcript.map((m) => `${m.role === "user" ? "User" : "Muse"}: ${m.content}`).join("\n");
+  /* Numbered, so a new fact can point at the one it replaces. */
   const known = existingMemories.length
-    ? `Already known, do not repeat these:\n${existingMemories.map((m) => `- ${m}`).join("\n")}`
+    ? `Already known. Do not repeat these, but note their numbers -- you may need one:\n${existingMemories
+        .map((m, i) => `[${i}] ${m}`)
+        .join("\n")}`
     : "Nothing is known about this user yet.";
 
   const system = `You pull durable facts out of a conversation so a companion can remember them later.
@@ -307,7 +320,15 @@ export async function extractMemoriesVia(
 ${known}
 
 Return ONLY a JSON array. No prose, no code fence. Each item:
-{"content": string, "type": "PERMANENT"|"PREFERENCE"|"GOAL"|"RELATIONSHIP"|"EVENT", "importance": 1-5, "confidence": 0-1}
+{"content": string, "type": "PERMANENT"|"PREFERENCE"|"GOAL"|"RELATIONSHIP"|"EVENT", "importance": 1-5, "confidence": 0-1, "replaces": number[] }
+
+"replaces" lists the numbers of any known facts this one makes untrue, and is
+usually empty. People change jobs, move city, end relationships, stop smoking --
+and the old fact does not become a second fact, it stops being true. If the user
+says they quit the engineering job, the new memory replaces the one saying they
+work as an engineer. Only list something the new fact actually contradicts: a
+detail that merely adds to one ("their sister is called Priya" beside "their
+sister is getting married") replaces nothing.
 
 Record something only if it is durable, useful later, and about the user. A fact
 stated once in passing still counts; small talk does not. Focus on the turns
@@ -368,6 +389,15 @@ export function parseMemories(raw: string): ExtractedMemory[] {
       type: (types.has(String(m.type)) ? String(m.type) : "PERMANENT") as ExtractedMemory["type"],
       importance: Math.round(clamp(m.importance, 1, 5, 3)),
       confidence: clamp(m.confidence, 0, 1, 0.7),
+      /* Indexes only. Anything that is not a plain non-negative integer is
+         dropped rather than guessed at -- a wrong index here would delete a
+         memory the user never asked to lose, which is worse than keeping a
+         stale one. */
+      replaces: Array.isArray(m.replaces)
+        ? m.replaces
+            .map((i) => Number(i))
+            .filter((i) => Number.isInteger(i) && i >= 0)
+        : [],
     }))
     .filter((m) => m.content.length > 0 && m.content.length <= 500);
 }

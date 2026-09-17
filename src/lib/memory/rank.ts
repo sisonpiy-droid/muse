@@ -158,6 +158,8 @@ export interface RankOptions {
   threshold?: number;
   /** Plain-score admission for the lexical path; see lexicalKeep. */
   lexicalFloor?: number;
+  /** Absolute cosine a memory must reach before standing out counts. */
+  minCosine?: number;
   /** Embedding mode: how many standard deviations above the mean counts as relevant. */
   minZ?: number;
   /** Embedding mode: below this spread, treat the set as undifferentiated. */
@@ -206,8 +208,24 @@ export function rankMemories<T extends RankableMemory>(
    * a lone memory unconditionally. Without it, a character with one memory would
    * recite it in answer to everything. An explicit `threshold` still wins, so a
    * caller that wants the old behaviour can ask for it. */
+  /* Standing out is necessary and not sufficient.
+   *
+   * Measured against five memories with 256-dimension vectors: "my puppy chewed
+   * the sofa" scored 0.703 on the right memory at z 1.51, and "what should i
+   * cook tonight" -- which should recall nothing -- scored 0.632 at z 1.63. The
+   * false positive had the HIGHER z, because z only asks whether one memory
+   * beat its neighbours and with a small set something always does. The
+   * absolute score is what separates them.
+   *
+   * So both, and neither alone. The floor is empirical and tied to this model
+   * at this width; it is not a general truth about cosine similarity, and a
+   * different embedding model would need it re-measured. */
   const keep = useEmbeddings
-    ? new Set(standoutIndices(similarities, opts.minZ ?? 0.6, opts.flatSpread ?? 0.012))
+    ? new Set(
+        standoutIndices(similarities, opts.minZ ?? 0.6, opts.flatSpread ?? 0.012).filter(
+          (i) => similarities[i] >= (opts.minCosine ?? 0.66)
+        )
+      )
     : opts.threshold !== undefined
       ? new Set(similarities.map((s, i) => (s >= opts.threshold! ? i : -1)).filter((i) => i >= 0))
       : lexicalKeep(similarities, opts);

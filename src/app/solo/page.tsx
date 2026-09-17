@@ -17,10 +17,12 @@ import {
 import { DEFAULT_VOICE } from "@/lib/presence/voices";
 import { safeFilename, transcriptMarkdown } from "@/lib/export";
 import {
-  addMemories, allMuses, circleOf, deleteCircle, deleteConversation, deleteFrom,
-  deleteMemory, deleteMessage, deleteMuse, download, editMemory, editMessage, editMuse,
-  feelingsOf, findMuse, forgetAll, isEdited, knownTo, loadState, membersOf, memoriesOf,
-  parseBackup, relevantMemories, resetMuse, saveState, setFeelings,
+  addMemories, allMuses, attachEmbeddings, circleOf, deleteCircle, deleteConversation,
+  deleteFrom, deleteMemory, deleteMessage, deleteMuse, download, editMemory, editMessage,
+  editMuse, feelingsOf, findMuse, forgetAll, isEdited, knownTo, loadState, membersOf,
+  memoriesOf, needsEmbedding, parseBackup, relevantMemories, resetMuse, saveState,
+  worthRecalling,
+  setFeelings,
   type SoloMessage, type SoloMuse, type SoloState,
 } from "@/lib/solo/store";
 
@@ -363,28 +365,15 @@ function SoloHome({
 
       {state.userName && (
         <>
-          <h2 className="section-title">Build someone</h2>
-          <div className="card-grid">
-            <button className="muse-card" onClick={onImport} style={{ borderStyle: "dashed" }}>
-              <div style={{ minWidth: 0 }}>
-                <h3>From a chat export</h3>
-                <p>
-                  Upload a WhatsApp export and MUSE reads how they actually wrote — length,
-                  punctuation, the habits nobody can describe.
-                </p>
-              </div>
-            </button>
-            <button className="muse-card" onClick={onFigure} style={{ borderStyle: "dashed" }}>
-              <div style={{ minWidth: 0 }}>
-                <h3>Someone in public life</h3>
-                <p>
-                  An actor, a writer, a founder. Built from what they have said in public, to talk
-                  to about their work — as a mentor, a teacher or a friend.
-                </p>
-              </div>
-            </button>
-          </div>
-
+          {/* What you came for, first.
+              
+              This used to open with two full-height "build someone" cards and a
+              third for circles, so on a phone the people you actually talk to
+              started 1,329px down — nearly two screens of scrolling past
+              adverts for features, to reach the one thing the app is for. The
+              order now follows what someone opens this to do: continue a
+              conversation, start one with someone here, and only then make
+              somebody new. */}
           {talked.length > 0 && (
             <>
               <h2 className="section-title">Continue talking</h2>
@@ -398,45 +387,41 @@ function SoloHome({
             </>
           )}
 
-          <h2 className="section-title">Circles</h2>
-          <div className="card-grid">
-            {(state.circles ?? []).map((c) => (
-              <button key={c.id} className="muse-card" onClick={() => onOpenCircle(c.id)}>
-                <div className="stack-avatars">
-                  {membersOf(state, c).slice(0, 3).map((m) => <Avatar key={m.id} name={m.name} />)}
-                </div>
-                <div style={{ minWidth: 0, flex: 1 }}>
-                  <h3>{c.name}</h3>
-                  <span className="rel">{membersOf(state, c).map((m) => m.name).join(", ")}</span>
-                  <p>{(state.conversations[c.id]?.length ?? 0)} messages</p>
-                </div>
-              </button>
-            ))}
-            {(state.circles ?? []).length > 0 && (
-              <div className="card-actions">
+          {(state.circles ?? []).length > 0 && (
+            <>
+              <h2 className="section-title">Circles</h2>
+              <div className="card-grid">
                 {(state.circles ?? []).map((c) => (
-                  <button
-                    key={c.id}
-                    onClick={() => {
-                      if (confirm(`Delete the circle "${c.name}" and its conversation? The people in it are kept.`)) {
-                        update(deleteCircle(state, c.id));
-                      }
-                    }}
-                  >
-                    delete {c.name}
-                  </button>
+                  <div className="card-wrap" key={c.id}>
+                    <button className="muse-card" onClick={() => onOpenCircle(c.id)}>
+                      <div className="stack-avatars">
+                        {membersOf(state, c).slice(0, 3).map((m) => <Avatar key={m.id} name={m.name} />)}
+                      </div>
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <h3>{c.name}</h3>
+                        <span className="rel">{membersOf(state, c).map((m) => m.name).join(", ")}</span>
+                        <p>{(state.conversations[c.id]?.length ?? 0)} messages</p>
+                      </div>
+                    </button>
+                    {/* Attached to its own card rather than pooled underneath
+                        the whole grid, where "delete The Group Chat" sat next to
+                        a card it had no visible relationship to. */}
+                    <div className="card-actions">
+                      <button
+                        onClick={() => {
+                          if (confirm(`Delete the circle "${c.name}" and its conversation? The people in it are kept.`)) {
+                            update(deleteCircle(state, c.id));
+                          }
+                        }}
+                      >
+                        delete
+                      </button>
+                    </div>
+                  </div>
                 ))}
               </div>
-            )}
-            <button className="muse-card" onClick={onNewCircle} style={{ borderStyle: "dashed" }}>
-              <div style={{ minWidth: 0 }}>
-                <h3>Put people in a room together</h3>
-                <p>
-                  Pick two or more. They will know each other, talk to each other, and take sides.
-                </p>
-              </div>
-            </button>
-          </div>
+            </>
+          )}
 
           {Object.entries(groups).map(([category, people]) => (
             <div key={category}>
@@ -450,6 +435,25 @@ function SoloHome({
               </div>
             </div>
           ))}
+
+          {/* Making someone new is a real feature and a rare one — you do it
+              once, then talk to them for months. A strip of three, not three
+              full-width panels above everything else. */}
+          <h2 className="section-title">Make someone new</h2>
+          <div className="make-row">
+            <button className="make" onClick={onImport}>
+              <b>From a chat export</b>
+              <span>Reads how they actually wrote</span>
+            </button>
+            <button className="make" onClick={onFigure}>
+              <b>Someone in public life</b>
+              <span>Built from what they said in public</span>
+            </button>
+            <button className="make" onClick={onNewCircle}>
+              <b>A circle</b>
+              <span>Two or more, in a room together</span>
+            </button>
+          </div>
 
           <div className="row" style={{ marginTop: "2.5rem", gap: "0.75rem", flexWrap: "wrap" }}>
             <button
@@ -632,6 +636,27 @@ function SoloChat({
 
   const memoriesFor = state.memories.filter((m) => m.museId === muse.id);
 
+  /* Memories written before recall worked on meaning have no vector, and
+     ranking only uses vectors when every candidate has one -- so a single old
+     memory would hold the whole character on word overlap forever. Filled in
+     quietly on open, a batch at a time, and harmless if it never finishes. */
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const pending = needsEmbedding(state, muse.id);
+      if (!pending.length) return;
+      const vecs = await embedTexts(pending.map((m) => m.content));
+      if (!vecs || cancelled) return;
+      const patch: Record<string, number[] | null> = {};
+      pending.forEach((m, i) => { patch[m.id] = vecs[i]; });
+      update((cur) => attachEmbeddings(cur, patch));
+    })();
+    return () => { cancelled = true; };
+    /* Deliberately keyed on the count rather than on `state`: this should run
+       when there is new work, not on every keystroke that changes anything. */
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [muse.id, memoriesFor.length]);
+
   /* `resend` is a retry of a message already in the thread.
    *
    * The failed attempt saved the user's message before the request went out, so
@@ -666,7 +691,14 @@ function SoloChat({
     // The last few turns plus the new message, so retrieval follows the subject
     // rather than a two-word reply carrying no signal.
     const query = [...withUser.slice(-4).map((m) => m.content)].join("\n");
-    const memories = relevantMemories(state, muse.id, query);
+    /* One extra round trip before the reply, and it is what makes recall work on
+       meaning rather than shared words. Falls back to overlap when it fails, so
+       the cost of it going wrong is a worse memory, not a failed message. */
+    /* Skipped entirely when the last few turns are "hmm" and "yeah": there is
+       nothing to recall against, and a vector for filler still lands nearest to
+       something. Also where most of the half-second goes. */
+    const [queryVector] = worthRecalling(query) ? (await embedTexts([query])) ?? [null] : [null];
+    const memories = relevantMemories(state, muse.id, query, queryVector);
 
     let acc = "";
     try {
@@ -792,6 +824,11 @@ function SoloChat({
         /* Extraction runs after the reply is on screen and never blocks it, the
            same shape as the server app's aftercare. */
         void (async () => {
+          /* Captured once and reused for the write-back, because `replaces`
+             comes back as indexes into exactly this list. Recomputing it after
+             the round trip would renumber it against whatever had changed in
+             the meantime and delete the wrong memory. */
+          const knownForExtraction = memoriesFor.slice(-60).map((m) => m.content);
           try {
             const r = await fetch("/api/solo/remember", {
               method: "POST",
@@ -805,14 +842,31 @@ function SoloChat({
                    This list is only there to stop the model re-proposing
                    something already known, and sending a year of them every
                    turn is bandwidth spent on nothing. */
-                known: memoriesFor.slice(-60).map((m) => m.content),
+                known: knownForExtraction,
               }),
             });
             const { memories: found } = await r.json();
             if (Array.isArray(found) && found.length) {
               /* Read at commit time, not from the snapshot this turn started
                  with -- see the save effect above. */
-              update((cur) => addMemories(cur, muse.id, found));
+              update((cur) => addMemories(cur, muse.id, found, knownForExtraction));
+              /* Embedded straight away so the next turn can recall them by
+                 meaning. Separate from the write so a slow or failed embedding
+                 never delays the memory itself landing. */
+              const texts = found.map((f: { content: string }) => f.content);
+              const vecs = await embedTexts(texts);
+              if (vecs) {
+                update((cur) => {
+                  const byContent = new Map(texts.map((t: string, i: number) => [t, vecs[i]]));
+                  const patch: Record<string, number[] | null> = {};
+                  for (const m of cur.memories) {
+                    if (m.museId !== muse.id || m.embedding?.length) continue;
+                    const v = byContent.get(m.content);
+                    if (v) patch[m.id] = v;
+                  }
+                  return attachEmbeddings(cur, patch);
+                });
+              }
             }
           } catch { /* a missed memory is not worth an error banner */ }
         })();
@@ -1124,6 +1178,25 @@ function NewCircle({
 
 function isDefaultVibe(v: Vibe): boolean {
   return v.mood === DEFAULT_VIBE.mood && v.topic === DEFAULT_VIBE.topic && v.register === DEFAULT_VIBE.register;
+}
+
+/** Vectors for some text, or null when there is no embedding model configured
+ *  or the call fails. Never throws: worse recall for one turn is not worth
+ *  failing a message over. */
+async function embedTexts(texts: string[]): Promise<(number[] | null)[] | null> {
+  if (!texts.length) return null;
+  try {
+    const res = await fetch("/api/solo/embed", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ texts }),
+    });
+    if (!res.ok) return null;
+    const { vectors } = await res.json();
+    return Array.isArray(vectors) ? vectors : null;
+  } catch {
+    return null;
+  }
 }
 
 /** What a character sounds like, falling back for anyone built before voice

@@ -18,7 +18,7 @@
  */
 import assert from "node:assert";
 import {
-  addMemories, deleteMemory, editMemory, forgetAll, memoriesOf,
+  addMemories, deleteMemory, editMemory, forgetAll, memoriesOf, worthRecalling,
   MEMORIES_PER_MUSE, MEMORY_CHARS,
 } from "../src/lib/solo/store.ts";
 
@@ -228,6 +228,78 @@ check("memories are listed newest first", () => {
   s = { ...s, memories: s.memories.map((m) => ({ ...m, createdAt: "2020-01-01T00:00:00.000Z" })) };
   s = addMemories(s, "aditi", [say("second")]);
   assert.equal(memoriesOf(s, "aditi")[0].content, "second");
+});
+
+/* ------------------------------------------- when a fact stops being true */
+
+/* People change jobs, leave cities, quit smoking. The old fact does not become
+ * a second fact — it stops being true. Measured before this existed: a user who
+ * said they had quit engineering for photography ended up with a character
+ * holding both, and both went into the same prompt.
+ */
+
+check("a fact that contradicts an old one replaces it", () => {
+  const known = ["User works as a structural engineer at a firm in Pune.", "User's dog is called Bruno."];
+  let s = blank();
+  s = addMemories(s, "aditi", [say(known[0]), say(known[1])]);
+  s = addMemories(
+    s, "aditi",
+    [say("User is now a full-time photographer.", { replaces: [0] })],
+    known
+  );
+  const left = memoriesOf(s, "aditi").map((m) => m.content);
+  assert.ok(left.some((c) => c.includes("photographer")), "the new fact must land");
+  assert.ok(!left.some((c) => c.includes("structural engineer")), "the old one must go");
+  assert.ok(left.some((c) => c.includes("Bruno")), "unrelated memories must be untouched");
+});
+
+check("a superseded fact cannot come back from the same conversation", () => {
+  /* It has to be tombstoned like any other deletion, or the transcript that
+     produced it re-proposes it on the next turn and the change is undone. */
+  const known = ["User works as a structural engineer."];
+  let s = addMemories(blank(), "aditi", [say(known[0])]);
+  s = addMemories(s, "aditi", [say("User is now a photographer.", { replaces: [0] })], known);
+  s = addMemories(s, "aditi", [say(known[0])]);
+  assert.ok(
+    !memoriesOf(s, "aditi").some((m) => m.content.includes("structural engineer")),
+    "a replaced fact must stay replaced"
+  );
+});
+
+check("an index pointing at nothing is ignored rather than deleting something", () => {
+  /* A wrong index would destroy a memory the user never asked to lose, which is
+     worse than keeping a stale one. */
+  let s = addMemories(blank(), "aditi", [say("User's dog is called Bruno.")]);
+  s = addMemories(s, "aditi", [say("User has a cat too.", { replaces: [7, -1] })], []);
+  assert.equal(memoriesOf(s, "aditi").length, 2);
+});
+
+check("an additive detail replaces nothing", () => {
+  const known = ["User's sister Priya is getting married in December."];
+  let s = addMemories(blank(), "aditi", [say(known[0])]);
+  s = addMemories(s, "aditi", [say("The wedding is in Pune.", { replaces: [] })], known);
+  assert.equal(memoriesOf(s, "aditi").length, 2, "detail should add, not overwrite");
+});
+
+/* ------------------------------------------------ what is worth recalling */
+
+check("a message with something in it is worth recalling against", () => {
+  for (const q of [
+    "i need a gift for the ceremony next month",
+    "my puppy chewed the sofa again",
+    "does priya know yet",
+  ]) assert.ok(worthRecalling(q), q);
+});
+
+check("filler is not", () => {
+  /* Measured: "hmm" embeds to a vector that scores 0.704 against "trying to
+     quit smoking" -- higher than a genuinely relevant query scored on its own
+     right answer. A character raising your smoking because you said "hmm" is
+     worse than one that says nothing, and skipping these is also where most of
+     the half-second of embedding latency is saved. */
+  for (const q of ["hmm", "yeah", "ok", "yeah ok", "haan", "lol", "mmm"]) {
+    assert.ok(!worthRecalling(q), `"${q}" should not trigger recall`);
+  }
 });
 
 let pass = 0, fail = 0;
