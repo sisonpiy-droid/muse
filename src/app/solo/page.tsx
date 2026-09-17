@@ -371,15 +371,44 @@ function SoloHome({
 
       {state.userName && (
         <>
-          {/* What you came for, first.
+          {/* A strip, not the three full-height panels this used to be.
+              
+              Those pushed the people you actually talk to 1,329px down on a
+              phone. Compact, the whole section costs about 200px, so it can sit
+              at the top without burying anything — which is where it belongs if
+              you are still making characters rather than only talking to them. */}
+          <h2 className="section-title">Make someone new</h2>
+          <div className="make-row">
+            <button className="make" onClick={onImport}>
+              <b>From a chat export</b>
+              <span>Reads how they actually wrote</span>
+            </button>
+            <button className="make" onClick={onFigure}>
+              <b>Someone in public life</b>
+              <span>Built from what they said in public</span>
+            </button>
+            {/* This was always possible and had no door. You had to open "From
+                a chat export", get to the second question, and pick "Someone I
+                made up" — behind a button that promises a file upload. */}
+            <button className="make" onClick={onInvent}>
+              <b>Someone you make up</b>
+              <span>Invent them — no export needed</span>
+            </button>
+            <button className="make" onClick={onNewCircle}>
+              <b>A circle</b>
+              <span>Two or more, in a room together</span>
+            </button>
+          </div>
+
+          {/* Then the people, still within the first screen.
               
               This used to open with two full-height "build someone" cards and a
-              third for circles, so on a phone the people you actually talk to
-              started 1,329px down — nearly two screens of scrolling past
-              adverts for features, to reach the one thing the app is for. The
-              order now follows what someone opens this to do: continue a
-              conversation, start one with someone here, and only then make
-              somebody new. */}
+              third for circles, which put the people you actually talk to
+              1,329px down on a phone — nearly two screens of scrolling past
+              adverts for features to reach the thing the app is for. Making
+              someone new sits above this again, but as a strip rather than
+              panels, so it costs a couple of hundred pixels instead of
+              fourteen hundred. */}
           {talked.length > 0 && (
             <>
               <h2 className="section-title">Continue talking</h2>
@@ -441,32 +470,6 @@ function SoloHome({
               </div>
             </div>
           ))}
-
-          {/* Making someone new is a real feature and a rare one — you do it
-              once, then talk to them for months. A strip of three, not three
-              full-width panels above everything else. */}
-          <h2 className="section-title">Make someone new</h2>
-          <div className="make-row">
-            <button className="make" onClick={onImport}>
-              <b>From a chat export</b>
-              <span>Reads how they actually wrote</span>
-            </button>
-            <button className="make" onClick={onFigure}>
-              <b>Someone in public life</b>
-              <span>Built from what they said in public</span>
-            </button>
-            {/* This was always possible and had no door. You had to open "From
-                a chat export", get to the second question, and pick "Someone I
-                made up" — behind a button that promises a file upload. */}
-            <button className="make" onClick={onInvent}>
-              <b>Someone you make up</b>
-              <span>Invent them — no export needed</span>
-            </button>
-            <button className="make" onClick={onNewCircle}>
-              <b>A circle</b>
-              <span>Two or more, in a room together</span>
-            </button>
-          </div>
 
           <div className="row" style={{ marginTop: "2.5rem", gap: "0.75rem", flexWrap: "wrap" }}>
             <button
