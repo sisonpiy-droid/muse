@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
 import { Avatar } from "./Avatar";
@@ -150,7 +151,7 @@ export function Chat({
   return (
     <>
       <header className="chat-head">
-        <a href="/" className="link-btn" aria-label="Back to home" style={{ textDecoration: "none" }}>←</a>
+        <Link href="/" className="link-btn" aria-label="Back to home" style={{ textDecoration: "none" }}>←</Link>
         <Avatar name={muse.name} />
         <div style={{ minWidth: 0 }}>
           <h1>{muse.name}</h1>

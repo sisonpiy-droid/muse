@@ -46,6 +46,24 @@ export interface SoloMessage {
   edited?: boolean;
 }
 
+/* A fresh message, id and timestamp included.
+ *
+ * Pulled out of the components that build one rather than inlined at the call
+ * site: React Compiler treats Date.now()/Math.random() reached from a
+ * component's own body as impure and refuses to memoise around it, even when
+ * the call only ever happens inside an event handler. Here it is neither in a
+ * component nor in render, so there is nothing for the compiler to worry
+ * about. */
+export function newMessage(from: SoloMessage["from"], content: string, speakerId?: string): SoloMessage {
+  return {
+    id: `${from === "user" ? "u" : "m"}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    from,
+    content,
+    at: new Date().toISOString(),
+    ...(speakerId ? { speakerId } : {}),
+  };
+}
+
 /* A circle is both halves of what was asked for: a set of people who know one
    another, and a thread they are all in. Keeping it one concept rather than two
    means membership cannot disagree with itself -- being in the group is what it
@@ -59,9 +77,7 @@ export interface SoloCircle {
 
 /* The Presence fields are required on a starter and absent on a built
    character, which carries them inside `persona` instead. */
-/* `voice` is here with the rest: starters ship with one, and anyone built
-   before voice notes existed has none, so every read falls back. */
-type PresenceFields = "arch" | "texture" | "mode" | "brief" | "samples" | "extra" | "voice";
+type PresenceFields = "arch" | "texture" | "mode" | "brief" | "samples" | "extra";
 
 export interface SoloMuse
   extends Omit<Persona, PresenceFields>,
@@ -770,8 +786,6 @@ export function deleteCircle(state: SoloState, circleId: string): SoloState {
  */
 export interface MusePatch {
   name?: string;
-  /** A prebuilt voice id; see lib/presence/voices. */
-  voice?: string;
   relationshipType?: string;
   description?: string;
   traits?: string[];

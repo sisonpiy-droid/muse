@@ -9,18 +9,16 @@ import { EditMuse } from "@/components/EditMuse";
 import { ImportPersona } from "@/components/ImportPersona";
 import { Memories } from "@/components/Memories";
 import { MessageActions } from "@/components/MessageActions";
-import { VoiceNote } from "@/components/VoiceNote";
 import {
   DEFAULT_VIBE, MOODS, REGISTERS, TOPICS, feelingsSummary, hasFeelings, splitBurst,
   vibeSummary, type Vibe,
 } from "@/lib/presence/persona";
-import { DEFAULT_VOICE } from "@/lib/presence/voices";
 import { safeFilename, transcriptMarkdown } from "@/lib/export";
 import {
   addMemories, allMuses, attachEmbeddings, circleOf, deleteCircle, deleteConversation,
   deleteFrom, deleteMemory, deleteMessage, deleteMuse, download, editMemory, editMessage,
   editMuse, feelingsOf, findMuse, forgetAll, isEdited, knownTo, loadState, membersOf,
-  memoriesOf, needsEmbedding, parseBackup, relevantMemories, resetMuse, saveState,
+  memoriesOf, needsEmbedding, newMessage, parseBackup, relevantMemories, resetMuse, saveState,
   worthRecalling,
   setFeelings,
   type SoloMessage, type SoloMuse, type SoloState,
@@ -69,6 +67,11 @@ export default function SoloPage() {
   /* Skips the write that would immediately follow the first read. */
   const loaded = useRef(false);
 
+  /* Deliberately not a lazy useState initializer: this runs during SSR too,
+     where there is no localStorage, so the server and the client's first
+     render must both start from null and swap in the real state after mount
+     -- otherwise hydration sees different markup from the two passes. */
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { setState(loadState()); }, []);
 
   /* Saving is a consequence of the state changing, not something every call site
@@ -692,7 +695,7 @@ function SoloChat({
 
     const withUser: SoloMessage[] = resend
       ? log
-      : [...log, { id: `u-${Date.now()}`, from: "user", content, at: new Date().toISOString() }];
+      : [...log, newMessage("user", content)];
 
     /* Functional, like every other write in here: a turn takes seconds and
        anything committed during it -- a memory landing, an edit -- would be
@@ -824,12 +827,7 @@ function SoloChat({
         const burst = muse.persona ? splitBurst(reply, reg.burst) : [reply];
         const withMuse: SoloMessage[] = [
           ...withUser,
-          ...burst.map((content, i) => ({
-            id: `m-${Date.now()}-${i}`,
-            from: "muse" as const,
-            content,
-            at: new Date().toISOString(),
-          })),
+          ...burst.map((content) => newMessage("muse", content)),
         ];
         update((cur) => ({
           ...cur,
@@ -966,11 +964,6 @@ function SoloChat({
           <div key={m.id} className={m.from === "user" ? "turn turn-user" : "turn turn-muse"}>
             {m.content}
             {m.edited && <span className="stamp"> · edited</span>}
-            {/* Only on their messages. Reading your own words back to you in
-                someone else's voice is a strange thing to offer. */}
-            {m.from === "muse" && (
-              <VoiceNote text={m.content} voice={voiceOf(muse)} name={muse.name} />
-            )}
             <MessageActions
               content={m.content}
               onEdit={(text) => update(editMessage(state, muse.id, m.id, text))}
@@ -1213,12 +1206,6 @@ async function embedTexts(texts: string[]): Promise<(number[] | null)[] | null> 
   } catch {
     return null;
   }
-}
-
-/** What a character sounds like, falling back for anyone built before voice
- *  notes existed rather than leaving them mute. */
-function voiceOf(muse: SoloMuse): string {
-  return muse.voice ?? DEFAULT_VOICE;
 }
 
 function lastAt(state: SoloState, museId: string): number {

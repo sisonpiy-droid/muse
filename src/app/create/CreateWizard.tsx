@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
@@ -13,8 +14,7 @@ import { Avatar } from "@/components/Avatar";
  * safe defaults (proactive off, §61) instead of asking someone to configure
  * quiet hours before they have said a word to this person.
  *
- * Voice (§Step 6) is skipped: nothing plays audio yet, and a picker that
- * chooses between voices you cannot hear is worse than not asking.
+ * Voice (§Step 6) is skipped: there is no speech feature in this build.
  */
 
 const RELATIONSHIPS = ["friend", "mentor", "coach", "partner", "teacher", "character", "family", "other"];
@@ -131,7 +131,7 @@ export default function CreateWizard() {
     <main className="shell">
       <header className="row" style={{ justifyContent: "space-between" }}>
         <p className="mark">New Muse</p>
-        <a href="/" className="link-btn" style={{ textDecoration: "none" }}>Cancel</a>
+        <Link href="/" className="link-btn" style={{ textDecoration: "none" }}>Cancel</Link>
       </header>
 
       <div

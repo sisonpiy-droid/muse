@@ -6,7 +6,7 @@ import { Avatar } from "@/components/Avatar";
 import { REGISTERS, hasFeelings, splitBurst } from "@/lib/presence/persona";
 import type { Update } from "@/app/solo/page";
 import {
-  deleteFrom, deleteMessage, editMessage, feelingsOf, membersOf,
+  deleteFrom, deleteMessage, editMessage, feelingsOf, membersOf, newMessage,
   type SoloCircle, type SoloMessage, type SoloMuse, type SoloState,
 } from "@/lib/solo/store";
 import { MessageActions } from "./MessageActions";
@@ -46,21 +46,6 @@ export function CircleChat({
 
   const nameOf = (id: string) => members.find((m) => m.id === id)?.name ?? "Someone";
 
-  /** Who replies to this message. Named people first, then whoever has been
-   *  quietest, capped at two so the room does not shout. */
-  function chooseSpeakers(text: string, recent: SoloMessage[]): SoloMuse[] {
-    const named = members.filter((m) => new RegExp(`\\b${escapeRe(m.name)}\\b`, "i").test(text));
-    if (named.length) return named.slice(0, 2);
-
-    const lastSpokeAt = new Map<string, number>();
-    recent.forEach((m, i) => { if (m.speakerId) lastSpokeAt.set(m.speakerId, i); });
-    const quietestFirst = [...members].sort(
-      (a, b) => (lastSpokeAt.get(a.id) ?? -1) - (lastSpokeAt.get(b.id) ?? -1)
-    );
-    // Two most of the time, one sometimes, so the rhythm is not mechanical.
-    return quietestFirst.slice(0, Math.random() < 0.35 ? 1 : 2);
-  }
-
   async function send(text: string) {
     const content = text.trim();
     if (!content || busy || members.length < 2) return;
@@ -70,10 +55,7 @@ export function CircleChat({
     setDraft("");
     if (box.current) box.current.style.height = "auto";
 
-    let running: SoloMessage[] = [
-      ...log,
-      { id: `u-${Date.now()}`, from: "user", content, at: new Date().toISOString() },
-    ];
+    let running: SoloMessage[] = [...log, newMessage("user", content)];
     /* Written against whatever is current rather than the snapshot this turn
        opened with. A circle turn runs several speakers back to back and can take
        half a minute, and anything committed elsewhere in that window -- a memory
@@ -83,7 +65,7 @@ export function CircleChat({
 
     commit(running);
 
-    const speakers = chooseSpeakers(content, running);
+    const speakers = chooseSpeakers(members, content, running);
 
     for (const m of speakers) {
       if (!m.persona) continue;
@@ -154,13 +136,7 @@ export function CircleChat({
           const parts = splitBurst(said, REGISTERS.texts.burst);
           running = [
             ...running,
-            ...parts.map((c, i) => ({
-              id: `m-${Date.now()}-${m.id}-${i}`,
-              from: "muse" as const,
-              speakerId: m.id,
-              content: c,
-              at: new Date().toISOString(),
-            })),
+            ...parts.map((c) => newMessage("muse", c, m.id)),
           ];
           commit(running);
         }
@@ -252,4 +228,21 @@ export function CircleChat({
 
 function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Who replies to this message. Named people first, then whoever has been
+ *  quietest, capped at two so the room does not shout. Outside the component
+ *  so the Math.random() below is not something the compiler has to reason
+ *  about for render. */
+function chooseSpeakers(members: SoloMuse[], text: string, recent: SoloMessage[]): SoloMuse[] {
+  const named = members.filter((m) => new RegExp(`\\b${escapeRe(m.name)}\\b`, "i").test(text));
+  if (named.length) return named.slice(0, 2);
+
+  const lastSpokeAt = new Map<string, number>();
+  recent.forEach((m, i) => { if (m.speakerId) lastSpokeAt.set(m.speakerId, i); });
+  const quietestFirst = [...members].sort(
+    (a, b) => (lastSpokeAt.get(a.id) ?? -1) - (lastSpokeAt.get(b.id) ?? -1)
+  );
+  // Two most of the time, one sometimes, so the rhythm is not mechanical.
+  return quietestFirst.slice(0, Math.random() < 0.35 ? 1 : 2);
 }

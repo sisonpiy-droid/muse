@@ -16,7 +16,6 @@
 import assert from "node:assert";
 import { PERSONAS } from "../src/lib/personas.ts";
 import { feelingsBlock, personaSystem } from "../src/lib/presence/persona.ts";
-import { VOICES, forSpeech, isVoice, voiceById, MAX_SPOKEN_CHARS } from "../src/lib/presence/voices.ts";
 import { applyPatch } from "../src/lib/solo/store.ts";
 
 const results = [];
@@ -54,61 +53,6 @@ check("starters are distinct from each other, not one voice with several names",
     seen.set(p.samples, p.name);
   }
   assert.equal(new Set(PERSONAS.map((p) => p.name)).size, PERSONAS.length, "duplicate names");
-});
-
-/* ---------------------------------------------------------------- voices */
-
-check("every starter's voice is one the API will actually accept", () => {
-  /* A typo here does not fail. voiceById falls back, so the character simply
-     speaks as someone else forever and nothing says why. The ids were verified
-     against the live API -- two names in the published list return 200 with no
-     audio -- so this guards against both a typo and a copy from documentation. */
-  for (const p of PERSONAS) {
-    assert.ok(p.voice, `${p.name} has no voice`);
-    assert.ok(isVoice(p.voice), `${p.name} has voice "${p.voice}", which is not in the catalogue`);
-  }
-});
-
-check("the starters are not all the same voice", () => {
-  const used = new Set(PERSONAS.map((p) => p.voice));
-  assert.ok(
-    used.size >= PERSONAS.length - 3,
-    `${used.size} voices across ${PERSONAS.length} people is too much overlap`
-  );
-});
-
-check("an unknown or missing voice falls back rather than throwing", () => {
-  assert.ok(voiceById(undefined).id);
-  assert.ok(voiceById("NotAVoice").id);
-  assert.equal(voiceById("Kore").id, "Kore");
-});
-
-check("a long message is cut at a sentence, not mid-word", () => {
-  const long = "This is a sentence. ".repeat(200);
-  const out = forSpeech(long);
-  assert.ok(out.length <= MAX_SPOKEN_CHARS, `${out.length} over the cap`);
-  assert.ok(out.endsWith("."), "speech should stop at a full stop, not mid-word");
-});
-
-check("a message with no sentence breaks is still spoken", () => {
-  /* One long unpunctuated run is exactly how the texting register writes, so
-     falling back to a hard cut matters more here than it looks. */
-  const out = forSpeech("yaar ".repeat(600));
-  assert.ok(out.length > 0 && out.length <= MAX_SPOKEN_CHARS);
-});
-
-check("a short message is left exactly as it is", () => {
-  assert.equal(forSpeech("  betu khana khaya  "), "betu khana khaya");
-});
-
-check("every voice is described by how it sounds, not by its codename", () => {
-  for (const v of VOICES) {
-    assert.ok(v.label && v.note, `${v.id} needs a label and a note`);
-    assert.ok(
-      !v.label.toLowerCase().includes(v.id.toLowerCase()),
-      `"${v.label}" just repeats the API name, which tells a user nothing`
-    );
-  }
 });
 
 /* ------------------------------------------------------------- the overlay */
