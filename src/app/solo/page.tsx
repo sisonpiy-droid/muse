@@ -63,15 +63,52 @@ type View =
   | { kind: "circle"; circleId: string }
   | { kind: "new-circle" };
 
+/** What each history entry carries. `depth` is how many screens sit above
+ *  home, so back knows whether there is anywhere inside the app to go. */
+type Entry = { muse: 1; view: View; depth: number };
+
+function asEntry(s: unknown): Entry | null {
+  return s && typeof s === "object" && (s as Entry).muse === 1 ? (s as Entry) : null;
+}
+
+const depthNow = () => asEntry(window.history.state)?.depth ?? 0;
+
 export default function SoloPage() {
   const [state, setState] = useState<SoloState | null>(null);
   const [view, setView] = useState<View>({ kind: "home" });
-  /* Where "back" goes from a conversation: the tab it was opened from, so
-     going through three of your best friends is not three trips via home. */
-  const [base, setBase] = useState<View>({ kind: "home" });
-  const goBase = () => setView(base);
-  const goHome = () => { setBase({ kind: "home" }); setView({ kind: "home" }); };
-  const goTab = (tab: string) => { setBase({ kind: "tab", tab }); setView({ kind: "tab", tab }); };
+
+  /* Every screen is a history entry.
+   *
+   * Screens used to change in memory only, so the browser had one entry for
+   * the whole app and the phone's back gesture left the site from inside a
+   * conversation. Now opening something pushes an entry, and back -- the
+   * browser's, the phone's, or the arrow on screen -- pops to wherever you
+   * came from, down to the home screen. Only back from home leaves.
+   *
+   * Moving sideways (switching tabs, a wizard turning into the chat it made)
+   * replaces the entry instead, so back never walks through every tab you
+   * glanced at. */
+  const go = (next: View) => {
+    window.history.pushState({ muse: 1, view: next, depth: depthNow() + 1 } satisfies Entry, "");
+    setView(next);
+  };
+  const swap = (next: View) => {
+    window.history.replaceState({ muse: 1, view: next, depth: depthNow() } satisfies Entry, "");
+    setView(next);
+  };
+  const back = () => {
+    if (depthNow() > 0) window.history.back();
+    else swap({ kind: "home" });
+  };
+
+  useEffect(() => {
+    const onPop = (e: PopStateEvent) => {
+      const entry = asEntry(e.state);
+      setView(entry ? entry.view : { kind: "home" });
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
   /* Whether the last write actually landed. Everything in here is one
      localStorage key that only grows, and when the browser finally refuses it
      the app carries on working perfectly for the rest of the session and loses
@@ -85,8 +122,15 @@ export default function SoloPage() {
      where there is no localStorage, so the server and the client's first
      render must both start from null and swap in the real state after mount
      -- otherwise hydration sees different markup from the two passes. */
-  // eslint-disable-next-line react-hooks/set-state-in-effect
-  useEffect(() => { setState(loadState()); }, []);
+  /* A reload keeps the screen it was on: the entry survives it, and so do the
+     ones behind it, so back still works afterwards. */
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setState(loadState());
+    const entry = asEntry(window.history.state);
+    if (entry) setView(entry.view);
+    else window.history.replaceState({ muse: 1, view: { kind: "home" }, depth: 0 } satisfies Entry, "");
+  }, []);
 
   /* Saving is a consequence of the state changing, not something every call site
      remembers to do. That matters for more than tidiness: memory extraction
@@ -168,7 +212,7 @@ export default function SoloPage() {
         /* Same wizard either way. Inventing someone just skips the question it
            already knows the answer to. */
         startMode={view.kind === "invent" ? "character" : undefined}
-        onCancel={goBase}
+        onCancel={back}
         onCreate={(draft) => {
           const id = `made-${Date.now()}`;
           /* The card fields are only for display; everything the model reads
@@ -190,7 +234,7 @@ export default function SoloPage() {
               ...state.muses,
             ],
           });
-          setView({ kind: "chat", museId: id });
+          swap({ kind: "chat", museId: id });
         }}
       />
     );
@@ -199,7 +243,7 @@ export default function SoloPage() {
   if (view.kind === "figure") {
     return shell(
       <BuildFigure
-        onCancel={goBase}
+        onCancel={back}
         onCreate={(draft) => {
           const id = `figure-${Date.now()}`;
           update((cur) => ({
@@ -219,7 +263,7 @@ export default function SoloPage() {
               ...cur.muses,
             ],
           }));
-          setView({ kind: "chat", museId: id });
+          swap({ kind: "chat", museId: id });
         }}
       />
     );
@@ -229,7 +273,7 @@ export default function SoloPage() {
     const circle = circleOf(state, view.circleId);
     if (!circle) { setView({ kind: "home" }); return null; }
     return shell(
-      <CircleChat circle={circle} state={state} update={update} onBack={goBase} />
+      <CircleChat circle={circle} state={state} update={update} onBack={back} />
     );
   }
 
@@ -237,7 +281,7 @@ export default function SoloPage() {
     return shell(
       <NewCircle
         state={state}
-        onCancel={goBase}
+        onCancel={back}
         onCreate={(name, memberIds) => {
           const id = `circle-${Date.now()}`;
           update({
@@ -247,7 +291,7 @@ export default function SoloPage() {
               ...(state.circles ?? []),
             ],
           });
-          setView({ kind: "circle", circleId: id });
+          swap({ kind: "circle", circleId: id });
         }}
       />
     );
@@ -267,14 +311,14 @@ export default function SoloPage() {
         resettable={
           muse.builtin && (isEdited(state, muse.id) || hasFeelings(feelingsOf(state, muse.id)))
         }
-        onCancel={() => setView({ kind: "chat", museId: muse.id })}
+        onCancel={() => back()}
         onSave={(patch, feelings) => {
           update(setFeelings(editMuse(state, muse.id, patch), muse.id, feelings));
-          setView({ kind: "chat", museId: muse.id });
+          back();
         }}
         onReset={() => {
           update(resetMuse(state, muse.id));
-          setView({ kind: "chat", museId: muse.id });
+          back();
         }}
       />
     );
@@ -291,7 +335,7 @@ export default function SoloPage() {
         onEdit={(id, patch) => update((cur) => editMemory(cur, id, patch))}
         onDelete={(id) => update((cur) => deleteMemory(cur, id))}
         onForgetAll={() => update((cur) => forgetAll(cur, muse.id))}
-        onBack={() => setView({ kind: "chat", museId: muse.id })}
+        onBack={() => back()}
       />
     );
   }
@@ -304,26 +348,30 @@ export default function SoloPage() {
         muse={muse}
         state={state}
         update={update}
-        onBack={goBase}
-        onEdit={() => setView({ kind: "edit", museId: muse.id })}
-        onMemories={() => setView({ kind: "memories", museId: muse.id })}
+        onBack={back}
+        onEdit={() => go({ kind: "edit", museId: muse.id })}
+        onMemories={() => go({ kind: "memories", museId: muse.id })}
       />
     );
   }
 
   const nav = {
-    onOpen: (id: string) => setView({ kind: "chat", museId: id }),
-    onEdit: (id: string) => setView({ kind: "edit", museId: id }),
-    onImport: () => setView({ kind: "import" }),
-    onInvent: () => setView({ kind: "invent" }),
-    onFigure: () => setView({ kind: "figure" }),
-    onOpenCircle: (id: string) => setView({ kind: "circle", circleId: id }),
-    onNewCircle: () => setView({ kind: "new-circle" }),
-    onTab: goTab,
+    onOpen: (id: string) => go({ kind: "chat", museId: id }),
+    onEdit: (id: string) => go({ kind: "edit", museId: id }),
+    onImport: () => go({ kind: "import" }),
+    onInvent: () => go({ kind: "invent" }),
+    onFigure: () => go({ kind: "figure" }),
+    onOpenCircle: (id: string) => go({ kind: "circle", circleId: id }),
+    onNewCircle: () => go({ kind: "new-circle" }),
+    onTab: (tab: string) => go({ kind: "tab", tab }),
   };
 
   if (view.kind === "tab") {
-    return shell(<SoloTab state={state} update={update} tab={view.tab} onHome={goHome} {...nav} />);
+    return shell(<SoloTab
+        state={state} update={update} tab={view.tab} onHome={back} {...nav}
+        /* Sideways, so back from any tab is one step to home. */
+        onTab={(tab) => swap({ kind: "tab", tab })}
+      />);
   }
 
   return shell(<SoloHome state={state} update={update} {...nav} />);
