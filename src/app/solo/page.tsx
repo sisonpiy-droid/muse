@@ -23,7 +23,7 @@ import {
   deleteFrom, deleteMemory, deleteMessage, deleteMuse, download, editMemory, editMessage,
   editMuse, feelingsOf, findMuse, forgetAll, inTab, insertAfter, isEdited, knownTo, loadState,
   membersOf, memoriesOf, needsEmbedding, newMessage, parseBackup, promptPersona, quoteOf,
-  relevantMemories, resetMuse, rewindTo, saveState, worthRecalling,
+  memoriesForTurn, resetMuse, rewindTo, saveState, windowOf, worthRecalling,
   setFeelings,
   type SoloCircle, type SoloMessage, type SoloMuse, type SoloState,
 } from "@/lib/solo/store";
@@ -244,6 +244,7 @@ export default function SoloPage() {
   if (view.kind === "figure") {
     return shell(
       <BuildFigure
+        userName={state.userName ?? undefined}
         onCancel={back}
         onCreate={(draft) => {
           const id = `figure-${Date.now()}`;
@@ -256,7 +257,7 @@ export default function SoloPage() {
                 builtin: false,
                 persona: draft,
                 name: draft.them,
-                description: draft.interests?.trim() || "Built from what they have said in public.",
+                description: draft.interests?.trim() || (draft.mode === "fictional" ? "A character from a story." : "Built from what they have said in public."),
                 relationshipType: draft.relationship?.trim() || "someone in public life",
                 category: view.tab ?? "Public",
                 traits: [],
@@ -896,7 +897,7 @@ function SoloChat({
        something. Also where most of the half-second goes. */
     const [queryVector] = worthRecalling(query) ? (await embedTexts([query])) ?? [null] : [null];
     if (signal.aborted) return;
-    const memories = relevantMemories(s, muse.id, query, queryVector);
+    const memories = memoriesForTurn(s, muse.id, query, queryVector);
 
     let acc = "";
     try {
@@ -924,8 +925,8 @@ function SoloChat({
               catchphrases: person.catchphrases, dialect: person.dialect,
             },
           },
-          // Bounded window, same reason as the server app (§9).
-          messages: thread.slice(-20).map((m) => {
+          // Bounded by size rather than count -- see windowOf.
+          messages: windowOf(thread).map((m) => {
             const q = quoteOf(thread, m);
             return {
               role: m.from === "user" ? ("user" as const) : ("assistant" as const),

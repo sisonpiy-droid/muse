@@ -359,7 +359,7 @@ export function ImportPersona({
           <div className="field">
             <span>Who is {draft.them || "this"}?</span>
             <div className="tags">
-              {Object.entries(MODES).map(([k, v]) => (
+              {Object.entries(MODES).filter(([k]) => k !== "fictional").map(([k, v]) => (
                 <button key={k} type="button" className="tag" aria-pressed={draft.mode === k}
                   onClick={() => setDraft((d) => ({ ...d, mode: k, consent: null }))}
                   style={chip(draft.mode === k)}>{v.label}</button>

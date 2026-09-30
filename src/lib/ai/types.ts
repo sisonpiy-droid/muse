@@ -90,4 +90,14 @@ export interface AIProvider {
     transcript: ChatMessage[],
     existingMemories: string[]
   ): Promise<ExtractedMemory[]>;
+
+  /** A reply grounded in a live web search, with the pages it drew on.
+   *  Optional: a provider without search leaves it out, and callers fall back
+   *  to what the model already knows. */
+  searchWeb?(opts: { system: string; prompt: string }): Promise<SearchResult>;
+}
+
+export interface SearchResult {
+  text: string;
+  sources: { title: string; url: string }[];
 }

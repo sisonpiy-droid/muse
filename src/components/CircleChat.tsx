@@ -10,7 +10,7 @@ import { REGISTERS, hasFeelings, splitBurst } from "@/lib/presence/persona";
 import type { Update } from "@/app/solo/page";
 import {
   QUOTE_CHARS, circleOf, deleteFrom, deleteMessage, editCircle, editMessage, editMuse, feelingsOf,
-  insertAfter, membersOf, newMessage, promptPersona, quoteOf, rewindTo,
+  insertAfter, membersOf, memoriesForTurn, newMessage, promptPersona, quoteOf, rewindTo, windowOf,
   type SoloCircle, type SoloMessage, type SoloMuse, type SoloState,
 } from "@/lib/solo/store";
 import { MessageActions } from "./MessageActions";
@@ -129,7 +129,7 @@ export function CircleChat({
             /* The whole room's transcript, including what anyone said earlier
                in this same turn -- so the second speaker is replying to the
                first rather than to the same message twice. */
-            log: running.slice(-40).map((x) => {
+            log: windowOf(running, 80).map((x) => {
               const q = quoteOf(running, x);
               return {
                 from: x.from,
@@ -142,6 +142,8 @@ export function CircleChat({
             userName: s.userName,
             timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
             register: "texts",
+            /* So nobody in the room asks what you already told them. */
+            memories: memoriesForTurn(s, m.id, unanswered.map((u) => u.content).join("\n")).map((x) => x.slice(0, 400)),
             topic: room.topic?.trim() || undefined,
             roomTraits: room.traits?.length ? room.traits.slice(0, 8) : undefined,
             /* Each speaker brings their own standing state into the room. One

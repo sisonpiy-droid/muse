@@ -383,6 +383,75 @@ export function relevantMemories(
     .map((r) => r.memory.content);
 }
 
+/** Most memories the chat route accepts in one turn. */
+export const MEMORIES_PER_TURN = 12;
+
+/* What someone has in mind when they reply to you.
+ *
+ * Retrieval alone was not enough. It only surfaces what matches the last few
+ * messages, so a fact that matters to everything -- "User is working from home
+ * this week" -- was invisible the moment the talk moved on to lunch. Reported
+ * exactly that way: told she was working from home, the character asked a few
+ * messages later whether she was in the office.
+ *
+ * A person does not look up where you work before each sentence. So the most
+ * important standing facts and the most recent things you said are always to
+ * hand, and retrieval adds what the conversation calls up on top. */
+export function memoriesForTurn(
+  state: SoloState,
+  museId: string,
+  query: string,
+  queryEmbedding?: number[] | null
+): string[] {
+  const mine = state.memories.filter((m) => m.museId === museId);
+  if (!mine.length) return [];
+
+  const newest = [...mine].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  /* Who they are rather than what happened: events are what retrieval is for. */
+  const standing = newest
+    .filter((m) => m.type !== "EVENT")
+    .sort((a, b) => b.importance - a.importance)
+    .slice(0, 4);
+
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const add = (c: string) => {
+    const k = c.trim().toLowerCase();
+    if (!k || seen.has(k) || out.length >= MEMORIES_PER_TURN) return;
+    seen.add(k);
+    out.push(c);
+  };
+  for (const m of standing) add(m.content);
+  for (const m of newest.slice(0, 4)) add(m.content);
+  for (const c of relevantMemories(state, museId, query, queryEmbedding)) add(c);
+  return out;
+}
+
+/* How much of the conversation goes with each turn.
+ *
+ * It was the last twenty messages. A character texting in bursts sends three
+ * or four per reply, so twenty was about five exchanges -- something said ten
+ * minutes ago had already fallen out of what the model could see. Measured by
+ * size now, up to what the routes accept. */
+export const WINDOW_MESSAGES = 60;
+export const WINDOW_CHARS = 24_000;
+
+export function windowOf<T extends { content: string }>(
+  log: T[],
+  maxMessages = WINDOW_MESSAGES,
+  maxChars = WINDOW_CHARS
+): T[] {
+  const out: T[] = [];
+  let chars = 0;
+  for (let i = log.length - 1; i >= 0 && out.length < maxMessages; i--) {
+    chars += Math.min(log[i].content.length, 8000);
+    /* Always keep the newest, whatever it costs: it is what is being answered. */
+    if (chars > maxChars && out.length) break;
+    out.unshift(log[i]);
+  }
+  return out;
+}
+
 /** Memories with no vector yet, oldest first, for backfilling in batches. */
 export function needsEmbedding(state: SoloState, museId: string, limit = 32): SoloMemory[] {
   return state.memories

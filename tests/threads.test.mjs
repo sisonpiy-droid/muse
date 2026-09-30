@@ -8,7 +8,8 @@ import assert from "node:assert";
 import { MADE_TAB, PERSONAS, TABS, TAB_MAX } from "../src/lib/personas.ts";
 import { circleBlock, circleHistory, personaSystem, withQuote } from "../src/lib/presence/persona.ts";
 import {
-  builtinMuses, insertAfter, newMessage, promptPersona, quoteOf, rewindTo, tabOf,
+  MEMORIES_PER_TURN, builtinMuses, insertAfter, memoriesForTurn, newMessage, promptPersona, quoteOf,
+  rewindTo, tabOf, windowOf,
 } from "../src/lib/solo/store.ts";
 
 const results = [];
@@ -128,6 +129,54 @@ check("redoing from an edit keeps the edited line and drops what came after", ()
   const c = newMessage("user", "c");
   const log = rewindTo(state([a, b, c]), "t", a.id).conversations.t;
   assert.deepEqual(log.map((m) => m.content), ["a"]);
+});
+
+/* ---------------------------------------------------------------- memory */
+
+const mem = (content, type, importance, createdAt) => ({
+  id: content, museId: "aditi", content, type, importance, confidence: 1, createdAt,
+});
+
+check("what they told you stays to hand after the subject moves on", () => {
+  /* The reported case: told about working from home, asked a few messages
+     later whether they were in the office. Retrieval against "lunch" never
+     surfaces a memory about work. */
+  const s = {
+    userName: "Piyush", muses: [], conversations: {},
+    memories: [
+      mem("User is working from home this week.", "EVENT", 3, "2026-09-30T10:00:00Z"),
+      mem("User's dog is called Bruno.", "PERMANENT", 4, "2026-09-01T10:00:00Z"),
+    ],
+  };
+  const got = memoriesForTurn(s, "aditi", "what are you having for lunch", null);
+  assert.ok(got.includes("User is working from home this week."), "the newest thing they said must come along");
+  assert.ok(got.includes("User's dog is called Bruno."), "standing facts come along too");
+});
+
+check("there is a ceiling, and nobody else's memories get in", () => {
+  const memories = Array.from({ length: 40 }, (_, i) =>
+    mem(`User fact ${i}.`, "PERMANENT", (i % 5) + 1, `2026-09-${String((i % 28) + 1).padStart(2, "0")}T10:00:00Z`)
+  );
+  memories.push({ ...mem("Someone else's fact.", "PERMANENT", 5, "2026-09-30T11:00:00Z"), museId: "maya" });
+  const got = memoriesForTurn({ userName: "P", muses: [], conversations: {}, memories }, "aditi", "", null);
+  assert.ok(got.length <= MEMORIES_PER_TURN);
+  assert.ok(!got.includes("Someone else's fact."));
+});
+
+check("a long conversation is kept by size, not the last twenty lines", () => {
+  const log = Array.from({ length: 50 }, (_, i) => ({ content: `message ${i}` }));
+  assert.equal(windowOf(log).length, 50, "fifty short texts fit easily -- twenty was about five exchanges");
+  const big = Array.from({ length: 10 }, () => ({ content: "x".repeat(5000) }));
+  const w = windowOf(big);
+  assert.ok(w.length < 10 && w.length >= 1);
+  assert.equal(w[w.length - 1], big[big.length - 1], "the newest message is always kept");
+});
+
+check("they may invent their own life, never yours", () => {
+  const sys = personaSystem(draft, ["User is working from home."], false, plain);
+  assert.match(sys, /Never invent details about theirs/);
+  assert.match(sys, /check what they have already told you/);
+  assert.match(sys, /never ask what you already know/);
 });
 
 let pass = 0, fail = 0;

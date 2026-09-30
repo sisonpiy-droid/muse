@@ -35,7 +35,7 @@ const bodySchema = z.object({
   callsYou: z.string().trim().max(60).optional(),
   arch: z.string().trim().max(30).default("other"),
   texture: z.string().trim().max(30).default("close"),
-  mode: z.enum(["memorial", "living", "character", "figure"]),
+  mode: z.enum(["memorial", "living", "character", "figure", "fictional"]),
   /** Required for `living`: whether they know and agreed. */
   consent: z.boolean().nullish(),
 
@@ -46,6 +46,8 @@ const bodySchema = z.object({
      which is the only attested material in a figure build. */
   era: z.string().max(120).optional(),
   quoted: z.string().max(20000).optional(),
+  /** A briefing from /api/persona/research: what a web search found just now. */
+  research: z.string().max(6000).optional(),
   extra: z.string().max(4000).optional(),
   metrics: z.string().max(4000).optional(),
   prompts: z.record(z.string(), z.string().max(400)).optional(),
@@ -90,16 +92,16 @@ function buildFieldError(field: string, code?: string): string {
  * better-constrained one.
  *
  * Failure is not fatal: no lines means a thinner character, not a broken one. */
-async function registerLines(name: string, brief: string): Promise<string> {
+async function registerLines(name: string, brief: string, fictional: boolean): Promise<string> {
   const { text } = await getProvider().generateResponse({
-    system: `You write sample lines that demonstrate how someone speaks, for a portrayal of a real person in public life.
+    system: `You write sample lines that demonstrate how someone speaks, for a portrayal of ${fictional ? "a character from a story" : "a real person in public life"}.
 
 You will be given a profile of how they talk. Obey it exactly -- it is the specification, not a suggestion.
 
 Write 8 to 12 lines they could plausibly say in an ordinary conversation. One per line, nothing else, no numbering, no quotation marks, no names in front.
 
-- These are demonstrations of manner, not quotations. Do not reproduce anything they are actually on record as having said.
-- Nothing about their private life, and nothing that reads as news or as a position on anything current.
+- These are demonstrations of manner, not quotations. Do not reproduce anything they are actually on record as having said${fictional ? ", or lines from the work" : ""}.
+${fictional ? "- They are talking from inside their own world, to someone who is not in the story." : "- Nothing about their private life, and nothing that reads as news or as a position on anything current."}
 - A line any friendly, articulate person could have said is a wasted line. Every one should be recognisably this person and false of someone else in the same field.
 - Vary the length the way the profile says they vary it. Include the short throwaway ones; those carry more texture than the polished ones.
 - Ordinary conversation, not an interview answer. They are talking to one person.`,
@@ -203,6 +205,9 @@ function trimSpread(samples: string, budget: number): string {
     src.relationship ? `Known for: ${src.relationship}` : "",
     src.era?.trim() ? `The version of them to write: ${src.era.trim()}` : "",
     `They will be talking to ${src.you} as: ${archLabel}`,
+    src.research?.trim()
+      ? `\nWhat a web search found about them just now. It is current, and it outranks your own recollection wherever they disagree:\n${src.research.trim()}`
+      : "",
     src.quoted?.trim()
       ? `\nA transcript of them actually speaking. This is attested and outranks your own recollection wherever they disagree:\n${src.quoted.trim().slice(0, 6000)}`
       : "",
@@ -248,7 +253,8 @@ function trimSpread(samples: string, budget: number): string {
    * The last rung carries no verbatim messages, which is worse and still a
    * character. The measured statistics survive, so it is still recognisably how
    * that person writes. */
-  const isFigure = src.mode === "figure";
+  /* A character from a story goes through the same lookup and the same steps. */
+  const isFigure = src.mode === "figure" || src.mode === "fictional";
 
   const ladder = isFigure ? [figureMaterial] : [
     material,
@@ -290,7 +296,7 @@ function trimSpread(samples: string, budget: number): string {
       if (isFigure && brief.replace(/[^A-Z_]/g, "").startsWith(NOT_ENOUGH)) {
         return Response.json(
           {
-            error: `There isn't enough about ${src.them} on the public record to build them from, and guessing would invent a person rather than portray one. Pasting an interview into "something they actually said" usually fixes it.`,
+            error: src.mode === "fictional" ? `There isn't enough about ${src.them} to build them from without making them up. Add which story they are from.` : `There isn't enough about ${src.them} on the public record to build them from, and guessing would invent a person rather than portray one. Pasting an interview into "something they actually said" usually fixes it.`,
             code: "not_enough",
           },
           { status: 422 }
@@ -310,7 +316,7 @@ function trimSpread(samples: string, budget: number): string {
          than none, and personaSystem labels them as reconstruction rather than
          as things the person said. */
       if (isFigure && !src.quoted?.trim()) {
-        const lines = await registerLines(src.them, brief).catch(() => "");
+        const lines = await registerLines(src.them, brief, src.mode === "fictional").catch(() => "");
         return Response.json({ brief, lines, verbatim: false });
       }
 

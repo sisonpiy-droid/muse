@@ -94,6 +94,11 @@ const bodySchema = z.object({
       extra: z.string().max(4000).optional(),
       metrics: z.string().max(4000).optional(),
       brief: z.string().max(6000).optional(),
+      /* Whether samples are attested, or lines written in their register. Dropped
+         here, reconstructed lines were labelled "their actual messages". */
+      verbatim: z.boolean().optional(),
+      interests: z.string().optional().transform((s) => s?.slice(0, 400)),
+      minor: z.boolean().optional(),
       traits: z.array(z.string().max(30)).max(8).optional(),
     })
     .nullish(),

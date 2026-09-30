@@ -31,6 +31,11 @@ const personaSchema = z.object({
   extra: z.string().max(4000).optional(),
   metrics: z.string().max(4000).optional(),
   brief: z.string().max(6000).optional(),
+  /* Whether samples are attested, or lines written in their register. Dropped
+     here, reconstructed lines were labelled "their actual messages". */
+  verbatim: z.boolean().optional(),
+  interests: z.string().optional().transform((s) => s?.slice(0, 400)),
+  minor: z.boolean().optional(),
   traits: z.array(z.string().max(30)).max(8).optional(),
 });
 
@@ -71,6 +76,8 @@ const bodySchema = z.object({
   /** What the room is about and how it is, both set by the user. */
   topic: z.string().max(300).optional(),
   roomTraits: traitList,
+  /** What the speaker remembers about the user from talking one to one. */
+  memories: z.array(z.string().max(400)).max(12).default([]),
   /** Maps a speakerId to a display name, so the transcript reads as a room. */
   names: z.record(z.string(), z.string().max(60)),
   userName: z.string().trim().max(80).nullish(),
@@ -103,7 +110,7 @@ export async function POST(req: Request) {
   if (!parsed.success) {
     return Response.json({ error: "Check the request and try again." }, { status: 400 });
   }
-  const { circleName, speaker, others, log, names, userName, timezone, mood, register, feelings, topic, roomTraits } =
+  const { circleName, speaker, others, log, names, userName, timezone, mood, register, feelings, topic, roomTraits, memories } =
     parsed.data;
 
   if (log.reduce((n, m) => n + m.content.length, 0) > MAX_TOTAL_CHARS) {
@@ -117,7 +124,7 @@ export async function POST(req: Request) {
   const system =
     personaSystem(
       { ...speaker.persona, you },
-      [],
+      memories,
       false,
       { mood: mood || "any", topic: "any", register: register || "texts" },
       timezone ?? undefined,

@@ -6,6 +6,7 @@ import {
   GenerateOptions,
   GenerateResult,
   ProviderError,
+  SearchResult,
 } from "./types";
 
 const BASE = "https://generativelanguage.googleapis.com/v1beta";
@@ -242,6 +243,45 @@ export const geminiProvider: AIProvider = {
 
   extractMemories(transcript: ChatMessage[], existingMemories: string[]): Promise<ExtractedMemory[]> {
     return extractMemoriesVia(this, transcript, existingMemories);
+  },
+
+  /* Grounded in Google Search. What the model half-remembers about a famous
+     person is the thing most likely to come out generic or out of date; a
+     search is what they are actually like now, from interviews and coverage,
+     and it says where it came from. */
+  async searchWeb(opts: { system: string; prompt: string }): Promise<SearchResult> {
+    const res = await post(`models/${encodeURIComponent(model())}:generateContent`, {
+      contents: [{ role: "user", parts: [{ text: opts.prompt }] }],
+      systemInstruction: { parts: [{ text: opts.system }] },
+      tools: [{ google_search: {} }],
+      safetySettings: SAFETY_SETTINGS,
+      generationConfig: { temperature: 0.3 },
+    });
+    const data = await res.json();
+    if (!res.ok) throw classify(res.status, (data as { error?: { message?: string } })?.error?.message || "no detail");
+
+    const { text: raw, finish, blocked } = textOf(data);
+    if (blocked) throw new ProviderError("blocked", `The request was blocked before generation (${blocked}).`);
+    const text = raw.trim();
+    if (!text) {
+      if (finish && STOPPED.has(finish)) throw new ProviderError("stopped", `The reply was stopped by a filter (${finish}).`);
+      throw new ProviderError("empty", `Nothing came back (finishReason: ${finish ?? "unknown"}).`);
+    }
+
+    type Chunk = { web?: { uri?: string; title?: string } };
+    const chunks =
+      (data as { candidates?: { groundingMetadata?: { groundingChunks?: Chunk[] } }[] })
+        ?.candidates?.[0]?.groundingMetadata?.groundingChunks ?? [];
+    const seen = new Set<string>();
+    const sources: SearchResult["sources"] = [];
+    for (const c of chunks) {
+      const w = c.web;
+      if (!w?.uri || !w.title || seen.has(w.title)) continue;
+      seen.add(w.title);
+      sources.push({ title: w.title, url: w.uri });
+      if (sources.length >= 6) break;
+    }
+    return { text, sources };
   },
 };
 
