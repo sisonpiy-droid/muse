@@ -49,9 +49,9 @@ export type Persona = {
 /* The home screen's tabs. `category` on a persona is one of these ids, and the
    order here is the order on screen.
 
-   Five in each, six at most. Twenty cards on one screen was a list to be got
-   through; a tab of five is a set of people. Anyone the user builds goes under
-   MADE_TAB until they move them. */
+   Five in each to start. Twenty cards on one screen was a list to be got
+   through; a tab of five is a set of people. Someone made from inside a tab
+   goes in it; made from anywhere else they go under MADE_TAB. */
 export const TABS = [
   { id: "Best friends", blurb: "The ones you text first" },
   { id: "Close friends", blurb: "Always there, in their own way" },
@@ -61,7 +61,8 @@ export const TABS = [
 
 export const MADE_TAB = "Made by you";
 
-/** Most a starter tab holds. The user's own tab has no limit. */
+/** Most starters a tab ships with. Anyone the user adds to a tab is theirs to
+ *  add -- this only keeps the defaults from crowding one. */
 export const TAB_MAX = 6;
 
 const lines = (...l: string[]) => l.join("\n");

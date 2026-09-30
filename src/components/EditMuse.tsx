@@ -7,7 +7,7 @@ import {
   ARCHETYPES, DEFAULT_FEELINGS, MOODS, TEXTURES, WARMTHS,
   type Feelings,
 } from "@/lib/presence/persona";
-import { MADE_TAB, TABS, TAB_MAX } from "@/lib/personas";
+import { MADE_TAB, TABS } from "@/lib/personas";
 import { tabOf, type MusePatch, type SoloMuse } from "@/lib/solo/store";
 
 /* Changing who someone is, and how they are.
@@ -33,11 +33,9 @@ const labelStyle = {
 } as const;
 
 export function EditMuse({
-  muse, tabCounts, feelings, resettable, onSave, onReset, onCancel,
+  muse, feelings, resettable, onSave, onReset, onCancel,
 }: {
   muse: SoloMuse;
-  /** How many people each starter tab holds now, so a full one can say so. */
-  tabCounts: Record<string, number>;
   feelings: Feelings;
   /** True when this is a starter with something to revert -- a changed profile,
    *  a standing state, or both. Never true for a character the user built:
@@ -293,24 +291,18 @@ export function EditMuse({
       <div style={{ marginTop: "1.25rem" }}>
         <span style={labelStyle}>Which tab they&rsquo;re under</span>
         <div className="tags">
-          {[...TABS.map((t) => t.id as string), ...(muse.builtin ? [] : [MADE_TAB])].map((t) => {
-            /* Counted without them, so their own tab never reads as full. */
-            const full = t !== MADE_TAB && t !== was.tab && (tabCounts[t] ?? 0) >= TAB_MAX;
-            return (
-              <button
-                key={t}
-                type="button"
-                className="tag"
-                aria-pressed={tab === t}
-                disabled={full}
-                title={full ? `${t} already has ${TAB_MAX}` : undefined}
-                onClick={() => setTab(t)}
-                style={tab === t ? { borderColor: "var(--accent)", color: "var(--accent)" } : undefined}
-              >
-                {t}{full ? " · full" : ""}
-              </button>
-            );
-          })}
+          {[...TABS.map((t) => t.id as string), ...(muse.builtin ? [] : [MADE_TAB])].map((t) => (
+            <button
+              key={t}
+              type="button"
+              className="tag"
+              aria-pressed={tab === t}
+              onClick={() => setTab(t)}
+              style={tab === t ? { borderColor: "var(--accent)", color: "var(--accent)" } : undefined}
+            >
+              {t}
+            </button>
+          ))}
         </div>
       </div>
 

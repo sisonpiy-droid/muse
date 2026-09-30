@@ -12,7 +12,7 @@ import { MessageActions } from "@/components/MessageActions";
 import { QuoteBubble, ReplyBar, jumpTo } from "@/components/Quote";
 import { TraitEditor } from "@/components/TraitEditor";
 import { useReplyLoop } from "@/components/useReplyLoop";
-import { MADE_TAB, TABS, TAB_MAX } from "@/lib/personas";
+import { MADE_TAB, TABS } from "@/lib/personas";
 import {
   DEFAULT_VIBE, MOODS, REGISTERS, TOPICS, feelingsSummary, hasFeelings, splitBurst,
   vibeSummary, type Vibe,
@@ -57,9 +57,10 @@ type View =
   | { kind: "chat"; museId: string }
   | { kind: "edit"; museId: string }
   | { kind: "memories"; museId: string }
-  | { kind: "import" }
-  | { kind: "invent" }
-  | { kind: "figure" }
+  /* `tab` is where the new person goes when they were made from inside one. */
+  | { kind: "import"; tab?: string }
+  | { kind: "invent"; tab?: string }
+  | { kind: "figure"; tab?: string }
   | { kind: "circle"; circleId: string }
   | { kind: "new-circle" };
 
@@ -228,7 +229,7 @@ export default function SoloPage() {
                 name: draft.them,
                 description: draft.relationship?.trim() || "Built from their messages.",
                 relationshipType: draft.relationship?.trim() || "someone close",
-                category: "Personal",
+                category: view.tab ?? "Personal",
                 traits: [],
               },
               ...state.muses,
@@ -257,7 +258,7 @@ export default function SoloPage() {
                 name: draft.them,
                 description: draft.interests?.trim() || "Built from what they have said in public.",
                 relationshipType: draft.relationship?.trim() || "someone in public life",
-                category: "Public",
+                category: view.tab ?? "Public",
                 traits: [],
               },
               ...cur.muses,
@@ -304,7 +305,6 @@ export default function SoloPage() {
       <EditMuse
         key={muse.id}
         muse={muse}
-        tabCounts={Object.fromEntries(TABS.map((t) => [t.id, inTab(state, t.id).length]))}
         feelings={feelingsOf(state, muse.id)}
         /* A starter with a standing state but no profile changes is still
            something to put back, so both count. */
@@ -358,9 +358,9 @@ export default function SoloPage() {
   const nav = {
     onOpen: (id: string) => go({ kind: "chat", museId: id }),
     onEdit: (id: string) => go({ kind: "edit", museId: id }),
-    onImport: () => go({ kind: "import" }),
-    onInvent: () => go({ kind: "invent" }),
-    onFigure: () => go({ kind: "figure" }),
+    onImport: (tab?: string) => go({ kind: "import", tab }),
+    onInvent: (tab?: string) => go({ kind: "invent", tab }),
+    onFigure: (tab?: string) => go({ kind: "figure", tab }),
     onOpenCircle: (id: string) => go({ kind: "circle", circleId: id }),
     onNewCircle: () => go({ kind: "new-circle" }),
     onTab: (tab: string) => go({ kind: "tab", tab }),
@@ -382,9 +382,10 @@ export default function SoloPage() {
 type Nav = {
   onOpen: (id: string) => void;
   onEdit: (id: string) => void;
-  onImport: () => void;
-  onInvent: () => void;
-  onFigure: () => void;
+  /** With a tab, whoever is made goes straight into it. */
+  onImport: (tab?: string) => void;
+  onInvent: (tab?: string) => void;
+  onFigure: (tab?: string) => void;
   onOpenCircle: (id: string) => void;
   onNewCircle: () => void;
   onTab: (tab: string) => void;
@@ -464,7 +465,7 @@ function SoloHome({
       {state.userName && (
         <>
           <h2 className="section-title">Make someone new</h2>
-          <MakeRow onImport={onImport} onFigure={onFigure} onInvent={onInvent} onNewCircle={onNewCircle} />
+          <MakeRow onImport={() => onImport()} onFigure={() => onFigure()} onInvent={() => onInvent()} onNewCircle={onNewCircle} />
 
           {recent.length > 0 && (
             <>
@@ -617,15 +618,17 @@ function SoloTab({
           ) : (
             <div className="empty"><p>Nobody here yet.</p></div>
           )}
+          {/* Made from here, they land here. Made from the home screen they go
+              under your own tab, and either way they can be moved later. */}
+          <h2 className="section-title">{tab === MADE_TAB ? "Make someone new" : `Add someone to ${tab}`}</h2>
           {tab === MADE_TAB ? (
-            <div style={{ marginTop: "1rem" }}>
-              <MakeRow onImport={onImport} onFigure={onFigure} onInvent={onInvent} />
-            </div>
+            <MakeRow onImport={() => onImport()} onFigure={() => onFigure()} onInvent={() => onInvent()} />
           ) : (
-            <p className="fine" style={{ marginTop: "1rem" }}>
-              Move someone to a different tab from their edit screen. Each tab holds up to {TAB_MAX}.
-            </p>
+            <MakeRow onImport={() => onImport(tab)} onFigure={() => onFigure(tab)} onInvent={() => onInvent(tab)} />
           )}
+          <p className="fine" style={{ marginTop: "1rem" }}>
+            Move anyone to a different tab from their edit screen.
+          </p>
         </>
       )}
     </main>
