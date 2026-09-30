@@ -35,7 +35,12 @@ export type ProviderErrorCode =
   | "bad_model"
   | "rate_limited"
   | "timeout"
+  /* The prompt itself was refused before anything was written. About what
+     was sent -- the saved profile, usually. */
   | "blocked"
+  /* Generation started and a filter stopped it. About what was being written,
+     not what was sent, so the same prompt can go through on another try. */
+  | "stopped"
   | "empty"
   | "upstream";
 

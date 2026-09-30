@@ -1,6 +1,6 @@
 import { anthropicProvider } from "./anthropic";
 import { geminiProvider } from "./gemini";
-import { REFUSAL_SNIFF_CHARS, looksLikeRefusal, retryNudge } from "./refusal";
+import { REFUSAL_SNIFF_CHARS, looksLikeRefusal, retryNudge, stopNudge } from "./refusal";
 import { AIProvider, ChatMessage, ProviderError } from "./types";
 
 export * from "./types";
@@ -51,6 +51,8 @@ export function userFacingError(err: unknown): { message: string; retryable: boo
         return { message: "That took too long to come back. Try again?", retryable: true };
       case "blocked":
         return { message: "That one couldn't be answered. Try putting it differently.", retryable: false };
+      case "stopped":
+        return { message: "A safety filter stopped that reply partway through. Try again?", retryable: true };
       case "empty":
       default:
         return { message: "Something went wrong. Try again.", retryable: true };
@@ -68,23 +70,33 @@ export function userFacingError(err: unknown): { message: string; retryable: boo
 export type GuardedEvent =
   | { type: "delta"; text: string }
   | { type: "done" }
-  /* `reason` distinguishes three very different failures that used to look
-     identical to the caller: the model declined in character-breaking words, it
-     produced nothing, or the request never reached generation because the input
-     was blocked. They need different messages and different fixes. */
-  | { type: "refused"; reason: "refusal" | "empty" | "blocked" };
+  /* `reason` distinguishes four very different failures that used to look
+     alike to the caller: the model declined in character-breaking words, it
+     produced nothing, the prompt was refused before generation, or a filter
+     stopped the reply partway through. They need different messages and
+     different fixes. */
+  | { type: "refused"; reason: "refusal" | "empty" | "blocked" | "stopped" };
 
-/** Streams a reply, but holds the opening back long enough to notice a refusal.
+type Failure = "refusal" | "empty" | "blocked" | "stopped";
+
+/** Generates a reply, and only lets it out once it is whole and in character.
  *
- *  A refusal announces itself in the first few words, so buffering that much
- *  costs nothing visible and means the caller never receives — and therefore
- *  never stores — a reply where the character has broken. On a refusal it
- *  retries once with a short reminder; if that refuses too it yields
- *  `refused`, and the caller is expected to keep the conversation unchanged. */
+ *  It used to stream as soon as the first ninety characters looked fine. That
+ *  was enough to catch a refusal, which announces itself at once -- but not a
+ *  filter stopping the reply halfway, which by then had already reached the
+ *  screen and could not be taken back. Half a sentence was saved as a finished
+ *  message. Holding the whole reply costs nothing a texting app shows anyway
+ *  (a message arrives whole, after "typing"), and it means a stopped or
+ *  refused attempt can simply be tried again without anyone seeing it.
+ *
+ *  On failure it retries: a refusal or a stop gets a second pass with a nudge,
+ *  a blocked prompt goes straight to the next, plainer variant. If every
+ *  attempt fails it yields `refused`, and the caller keeps the conversation
+ *  unchanged. */
 export async function* streamGuarded(opts: {
   system: string;
   messages: ChatMessage[];
-  /** Used in the retry reminder. */
+  /** Used in the retry nudges. */
   name: string;
   /* Progressively less verbatim material, tried in order once the full prompt
      has failed. A persona built from someone's real messages can carry content
@@ -100,82 +112,62 @@ export async function* streamGuarded(opts: {
   provider?: AIProvider;
 }): AsyncIterable<GuardedEvent> {
   const provider = opts.provider ?? getProvider();
-
   const variants = [opts.system, ...(opts.fallbacks ?? [])];
+  const nudge = (why: Failure) => (why === "stopped" ? stopNudge(opts.name) : retryNudge(opts.name));
 
-  let lastReason: "refusal" | "empty" | "blocked" = "refusal";
-  let lastDetail = "";
+  let lastReason: Failure = "refusal";
 
   for (let v = 0; v < variants.length; v++) {
-    /* The full prompt gets two passes: as written, then with the reminder.
-       Later variants already carry it, so a second identical pass would only
-       cost latency. */
+    /* The full prompt gets two passes: as written, then with a nudge. Later
+       variants already carry one, so a second identical pass would only cost
+       latency. */
     const passes = v === 0 ? 2 : 1;
     for (let pass = 0; pass < passes; pass++) {
-      const system = v > 0 || pass === 1 ? variants[v] + retryNudge(opts.name) : variants[v];
+      const system = v > 0 || pass === 1 ? variants[v] + nudge(lastReason) : variants[v];
 
-      let head = "";
-      let flushed = false;
-      let sawAnything = false;
-      const buffered: string[] = [];
+      const parts: string[] = [];
+      let detail = "";
+      let failed: Failure | null = null;
 
       try {
-        for await (const delta of provider.streamResponse({ system, messages: opts.messages })) {
-          sawAnything = true;
-          if (flushed) {
-            yield { type: "delta", text: delta };
-            continue;
-          }
-
-          head += delta;
-          buffered.push(delta);
-          if (head.length < REFUSAL_SNIFF_CHARS) continue;
-
-          if (looksLikeRefusal(head)) break;      // abandon this attempt
-          flushed = true;
-          for (const b of buffered) yield { type: "delta", text: b };
-        }
+        for await (const delta of provider.streamResponse({ system, messages: opts.messages })) parts.push(delta);
       } catch (err) {
-        /* A stream that produces nothing, or is stopped by a safety filter, is a
-           refusal wearing a different hat -- and it was surfacing as "Something
-           went wrong. Try again." with no retry, because the throw escaped this
-           loop entirely. Treated as a refusal so it gets the second attempt.
-           Anything already flushed to the client cannot be retried, and any
-           other kind of failure is still a real error. */
+        /* A stream that produces nothing, is refused, or is stopped by a filter
+           is a failed attempt, not an error: nothing has been sent, so it can be
+           tried again. Anything else -- a timeout, a bad key -- is real. */
         const code = err instanceof ProviderError ? err.code : null;
-        if (flushed || (code !== "empty" && code !== "blocked")) throw err;
-        lastReason = code === "blocked" ? "blocked" : "empty";
-        lastDetail = err instanceof Error ? err.message : String(err);
+        if (code !== "empty" && code !== "blocked" && code !== "stopped") throw err;
+        failed = code;
+        detail = err instanceof Error ? err.message : String(err);
       }
 
-      // A reply shorter than the sniff window never flushed; judge it whole.
-      if (!flushed && sawAnything && !looksLikeRefusal(head)) {
-        flushed = true;
-        for (const b of buffered) yield { type: "delta", text: b };
-      }
+      const text = parts.join("");
+      if (!failed && !text.trim()) failed = "empty";
+      if (!failed && looksLikeRefusal(text.slice(0, REFUSAL_SNIFF_CHARS))) failed = "refusal";
 
-      if (flushed) {
+      if (!failed) {
+        for (const p of parts) yield { type: "delta", text: p };
         yield { type: "done" };
         return;
       }
+      lastReason = failed;
 
       /* Logged because this is otherwise invisible. When a persona goes quiet
          the only evidence is a message to the user, and without the model's
-         actual words there is nothing to diagnose from -- which is exactly the
-         position this was reported from. Truncated, and it is the model's
-         output rather than anyone's conversation. */
-      if (head.trim()) lastReason = "refusal";
+         actual words there is nothing to diagnose from. Truncated, and it is
+         the model's output rather than anyone's conversation. */
       console.error(
-        `[refusal] ${opts.name} variant ${v + 1}/${variants.length} pass ${pass + 1} reason=${lastReason}` +
-          (lastDetail ? ` detail=${lastDetail}` : "") +
-          (head.trim() ? ` text=${head.slice(0, 200).replace(/\s+/g, " ")}` : "")
+        `[refusal] ${opts.name} variant ${v + 1}/${variants.length} pass ${pass + 1} reason=${failed}` +
+          (detail ? ` detail=${detail}` : "") +
+          (text.trim() ? ` text=${text.slice(0, 200).replace(/\s+/g, " ")}` : "")
       );
 
       /* A block or an empty stream is about what the prompt contains, not how
          it was asked. Repeating the same material behind a politer preamble
          changes nothing and only spends latency, so drop to the next variant
-         and send less. Only a refusal in words is worth asking again. */
-      if (lastReason !== "refusal") break;
+         and send less. A refusal or a stop is about what came out, and asking
+         again with a nudge often changes that. */
+      if (failed === "blocked" || failed === "empty") break;
     }
   }
 

@@ -319,15 +319,16 @@ function trimSpread(samples: string, budget: number): string {
       const code = err instanceof ProviderError ? err.code : null;
       console.error(`persona build failed (rung ${i + 1}/${ladder.length})`, code ?? err);
       lastError = err;
-      /* Only a block or an empty reply is worth sending less for. A timeout or
-         a rate limit is not about the content and the next rung would fail the
-         same way, slower. */
-      if (code !== "blocked" && code !== "empty") break;
+      /* Only a block, a filter stop or an empty reply is worth sending less
+         for. A timeout or a rate limit is not about the content and the next
+         rung would fail the same way, slower. */
+      if (code !== "blocked" && code !== "stopped" && code !== "empty") break;
     }
   }
 
   const { message } = userFacingError(lastError);
-  const blocked = lastError instanceof ProviderError && lastError.code === "blocked";
+  const blocked =
+    lastError instanceof ProviderError && (lastError.code === "blocked" || lastError.code === "stopped");
   return Response.json(
     {
       error: blocked

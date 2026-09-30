@@ -35,6 +35,12 @@ function fakeProvider(script) {
         if (step === "ok") { yield "hiya"; return; }
         if (step === "blocked") throw new ProviderError("blocked", "The request was blocked before generation (PROHIBITED_CONTENT).");
         if (step === "empty") throw new ProviderError("empty", "nothing");
+        /* What was actually happening to Aditi: text starts coming, then a
+           filter stops the reply partway through. */
+        if (step === "cut") {
+          yield "haan main bhi soch rahi thi ki ";
+          throw new ProviderError("stopped", "The reply was stopped partway through (SAFETY).");
+        }
         yield step; // a worded refusal
       },
     },
@@ -132,6 +138,100 @@ check("a reply that works first time costs exactly one attempt", async () => {
   );
   assert.equal(seen.length, 1, "the ladder must be free on the happy path");
   assert.ok(events.some((e) => e.type === "done"));
+});
+
+check("a reply stopped partway never reaches the caller", async () => {
+  const { events } = await run({ ...base, system: "FULL", fallbacks: ["SOFT"] }, ["cut", "ok"]);
+  const text = events.filter((e) => e.type === "delta").map((e) => e.text).join("");
+  assert.equal(text, "hiya", "the half sentence from the stopped attempt must not come through");
+});
+
+check("a stop is asked again with the stop nudge, not the refusal reminder", async () => {
+  const { seen } = await run({ ...base, system: "FULL", fallbacks: ["SOFT"] }, ["cut", "ok"]);
+  assert.equal(seen.length, 2, "a stop is about what came out, so the same material is worth another go");
+  assert.ok(seen[1].startsWith("FULL"));
+  assert.ok(seen[1].includes("KEEP IT SENDABLE"));
+  assert.ok(!seen[1].includes("REMINDER"));
+});
+
+check("stopped all the way down is reported as stopped, not as a blocked profile", async () => {
+  const { seen, events } = await run({ ...base, system: "FULL", fallbacks: ["SOFT"] }, ["cut", "cut", "cut"]);
+  assert.equal(seen.length, 3);
+  assert.ok(seen[2].startsWith("SOFT") && seen[2].includes("KEEP IT SENDABLE"));
+  assert.equal(events.find((e) => e.type === "refused")?.reason, "stopped",
+    "\"blocked\" tells the user to cut their sample messages, which does nothing for this");
+  assert.ok(!events.some((e) => e.type === "delta"));
+});
+
+check("nothing is let out until the reply is whole", async () => {
+  const provider = {
+    name: "fake",
+    async *streamResponse() { yield "one "; yield "two "; yield "three"; },
+  };
+  const order = [];
+  for await (const e of streamGuarded({ ...base, system: "FULL", provider })) order.push(e.type);
+  assert.deepEqual(order, ["delta", "delta", "delta", "done"]);
+});
+
+check("a character saying they can't talk late in a long reply is not a refusal", async () => {
+  const long = "haan yaar sab theek hai, bas aaj bahut kaam tha office mein aur mummy ka phone bhi aaya tha, unko batana pada ki weekend pe aa rahi hu, phir unhone poocha ki khana kya banega aur main bas hasti rahi kyunki pata hai tujhe. abhi meeting me hu, baat nhi kar sakti";
+  const provider = { name: "fake", async *streamResponse() { yield long; } };
+  const events = [];
+  for await (const e of streamGuarded({ ...base, system: "FULL", provider })) events.push(e);
+  assert.ok(events.some((e) => e.type === "done"), "only the opening of a reply is a refusal signal");
+});
+
+/* ----------------------------------------------- what Gemini actually sends */
+
+import { geminiProvider } from "../src/lib/ai/gemini.ts";
+
+/** A fake Gemini stream: each frame is one SSE event, as the API sends them. */
+async function streamFrom(frames) {
+  const realFetch = globalThis.fetch;
+  process.env.GEMINI_API_KEY ||= "test-key";
+  globalThis.fetch = async () =>
+    new Response(frames.map((f) => `data: ${JSON.stringify(f)}
+
+`).join(""), {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+    });
+  const got = [];
+  try {
+    for await (const t of geminiProvider.streamResponse({ messages: [{ role: "user", content: "hi" }] })) got.push(t);
+    return { got };
+  } catch (err) {
+    return { got, err };
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
+const say = (text, finishReason) => ({ candidates: [{ content: { parts: [{ text }] }, ...(finishReason ? { finishReason } : {}) }] });
+
+check("a stream the filter cuts off mid-reply is an error, not a short reply", async () => {
+  /* The reported bug. This used to end quietly after "soch rahi thi ki", and
+     the fragment was saved as if it were the whole message. */
+  const { got, err } = await streamFrom([say("haan main bhi "), say("soch rahi thi ki", "SAFETY")]);
+  assert.ok(got.length > 0, "the text before the stop did arrive");
+  assert.ok(err, "but the stream must not end as if it finished");
+  assert.equal(err.code, "stopped");
+});
+
+check("a stop before any text is also stopped, not a blocked profile", async () => {
+  const { err } = await streamFrom([{ candidates: [{ finishReason: "SAFETY" }] }]);
+  assert.equal(err?.code, "stopped");
+});
+
+check("a prompt refused before generation is still blocked", async () => {
+  const { err } = await streamFrom([{ promptFeedback: { blockReason: "PROHIBITED_CONTENT" } }]);
+  assert.equal(err?.code, "blocked");
+});
+
+check("a reply that finishes normally is left alone", async () => {
+  const { got, err } = await streamFrom([say("haan "), say("bol", "STOP")]);
+  assert.equal(err, undefined);
+  assert.equal(got.join(""), "haan bol");
 });
 
 let pass = 0, fail = 0;

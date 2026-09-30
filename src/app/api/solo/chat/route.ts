@@ -276,12 +276,20 @@ You may mention them, ask after them, or have opinions about them. Do not invent
                reworded it several times and got the same wall. A prompt-level
                block is about the saved profile, and now that the profile is
                editable, saying so is something they can act on. */
+            /* "blocked" is the prompt itself being refused, so the profile is
+               the only thing that can change it. "stopped" is a filter cutting
+               the reply off while it was being written -- that was being
+               reported as "blocked" too, sending people to trim sample messages
+               that were never the problem. It is about that one reply, and the
+               next try usually goes through. */
             send({
               type: "error",
               message:
                 evt.reason === "blocked"
                   ? `Google's content filter is refusing ${who}'s saved profile, so nothing can be sent. It isn't what you wrote. Open edit and cut down the sample messages — that usually clears it.`
-                  : `${who} didn't come to the phone. Try saying it differently.`,
+                  : evt.reason === "stopped"
+                    ? `Google's safety filter kept stopping ${who}'s reply partway through, so nothing half-finished was sent. Try again — it usually goes through.`
+                    : `${who} didn't come to the phone. Try saying it differently.`,
               retryable: evt.reason !== "blocked",
             });
           } else send({ type: "done" });

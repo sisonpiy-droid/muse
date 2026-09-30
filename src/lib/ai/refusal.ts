@@ -56,10 +56,10 @@ export function looksLikeRefusal(text: string): boolean {
   return BREAKS.some((re) => re.test(t));
 }
 
-/* Enough to see how a reply opens. A refusal announces itself immediately, so
-   holding this much back costs a few characters of streaming latency and
-   nothing else. */
-export const REFUSAL_SNIFF_CHARS = 90;
+/* How much of a reply is checked. A refusal announces itself at the start, and
+   checking the whole of a long reply would catch a character saying "abhi baat
+   nhi kar sakti" three paragraphs in, which is them being busy, not a wall. */
+export const REFUSAL_SNIFF_CHARS = 200;
 
 /** Appended on the retry. Deliberately short: a long argument about why the
  *  request is fine reads as pressure and tends to make refusals more likely. */
@@ -72,4 +72,19 @@ ${"{name}"} would. Do not step outside the character to explain what you are.`;
 
 export function retryNudge(name: string): string {
   return RETRY_NUDGE.replace("{name}", name);
+}
+
+/* For a reply a filter stopped partway. The character did nothing wrong by
+   being affectionate; what trips the filter is description, so the ask is to
+   keep saying the same thing with the physical part implied. Short for the
+   same reason as the reminder above. */
+export const STOP_NUDGE = `
+
+KEEP IT SENDABLE
+Your last attempt at this reply was cut off by a content filter partway
+through. Say the same kind of thing as ${"{name}"} would, just as warmly, but
+keep anything physical or sexual implied rather than described.`;
+
+export function stopNudge(name: string): string {
+  return STOP_NUDGE.replace("{name}", name);
 }

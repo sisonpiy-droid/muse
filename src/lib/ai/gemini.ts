@@ -96,6 +96,11 @@ async function post(path: string, body: unknown, signal?: AbortSignal) {
   return res;
 }
 
+/* Finish reasons that mean the reply was cut off by a filter rather than
+   finished. STOP is a finished reply; anything here is a reply that ended
+   because something decided it should, often mid-sentence. */
+const STOPPED = new Set(["SAFETY", "PROHIBITED_CONTENT", "BLOCKLIST", "SPII", "RECITATION", "IMAGE_SAFETY"]);
+
 function textOf(data: unknown): {
   text: string;
   finish?: string;
@@ -142,7 +147,7 @@ export const geminiProvider: AIProvider = {
       throw new ProviderError("blocked", `The request was blocked before generation (${blocked}).`);
     }
     if (!text) {
-      if (finish === "SAFETY") throw new ProviderError("blocked", "The reply was blocked on safety grounds.");
+      if (finish && STOPPED.has(finish)) throw new ProviderError("stopped", `The reply was stopped by a filter (${finish}).`);
       if (finish === "MAX_TOKENS") {
         throw new ProviderError("empty", "The whole token budget went on reasoning before any reply was written.");
       }
@@ -178,13 +183,23 @@ export const geminiProvider: AIProvider = {
       } catch { /* a frame we cannot parse is not worth killing the stream for */ }
     }
 
-    if (!emitted) {
-      /* Naming the cause matters: a blocked prompt and a model that simply said
-         nothing look identical from the outside, and are fixed differently. */
-      if (blockedBy) throw new ProviderError("blocked", `The request was blocked before generation (${blockedBy}).`);
-      if (lastFinish === "SAFETY") throw new ProviderError("blocked", "The reply was stopped on safety grounds.");
-      throw new ProviderError("empty", `The model streamed nothing back (finishReason: ${lastFinish ?? "none"}).`);
+    /* Naming the cause matters: a blocked prompt and a model that simply said
+       nothing look identical from the outside, and are fixed differently. */
+    if (blockedBy) throw new ProviderError("blocked", `The request was blocked before generation (${blockedBy}).`);
+
+    /* Stopped partway is an error even when text already came through. This
+       used to end the stream quietly, so half a sentence arrived looking like
+       a finished reply and was saved as one -- the "she stops mid-message"
+       that was reported. The caller holds the text back and decides. */
+    if (lastFinish && STOPPED.has(lastFinish)) {
+      throw new ProviderError(
+        "stopped",
+        emitted
+          ? `The reply was stopped partway through (${lastFinish}).`
+          : `The reply was stopped before it started (${lastFinish}).`
+      );
     }
+    if (!emitted) throw new ProviderError("empty", `The model streamed nothing back (finishReason: ${lastFinish ?? "none"}).`);
   },
 
   async generateEmbedding(text: string, dims?: number): Promise<number[] | null> {
@@ -268,7 +283,11 @@ say what it is. Write each memory as a
 plain third-person sentence about the user, e.g. "User's dog is called Bruno."
 
 Do not invent anything. Do not record the Muse's own statements as facts about
-the user. If nothing qualifies, return [].`;
+the user. If nothing qualifies, return [].
+
+Intimate or sexual parts of a conversation are recorded, if at all, in general
+terms -- "User and the Muse are affectionate with each other" -- never as a
+description. A memory is a note, not a transcript.`;
 
   /* No maxTokens. Gemini 3.x spends 300-1000 tokens reasoning before it writes
      anything, and the cap covers thinking and output together -- a 900 budget

@@ -160,6 +160,7 @@ export function CircleChat({
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
+        let broke = false;
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
@@ -175,6 +176,7 @@ export function CircleChat({
               acc += evt.text;
               setSpeaking({ name: m.name, text: acc });
             } else if (evt.type === "error") {
+              broke = true;
               setError(evt.message ?? "Something went wrong.");
             }
           }
@@ -182,7 +184,8 @@ export function CircleChat({
 
         setSpeaking(null);
         if (signal.aborted) return;
-        const said = acc.trim();
+        /* Half a line is not a line. The room moves on without it. */
+        const said = broke ? "" : acc.trim();
         if (said) {
           const parts = splitBurst(said, REGISTERS.texts.burst).map((c) => newMessage("muse", c, { speakerId: m.id }));
           running = [...running, ...parts];

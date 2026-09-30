@@ -975,6 +975,10 @@ function SoloChat({
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
+      /* A reply that ended in an error is not a reply, however much of it
+         arrived first. Saving the fragment is how half-sentences got into the
+         thread. */
+      let broke = false;
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -988,12 +992,13 @@ function SoloChat({
           try { evt = JSON.parse(line.slice(5).trim()); } catch { continue; }
           if (evt.type === "delta" && evt.text) { acc += evt.text; setStreaming(acc); }
           else if (evt.type === "error") {
+            broke = true;
             setError(evt.message ?? "Something went wrong.");
             setCanRetry(evt.retryable !== false);
           }
         }
       }
-      if (signal.aborted) return;
+      if (signal.aborted || broke) return;
 
       const text = acc.trim();
       if (!text) return;
