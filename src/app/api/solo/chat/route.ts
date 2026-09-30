@@ -3,7 +3,23 @@ import { z } from "zod";
 import { streamGuarded, userFacingError } from "@/lib/ai";
 import { looksLikeRefusal } from "@/lib/ai/refusal";
 import { buildMuseSystemPrompt } from "@/lib/muse/prompt";
-import { coveredBlock, coveredGround, personaSystem, type Feelings } from "@/lib/presence/persona";
+import { coveredBlock, coveredGround, personaSystem, withQuote, type Feelings } from "@/lib/presence/persona";
+
+/* Several texts in a row are one turn.
+ *
+ * Double-texting is how people talk, and the thread keeps each message
+ * separate. Providers do not: two user turns back to back are rejected by some
+ * and misread by others. Joined on a newline, so the model still sees them as
+ * separate lines. Dropping a refusal can leave two replies adjacent too. */
+function mergeRuns<T extends { role: "user" | "assistant"; content: string }>(msgs: T[]): T[] {
+  const out: T[] = [];
+  for (const m of msgs) {
+    const last = out[out.length - 1];
+    if (last && last.role === m.role) last.content += `\n${m.content}`;
+    else out.push({ ...m });
+  }
+  return out;
+}
 
 /* Solo mode's only server dependency.
  *
@@ -48,7 +64,17 @@ const bodySchema = z.object({
       .nullish(),
   }),
   messages: z
-    .array(z.object({ role: z.enum(["user", "assistant"]), content: z.string().min(1).max(8000) }))
+    .array(
+      z.object({
+        role: z.enum(["user", "assistant"]),
+        content: z.string().min(1).max(8000),
+        /* The message this one replies to. Formatted here rather than by the
+           client, so what the model reads for a reply is decided in one place. */
+        quote: z
+          .object({ role: z.enum(["user", "assistant"]), content: z.string().min(1).max(300) })
+          .optional(),
+      })
+    )
     .min(1)
     .max(60),
   /* Someone built from real material sends Presence's whole profile. When it is
@@ -68,6 +94,7 @@ const bodySchema = z.object({
       extra: z.string().max(4000).optional(),
       metrics: z.string().max(4000).optional(),
       brief: z.string().max(6000).optional(),
+      traits: z.array(z.string().max(30)).max(8).optional(),
     })
     .nullish(),
   /* People this Muse shares a circle with. Additive: absent on every request
@@ -123,7 +150,15 @@ export async function POST(req: Request) {
   const cleaned = messages.filter(
     (m) => !(m.role === "assistant" && looksLikeRefusal(m.content))
   );
-  const messagesForModel = cleaned.length ? cleaned : messages;
+  const messagesForModel = mergeRuns(
+    (cleaned.length ? cleaned : messages).map((m) => ({
+      role: m.role,
+      content: withQuote(
+        m.content,
+        m.quote && { who: m.quote.role === "assistant" ? "you" : "their own earlier message", text: m.quote.content }
+      ),
+    }))
+  );
 
   const total = messages.reduce((n, m) => n + m.content.length, 0)
     + memories.reduce((n, m) => n + m.length, 0);

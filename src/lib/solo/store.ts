@@ -1,6 +1,6 @@
 "use client";
 
-import { PERSONAS, type Persona } from "@/lib/personas";
+import { MADE_TAB, PERSONAS, TABS, type Persona } from "@/lib/personas";
 import { DEFAULT_FEELINGS, type Feelings, type PersonaDraft, type Vibe } from "@/lib/presence/persona";
 import { rankMemories, type RankableMemory } from "@/lib/memory/rank";
 
@@ -44,6 +44,8 @@ export interface SoloMessage {
   speakerId?: string;
   /** Set when the user has changed the text after the fact. */
   edited?: boolean;
+  /** The id of the message this one answers, WhatsApp-style. */
+  replyTo?: string;
 }
 
 /* A fresh message, id and timestamp included.
@@ -54,14 +56,27 @@ export interface SoloMessage {
  * the call only ever happens inside an event handler. Here it is neither in a
  * component nor in render, so there is nothing for the compiler to worry
  * about. */
-export function newMessage(from: SoloMessage["from"], content: string, speakerId?: string): SoloMessage {
+export function newMessage(
+  from: SoloMessage["from"],
+  content: string,
+  extra: { speakerId?: string; replyTo?: string } = {}
+): SoloMessage {
   return {
     id: `${from === "user" ? "u" : "m"}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     from,
     content,
     at: new Date().toISOString(),
-    ...(speakerId ? { speakerId } : {}),
+    ...(extra.speakerId ? { speakerId: extra.speakerId } : {}),
+    ...(extra.replyTo ? { replyTo: extra.replyTo } : {}),
   };
+}
+
+/** What gets shown and sent for a quoted message. Short on purpose: the quote
+ *  says which message, it does not need to repeat it. */
+export const QUOTE_CHARS = 200;
+
+export function quoteOf(log: SoloMessage[], m: SoloMessage): SoloMessage | undefined {
+  return m.replyTo ? log.find((x) => x.id === m.replyTo) : undefined;
 }
 
 /* A circle is both halves of what was asked for: a set of people who know one
@@ -73,6 +88,10 @@ export interface SoloCircle {
   name: string;
   memberIds: string[];
   createdAt: string;
+  /** What the user wants the room talking about, in their own words. */
+  topic?: string;
+  /** How the group is together -- on top of who each member is. */
+  traits?: string[];
 }
 
 /* The Presence fields are required on a starter and absent on a built
@@ -275,6 +294,33 @@ export function allMuses(state: SoloState): SoloMuse[] {
 
 export function findMuse(state: SoloState, id: string): SoloMuse | undefined {
   return allMuses(state).find((m) => m.id === id);
+}
+
+/** Which home-screen tab someone sits under. Anyone whose category is not one
+ *  of the starter tabs -- built from an export, a public figure, invented --
+ *  goes under the user's own. */
+export function tabOf(m: SoloMuse): string {
+  return TABS.some((t) => t.id === m.category) ? m.category : MADE_TAB;
+}
+
+export function inTab(state: SoloState, tab: string): SoloMuse[] {
+  return allMuses(state).filter((m) => tabOf(m) === tab);
+}
+
+/* What the prompt reads for this person.
+ *
+ * Traits live on the card, where the edit screen writes them, and the model
+ * reads `persona` -- which never had them. So every trait anyone ever edited
+ * was saved, shown, and ignored. Joined here, at send time, so there is still
+ * only one copy of them. `you` is filled the same way: the starters are
+ * authored without knowing who will read them. */
+export function promptPersona(m: SoloMuse, userName: string | null): PersonaDraft | null {
+  if (!m.persona) return null;
+  return {
+    ...m.persona,
+    you: m.persona.you || userName || "them",
+    traits: (m.traits ?? []).slice(0, 8).map((t) => t.slice(0, 30)),
+  };
 }
 
 /** The memories worth sending with this turn (§13). Lexical, since solo mode
@@ -724,6 +770,48 @@ export function deleteFrom(state: SoloState, threadId: string, messageId: string
   };
 }
 
+/** Everything after this message goes, the message itself stays. What an edit
+ *  that should change the conversation does before asking for a new reply. */
+export function rewindTo(state: SoloState, threadId: string, messageId: string): SoloState {
+  const log = state.conversations[threadId] ?? [];
+  const at = log.findIndex((m) => m.id === messageId);
+  if (at < 0) return state;
+  return {
+    ...state,
+    conversations: { ...state.conversations, [threadId]: log.slice(0, at + 1) },
+  };
+}
+
+/* Replies land after the message they were written to, not at the end.
+ *
+ * Someone who double-texts while a reply is being written has sent something
+ * the reply never saw. Appending would put an answer to the first message
+ * underneath the second, and leave the last line of the thread a Muse's -- so
+ * nothing would ever answer the second one. Placed after the anchor, the
+ * unanswered message stays last and gets its own turn. */
+export function insertAfter(
+  state: SoloState,
+  threadId: string,
+  anchorId: string | undefined,
+  msgs: SoloMessage[]
+): SoloState {
+  const log = state.conversations[threadId] ?? [];
+  const at = anchorId ? log.findIndex((m) => m.id === anchorId) : -1;
+  const next = at < 0 ? [...log, ...msgs] : [...log.slice(0, at + 1), ...msgs, ...log.slice(at + 1)];
+  return { ...state, conversations: { ...state.conversations, [threadId]: next } };
+}
+
+export function editCircle(
+  state: SoloState,
+  circleId: string,
+  patch: Partial<Pick<SoloCircle, "topic" | "traits">>
+): SoloState {
+  return {
+    ...state,
+    circles: (state.circles ?? []).map((c) => (c.id === circleId ? { ...c, ...patch } : c)),
+  };
+}
+
 
 /** Clears one thread. `alsoForget` drops what was learned in it too — deleting
  *  a conversation while the Muse still remembers every word of it is not what
@@ -786,6 +874,8 @@ export function deleteCircle(state: SoloState, circleId: string): SoloState {
  */
 export interface MusePatch {
   name?: string;
+  /** Which tab they sit under on the home screen. */
+  category?: string;
   relationshipType?: string;
   description?: string;
   traits?: string[];

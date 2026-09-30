@@ -264,6 +264,31 @@ export interface PersonaDraft {
   interests?: string;
   /** The generated voice profile. */
   brief?: string;
+  /* Words the user picked for them, from the card. Not stored here -- joined
+     in at send time by promptPersona, so the card stays the only copy. */
+  traits?: string[];
+}
+
+/* Traits are the newest thing the user has said about who someone is, and
+   usually the reason they edited them. Placed after the profile and told to win
+   where the two disagree: otherwise a brief that says "gentle" quietly outvotes
+   a trait the user just changed to "blunt", and the edit looks broken. */
+function traitsBlock(p: PersonaDraft): string {
+  const traits = (p.traits ?? []).map((t) => t.trim()).filter(Boolean);
+  if (!traits.length) return "";
+  return `
+YOUR TRAITS — ${p.you} picked these words for you
+${traits.join(", ")}
+These are the most recent thing ${p.you} has said about who you are. Where they pull against the profile above, go with these. Every one of them should show in how you reply: what you notice, what you find funny, how you push back, how much you say. Never name them and never describe yourself with them. Show them.
+`;
+}
+
+/** How a reply to one specific message reads to the model: the quoted line
+ *  first, bracketed, so it is plainly not part of what was just said. */
+export function withQuote(content: string, quote?: { who: string; text: string }): string {
+  if (!quote?.text.trim()) return content;
+  const text = quote.text.replace(/\s+/g, " ").trim();
+  return `[replying to ${quote.who}: "${text}"]\n${content}`;
 }
 
 
@@ -435,7 +460,7 @@ ${timeContext(timeZone)}
 
 WHO YOU ARE
 ${p.brief}
-
+${traitsBlock(p)}
 WHAT YOU WERE TO EACH OTHER
 ${arch.block}
 ${tex.block}
@@ -668,6 +693,8 @@ opinion they have not heard, the thing they are avoiding, anything.`;
 export interface CircleMember {
   name: string;
   relationship: string;
+  /** Their traits, so the others know who they are dealing with. */
+  traits?: string[];
 }
 
 /** Appended to a persona's own prompt when they are in a room with others.
@@ -684,9 +711,20 @@ export function circleBlock(opts: {
   me: string;
   others: CircleMember[];
   circleName: string;
+  /** What the user wants the room on, in their own words. */
+  topic?: string;
+  /** How the group is together. */
+  roomTraits?: string[];
 }): string {
   const { you, me, others, circleName } = opts;
-  const roster = others.map((o) => `- ${o.name}, ${you}'s ${o.relationship}`).join("\n");
+  const roster = others
+    .map((o) => {
+      const t = (o.traits ?? []).filter(Boolean);
+      return `- ${o.name}, ${you}'s ${o.relationship}${t.length ? ` (${t.join(", ")})` : ""}`;
+    })
+    .join("\n");
+  const topic = opts.topic?.trim();
+  const roomTraits = (opts.roomTraits ?? []).map((t) => t.trim()).filter(Boolean);
 
   return `
 
@@ -696,7 +734,18 @@ ${roster}
 
 Every line you see is labelled with who said it. Lines labelled ${me} are your
 own. You know these people and they know you.
-
+${topic ? `
+WHAT THIS CHAT IS ABOUT RIGHT NOW
+${you} set this: "${topic}"
+Keep the room on it, the way a group chat stays on whatever everyone is sorting
+out. Drift if the conversation drifts, then come back to it. If ${you} changes
+the subject in a message, follow the message.
+` : ""}${roomTraits.length ? `
+WHAT THIS GROUP IS LIKE TOGETHER
+${roomTraits.join(", ")}
+That is how the group is when it is all of you, on top of who you are on your
+own. Lean into it.
+` : ""}
 HOW TO BE IN A GROUP
 - Do not answer everything. Most lines are not for you. Staying quiet is a real
   option and you should take it often.
@@ -716,18 +765,30 @@ HOW TO BE IN A GROUP
  *  become the assistant's, everyone else's are labelled so the model can tell
  *  the room apart. */
 export function circleHistory(
-  log: { from: "user" | "muse"; speakerId?: string; content: string }[],
+  log: {
+    from: "user" | "muse";
+    speakerId?: string;
+    content: string;
+    /** The message this one replies to, as it was when it was sent. */
+    quote?: { from: "user" | "muse"; speakerId?: string; content: string };
+  }[],
   meId: string,
   youName: string,
   nameOf: (speakerId: string) => string
 ): { role: "user" | "assistant"; content: string }[] {
+  /* Named from this member's side of the room: their own line is "you", so a
+     reply to what they said reads as one. */
+  const whoWrote = (q: { from: "user" | "muse"; speakerId?: string }) =>
+    q.from === "user" ? youName : q.speakerId === meId ? "you" : nameOf(q.speakerId ?? "");
+
   const out: { role: "user" | "assistant"; content: string }[] = [];
   for (const m of log) {
+    const content = withQuote(m.content, m.quote && { who: whoWrote(m.quote), text: m.quote.content });
     if (m.from === "muse" && m.speakerId === meId) {
-      out.push({ role: "assistant", content: m.content });
+      out.push({ role: "assistant", content });
     } else {
       const who = m.from === "user" ? youName : nameOf(m.speakerId ?? "");
-      out.push({ role: "user", content: `${who}: ${m.content}` });
+      out.push({ role: "user", content: `${who}: ${content}` });
     }
   }
   /* Consecutive non-self lines are merged. Providers reject or mishandle two

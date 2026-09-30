@@ -31,7 +31,10 @@ const personaSchema = z.object({
   extra: z.string().max(4000).optional(),
   metrics: z.string().max(4000).optional(),
   brief: z.string().max(6000).optional(),
+  traits: z.array(z.string().max(30)).max(8).optional(),
 });
+
+const traitList = z.array(z.string().max(30)).max(8).optional();
 
 const bodySchema = z.object({
   circleName: z.string().trim().min(1).max(60),
@@ -39,7 +42,14 @@ const bodySchema = z.object({
   speaker: z.object({ id: z.string().max(60), persona: personaSchema }),
   /** Everyone else in the room, for the roster. */
   others: z
-    .array(z.object({ id: z.string().max(60), name: z.string().max(60), relationship: z.string().max(120) }))
+    .array(
+      z.object({
+        id: z.string().max(60),
+        name: z.string().max(60),
+        relationship: z.string().max(120),
+        traits: traitList,
+      })
+    )
     .max(7),
   log: z
     .array(
@@ -47,10 +57,20 @@ const bodySchema = z.object({
         from: z.enum(["user", "muse"]),
         speakerId: z.string().max(60).optional(),
         content: z.string().min(1).max(8000),
+        quote: z
+          .object({
+            from: z.enum(["user", "muse"]),
+            speakerId: z.string().max(60).optional(),
+            content: z.string().min(1).max(300),
+          })
+          .optional(),
       })
     )
     .min(1)
     .max(80),
+  /** What the room is about and how it is, both set by the user. */
+  topic: z.string().max(300).optional(),
+  roomTraits: traitList,
   /** Maps a speakerId to a display name, so the transcript reads as a room. */
   names: z.record(z.string(), z.string().max(60)),
   userName: z.string().trim().max(80).nullish(),
@@ -83,7 +103,7 @@ export async function POST(req: Request) {
   if (!parsed.success) {
     return Response.json({ error: "Check the request and try again." }, { status: 400 });
   }
-  const { circleName, speaker, others, log, names, userName, timezone, mood, register, feelings } =
+  const { circleName, speaker, others, log, names, userName, timezone, mood, register, feelings, topic, roomTraits } =
     parsed.data;
 
   if (log.reduce((n, m) => n + m.content.length, 0) > MAX_TOTAL_CHARS) {
@@ -102,7 +122,9 @@ export async function POST(req: Request) {
       { mood: mood || "any", topic: "any", register: register || "texts" },
       timezone ?? undefined,
       feelings ?? undefined
-    ) + coveredBlock(coveredGround(messages), you) + circleBlock({ you, me: speaker.persona.them, others, circleName });
+    ) +
+    coveredBlock(coveredGround(messages), you) +
+    circleBlock({ you, me: speaker.persona.them, others, circleName, topic, roomTraits });
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream({

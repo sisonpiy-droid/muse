@@ -17,7 +17,7 @@ provider interface.
 npm install
 cp .env.example .env.local     # fill in DATABASE_URL, AUTH_SECRET, a model key
 npm run db:migrate             # create the schema
-npm run db:seed                # 12 starter Muses
+npm run db:seed                # 20 starter Muses
 npm run dev
 ```
 
@@ -37,7 +37,7 @@ database and is **not** how the deployed one is configured.
 
 ## Solo mode — no database
 
-`/solo` is the whole product with no database and no account. All twelve
+`/solo` is the whole product with no database and no account. All twenty
 personas, conversations, memories and relationship continuity, held in the
 browser's localStorage.
 

@@ -17,11 +17,13 @@ import { useState } from "react";
 
 export function MessageActions({
   content,
+  onReply,
   onEdit,
   onDelete,
   onDeleteFrom,
 }: {
   content: string;
+  onReply: () => void;
   onEdit: (text: string) => void;
   onDelete: () => void;
   onDeleteFrom: () => void;
@@ -63,6 +65,7 @@ export function MessageActions({
 
   return (
     <span className="msg-actions">
+      <button onClick={onReply} aria-label="Reply to this message">reply</button>
       <button onClick={() => { setText(content); setEditing(true); }} aria-label="Edit message">edit</button>
       <button onClick={onDelete} aria-label="Delete message">delete</button>
       <button

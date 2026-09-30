@@ -7,7 +7,8 @@ import {
   ARCHETYPES, DEFAULT_FEELINGS, MOODS, TEXTURES, WARMTHS,
   type Feelings,
 } from "@/lib/presence/persona";
-import type { MusePatch, SoloMuse } from "@/lib/solo/store";
+import { MADE_TAB, TABS, TAB_MAX } from "@/lib/personas";
+import { tabOf, type MusePatch, type SoloMuse } from "@/lib/solo/store";
 
 /* Changing who someone is, and how they are.
  *
@@ -32,9 +33,11 @@ const labelStyle = {
 } as const;
 
 export function EditMuse({
-  muse, feelings, resettable, onSave, onReset, onCancel,
+  muse, tabCounts, feelings, resettable, onSave, onReset, onCancel,
 }: {
   muse: SoloMuse;
+  /** How many people each starter tab holds now, so a full one can say so. */
+  tabCounts: Record<string, number>;
   feelings: Feelings;
   /** True when this is a starter with something to revert -- a changed profile,
    *  a standing state, or both. Never true for a character the user built:
@@ -55,6 +58,7 @@ export function EditMuse({
     extra: p?.extra ?? muse.extra ?? "",
     arch: p?.arch ?? muse.arch ?? "other",
     texture: p?.texture ?? muse.texture ?? "close",
+    tab: tabOf(muse),
   };
 
   const [name, setName] = useState(was.name);
@@ -67,6 +71,7 @@ export function EditMuse({
   const [extra, setExtra] = useState(was.extra);
   const [arch, setArch] = useState(was.arch);
   const [texture, setTexture] = useState(was.texture);
+  const [tab, setTab] = useState(was.tab);
   const [feel, setFeel] = useState<Feelings>(feelings ?? DEFAULT_FEELINGS);
 
   /* Functional updates throughout. Three quick chip clicks all read the same
@@ -89,6 +94,7 @@ export function EditMuse({
     extra !== was.extra ||
     arch !== was.arch ||
     texture !== was.texture ||
+    tab !== was.tab ||
     feel.mood !== feelings.mood ||
     feel.warmth !== feelings.warmth ||
     feel.note !== feelings.note;
@@ -111,6 +117,9 @@ export function EditMuse({
         extra: extra.trim(),
         arch,
         texture,
+        /* Someone the user built keeps whatever they were filed as ("Personal",
+           "Public") while they sit in the user's own tab. */
+        category: tab === MADE_TAB ? (was.tab === MADE_TAB ? muse.category : "Personal") : tab,
       },
       { ...feel, note: feel.note.trim() }
     );
@@ -278,6 +287,30 @@ export function EditMuse({
         <div>
           <span style={labelStyle}>And how it feels</span>
           {chips(TEXTURES, texture, setTexture)}
+        </div>
+      </div>
+
+      <div style={{ marginTop: "1.25rem" }}>
+        <span style={labelStyle}>Which tab they&rsquo;re under</span>
+        <div className="tags">
+          {[...TABS.map((t) => t.id as string), ...(muse.builtin ? [] : [MADE_TAB])].map((t) => {
+            /* Counted without them, so their own tab never reads as full. */
+            const full = t !== MADE_TAB && t !== was.tab && (tabCounts[t] ?? 0) >= TAB_MAX;
+            return (
+              <button
+                key={t}
+                type="button"
+                className="tag"
+                aria-pressed={tab === t}
+                disabled={full}
+                title={full ? `${t} already has ${TAB_MAX}` : undefined}
+                onClick={() => setTab(t)}
+                style={tab === t ? { borderColor: "var(--accent)", color: "var(--accent)" } : undefined}
+              >
+                {t}{full ? " · full" : ""}
+              </button>
+            );
+          })}
         </div>
       </div>
 

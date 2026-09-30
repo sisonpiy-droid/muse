@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { Avatar } from "@/components/Avatar";
 import { BuildFigure } from "@/components/BuildFigure";
@@ -9,20 +9,27 @@ import { EditMuse } from "@/components/EditMuse";
 import { ImportPersona } from "@/components/ImportPersona";
 import { Memories } from "@/components/Memories";
 import { MessageActions } from "@/components/MessageActions";
+import { QuoteBubble, ReplyBar, jumpTo } from "@/components/Quote";
+import { TraitEditor } from "@/components/TraitEditor";
+import { useReplyLoop } from "@/components/useReplyLoop";
+import { MADE_TAB, TABS, TAB_MAX } from "@/lib/personas";
 import {
   DEFAULT_VIBE, MOODS, REGISTERS, TOPICS, feelingsSummary, hasFeelings, splitBurst,
   vibeSummary, type Vibe,
 } from "@/lib/presence/persona";
 import { safeFilename, transcriptMarkdown } from "@/lib/export";
 import {
-  addMemories, allMuses, attachEmbeddings, circleOf, deleteCircle, deleteConversation,
+  QUOTE_CHARS, addMemories, allMuses, attachEmbeddings, circleOf, deleteCircle, deleteConversation,
   deleteFrom, deleteMemory, deleteMessage, deleteMuse, download, editMemory, editMessage,
-  editMuse, feelingsOf, findMuse, forgetAll, isEdited, knownTo, loadState, membersOf,
-  memoriesOf, needsEmbedding, newMessage, parseBackup, relevantMemories, resetMuse, saveState,
-  worthRecalling,
+  editMuse, feelingsOf, findMuse, forgetAll, inTab, insertAfter, isEdited, knownTo, loadState,
+  membersOf, memoriesOf, needsEmbedding, newMessage, parseBackup, promptPersona, quoteOf,
+  relevantMemories, resetMuse, rewindTo, saveState, worthRecalling,
   setFeelings,
-  type SoloMessage, type SoloMuse, type SoloState,
+  type SoloCircle, type SoloMessage, type SoloMuse, type SoloState,
 } from "@/lib/solo/store";
+
+/** The circles live under the tabs too, as their own. */
+const CIRCLES_TAB = "Circles";
 
 /* Solo MUSE — the whole product with no database and no account.
  *
@@ -46,6 +53,7 @@ const MAX_MESSAGE = 8000;
 
 type View =
   | { kind: "home" }
+  | { kind: "tab"; tab: string }
   | { kind: "chat"; museId: string }
   | { kind: "edit"; museId: string }
   | { kind: "memories"; museId: string }
@@ -58,6 +66,12 @@ type View =
 export default function SoloPage() {
   const [state, setState] = useState<SoloState | null>(null);
   const [view, setView] = useState<View>({ kind: "home" });
+  /* Where "back" goes from a conversation: the tab it was opened from, so
+     going through three of your best friends is not three trips via home. */
+  const [base, setBase] = useState<View>({ kind: "home" });
+  const goBase = () => setView(base);
+  const goHome = () => { setBase({ kind: "home" }); setView({ kind: "home" }); };
+  const goTab = (tab: string) => { setBase({ kind: "tab", tab }); setView({ kind: "tab", tab }); };
   /* Whether the last write actually landed. Everything in here is one
      localStorage key that only grows, and when the browser finally refuses it
      the app carries on working perfectly for the rest of the session and loses
@@ -154,7 +168,7 @@ export default function SoloPage() {
         /* Same wizard either way. Inventing someone just skips the question it
            already knows the answer to. */
         startMode={view.kind === "invent" ? "character" : undefined}
-        onCancel={() => setView({ kind: "home" })}
+        onCancel={goBase}
         onCreate={(draft) => {
           const id = `made-${Date.now()}`;
           /* The card fields are only for display; everything the model reads
@@ -185,7 +199,7 @@ export default function SoloPage() {
   if (view.kind === "figure") {
     return shell(
       <BuildFigure
-        onCancel={() => setView({ kind: "home" })}
+        onCancel={goBase}
         onCreate={(draft) => {
           const id = `figure-${Date.now()}`;
           update((cur) => ({
@@ -215,7 +229,7 @@ export default function SoloPage() {
     const circle = circleOf(state, view.circleId);
     if (!circle) { setView({ kind: "home" }); return null; }
     return shell(
-      <CircleChat circle={circle} state={state} update={update} onBack={() => setView({ kind: "home" })} />
+      <CircleChat circle={circle} state={state} update={update} onBack={goBase} />
     );
   }
 
@@ -223,7 +237,7 @@ export default function SoloPage() {
     return shell(
       <NewCircle
         state={state}
-        onCancel={() => setView({ kind: "home" })}
+        onCancel={goBase}
         onCreate={(name, memberIds) => {
           const id = `circle-${Date.now()}`;
           update({
@@ -246,6 +260,7 @@ export default function SoloPage() {
       <EditMuse
         key={muse.id}
         muse={muse}
+        tabCounts={Object.fromEntries(TABS.map((t) => [t.id, inTab(state, t.id).length]))}
         feelings={feelingsOf(state, muse.id)}
         /* A starter with a standing state but no profile changes is still
            something to put back, so both count. */
@@ -289,35 +304,34 @@ export default function SoloPage() {
         muse={muse}
         state={state}
         update={update}
-        onBack={() => setView({ kind: "home" })}
+        onBack={goBase}
         onEdit={() => setView({ kind: "edit", museId: muse.id })}
         onMemories={() => setView({ kind: "memories", museId: muse.id })}
       />
     );
   }
 
-  return shell(
-    <SoloHome
-      state={state}
-      update={update}
-      onOpen={(id) => setView({ kind: "chat", museId: id })}
-      onEdit={(id) => setView({ kind: "edit", museId: id })}
-      onImport={() => setView({ kind: "import" })}
-      onInvent={() => setView({ kind: "invent" })}
-      onFigure={() => setView({ kind: "figure" })}
-      onOpenCircle={(id) => setView({ kind: "circle", circleId: id })}
-      onNewCircle={() => setView({ kind: "new-circle" })}
-    />
-  );
+  const nav = {
+    onOpen: (id: string) => setView({ kind: "chat", museId: id }),
+    onEdit: (id: string) => setView({ kind: "edit", museId: id }),
+    onImport: () => setView({ kind: "import" }),
+    onInvent: () => setView({ kind: "invent" }),
+    onFigure: () => setView({ kind: "figure" }),
+    onOpenCircle: (id: string) => setView({ kind: "circle", circleId: id }),
+    onNewCircle: () => setView({ kind: "new-circle" }),
+    onTab: goTab,
+  };
+
+  if (view.kind === "tab") {
+    return shell(<SoloTab state={state} update={update} tab={view.tab} onHome={goHome} {...nav} />);
+  }
+
+  return shell(<SoloHome state={state} update={update} {...nav} />);
 }
 
 /* ------------------------------------------------------------------ home */
 
-function SoloHome({
-  state, update, onOpen, onEdit, onImport, onInvent, onFigure, onOpenCircle, onNewCircle,
-}: {
-  state: SoloState;
-  update: Update;
+type Nav = {
   onOpen: (id: string) => void;
   onEdit: (id: string) => void;
   onImport: () => void;
@@ -325,23 +339,50 @@ function SoloHome({
   onFigure: () => void;
   onOpenCircle: (id: string) => void;
   onNewCircle: () => void;
-}) {
+  onTab: (tab: string) => void;
+};
+
+/** How many recent conversations the home screen keeps to hand. The rest of
+ *  everyone is one tap away under their tab. */
+const RECENT = 3;
+
+const MADE_BLURB = "Built from your chats, from public life, or made up";
+const CIRCLES_BLURB = "Group chats, with whoever you put in the room";
+
+function blurbOf(tab: string): string {
+  if (tab === MADE_TAB) return MADE_BLURB;
+  if (tab === CIRCLES_TAB) return CIRCLES_BLURB;
+  return TABS.find((t) => t.id === tab)?.blurb ?? "";
+}
+
+/* The home screen is doors, not people.
+ *
+ * It used to lay every starter out in three long sections -- twenty cards
+ * reads as a list to get through rather than people you know. Now each group
+ * is a tile, and the people are inside it. The only faces here are the few you
+ * were talking to most recently, because opening a tab to carry on a
+ * conversation you had an hour ago is a tap too many. */
+function SoloHome({
+  state, update, onOpen, onEdit, onImport, onInvent, onFigure, onNewCircle, onTab,
+}: { state: SoloState; update: Update } & Nav) {
   const [name, setName] = useState(state.userName ?? "");
   const muses = allMuses(state);
+  const circles = state.circles ?? [];
 
-  const talked = muses
+  const recent = muses
     .filter((m) => (state.conversations[m.id]?.length ?? 0) > 0)
-    .sort((a, b) => lastAt(state, b.id) - lastAt(state, a.id));
-  const rest = muses.filter((m) => !(state.conversations[m.id]?.length ?? 0));
+    .sort((a, b) => lastAt(state, b.id) - lastAt(state, a.id))
+    .slice(0, RECENT);
 
-  /* Grouped rather than one long grid. Sixteen cards in a row is a list to be
-     got through; three labelled groups is a choice. Insertion order decides
-     the sections, so the order in personas.ts is the order on screen. */
-  const groups = rest.reduce((acc, m) => {
-    const key = m.category || "Someone else";
-    (acc[key] ??= []).push(m);
-    return acc;
-  }, {} as Record<string, SoloMuse[]>);
+  const inCircles = [...new Set(circles.flatMap((c) => c.memberIds))]
+    .map((id) => findMuse(state, id))
+    .filter((m): m is SoloMuse => Boolean(m));
+
+  const tiles = [
+    ...TABS.map((t) => ({ id: t.id, people: inTab(state, t.id), count: `${inTab(state, t.id).length} people` })),
+    { id: MADE_TAB, people: inTab(state, MADE_TAB), count: countOf(inTab(state, MADE_TAB).length, "person", "people") },
+    { id: CIRCLES_TAB, people: inCircles, count: countOf(circles.length, "circle", "circles") },
+  ];
 
   return (
     <main className="shell">
@@ -374,105 +415,35 @@ function SoloHome({
 
       {state.userName && (
         <>
-          {/* A strip, not the three full-height panels this used to be.
-              
-              Those pushed the people you actually talk to 1,329px down on a
-              phone. Compact, the whole section costs about 200px, so it can sit
-              at the top without burying anything — which is where it belongs if
-              you are still making characters rather than only talking to them. */}
           <h2 className="section-title">Make someone new</h2>
-          <div className="make-row">
-            <button className="make" onClick={onImport}>
-              <b>From a chat export</b>
-              <span>Reads how they actually wrote</span>
-            </button>
-            <button className="make" onClick={onFigure}>
-              <b>Someone in public life</b>
-              <span>Built from what they said in public</span>
-            </button>
-            {/* This was always possible and had no door. You had to open "From
-                a chat export", get to the second question, and pick "Someone I
-                made up" — behind a button that promises a file upload. */}
-            <button className="make" onClick={onInvent}>
-              <b>Someone you make up</b>
-              <span>Invent them — no export needed</span>
-            </button>
-            <button className="make" onClick={onNewCircle}>
-              <b>A circle</b>
-              <span>Two or more, in a room together</span>
-            </button>
-          </div>
+          <MakeRow onImport={onImport} onFigure={onFigure} onInvent={onInvent} onNewCircle={onNewCircle} />
 
-          {/* Then the people, still within the first screen.
-              
-              This used to open with two full-height "build someone" cards and a
-              third for circles, which put the people you actually talk to
-              1,329px down on a phone — nearly two screens of scrolling past
-              adverts for features to reach the thing the app is for. Making
-              someone new sits above this again, but as a strip rather than
-              panels, so it costs a couple of hundred pixels instead of
-              fourteen hundred. */}
-          {talked.length > 0 && (
+          {recent.length > 0 && (
             <>
               <h2 className="section-title">Continue talking</h2>
               <div className="card-grid">
-                {talked.map((m) => (
-                  <MuseCard
-                    key={m.id} muse={m} state={state} update={update} onOpen={onOpen} onEdit={onEdit}
-                  />
+                {recent.map((m) => (
+                  <MuseCard key={m.id} muse={m} state={state} update={update} onOpen={onOpen} onEdit={onEdit} />
                 ))}
               </div>
             </>
           )}
 
-          {(state.circles ?? []).length > 0 && (
-            <>
-              <h2 className="section-title">Circles</h2>
-              <div className="card-grid">
-                {(state.circles ?? []).map((c) => (
-                  <div className="card-wrap" key={c.id}>
-                    <button className="muse-card" onClick={() => onOpenCircle(c.id)}>
-                      <div className="stack-avatars">
-                        {membersOf(state, c).slice(0, 3).map((m) => <Avatar key={m.id} name={m.name} />)}
-                      </div>
-                      <div style={{ minWidth: 0, flex: 1 }}>
-                        <h3>{c.name}</h3>
-                        <span className="rel">{membersOf(state, c).map((m) => m.name).join(", ")}</span>
-                        <p>{(state.conversations[c.id]?.length ?? 0)} messages</p>
-                      </div>
-                    </button>
-                    {/* Attached to its own card rather than pooled underneath
-                        the whole grid, where "delete The Group Chat" sat next to
-                        a card it had no visible relationship to. */}
-                    <div className="card-actions">
-                      <button
-                        onClick={() => {
-                          if (confirm(`Delete the circle "${c.name}" and its conversation? The people in it are kept.`)) {
-                            update(deleteCircle(state, c.id));
-                          }
-                        }}
-                      >
-                        delete
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
-
-          {Object.entries(groups).map(([category, people]) => (
-            <div key={category}>
-              <h2 className="section-title">{category}</h2>
-              <div className="card-grid">
-                {people.map((m) => (
-                  <MuseCard
-                    key={m.id} muse={m} state={state} update={update} onOpen={onOpen} onEdit={onEdit}
-                  />
-                ))}
-              </div>
-            </div>
-          ))}
+          <h2 className="section-title">Your people</h2>
+          <div className="tab-tiles">
+            {tiles.map((t) => (
+              <button key={t.id} className="tab-tile" onClick={() => onTab(t.id)}>
+                <div className="stack-avatars" aria-hidden>
+                  {t.people.slice(0, 3).map((p) => <Avatar key={p.id} name={p.name} />)}
+                </div>
+                <div className="tab-tile-text">
+                  <b>{t.id}</b>
+                  <span>{blurbOf(t.id)}</span>
+                </div>
+                <em>{t.count}</em>
+              </button>
+            ))}
+          </div>
 
           <div className="row" style={{ marginTop: "2.5rem", gap: "0.75rem", flexWrap: "wrap" }}>
             <button
@@ -539,6 +510,151 @@ function SoloHome({
       </p>
     </main>
   );
+}
+
+/* One tab's people. The strip across the top switches tabs without going back
+ * through home, which is how people actually browse -- "who's in family,
+ * actually who's in close friends". */
+function SoloTab({
+  state, update, tab, onHome, onOpen, onEdit, onImport, onInvent, onFigure, onOpenCircle, onNewCircle, onTab,
+}: { state: SoloState; update: Update; tab: string; onHome: () => void } & Nav) {
+  const all = [...TABS.map((t) => t.id as string), MADE_TAB, CIRCLES_TAB];
+  const people = tab === CIRCLES_TAB ? [] : inTab(state, tab);
+  const circles = state.circles ?? [];
+
+  return (
+    <main className="shell">
+      <header className="row" style={{ justifyContent: "space-between" }}>
+        <button className="link-btn" onClick={onHome} style={{ textDecoration: "none" }}>← Home</button>
+        <span className="fine">no account · this browser only</span>
+      </header>
+
+      <nav className="tab-strip" aria-label="Your people">
+        {all.map((t) => (
+          <button key={t} className="tab-pill" aria-current={t === tab ? "page" : undefined} onClick={() => onTab(t)}>
+            {t}
+          </button>
+        ))}
+      </nav>
+
+      <h1 className="display" style={{ fontSize: "1.9rem", marginTop: "1.75rem" }}>{tab}</h1>
+      <p className="lede">{blurbOf(tab)}</p>
+
+      {tab === CIRCLES_TAB ? (
+        <>
+          {circles.length ? (
+            <div className="card-grid">
+              {circles.map((c) => (
+                <CircleCard key={c.id} circle={c} state={state} update={update} onOpen={onOpenCircle} />
+              ))}
+            </div>
+          ) : (
+            <div className="empty"><p>No circles yet. Put two or more people in a room and they talk to each other, not just to you.</p></div>
+          )}
+          <div className="make-row" style={{ marginTop: "1rem" }}>
+            <button className="make" onClick={onNewCircle}>
+              <b>Start a circle</b>
+              <span>Two or more, in a room together</span>
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          {people.length ? (
+            <div className="card-grid">
+              {people.map((m) => (
+                <MuseCard key={m.id} muse={m} state={state} update={update} onOpen={onOpen} onEdit={onEdit} />
+              ))}
+            </div>
+          ) : (
+            <div className="empty"><p>Nobody here yet.</p></div>
+          )}
+          {tab === MADE_TAB ? (
+            <div style={{ marginTop: "1rem" }}>
+              <MakeRow onImport={onImport} onFigure={onFigure} onInvent={onInvent} />
+            </div>
+          ) : (
+            <p className="fine" style={{ marginTop: "1rem" }}>
+              Move someone to a different tab from their edit screen. Each tab holds up to {TAB_MAX}.
+            </p>
+          )}
+        </>
+      )}
+    </main>
+  );
+}
+
+/* A strip, not the three full-height panels this used to be. Those pushed the
+   people you actually talk to 1,329px down on a phone. */
+function MakeRow({
+  onImport, onFigure, onInvent, onNewCircle,
+}: { onImport: () => void; onFigure: () => void; onInvent: () => void; onNewCircle?: () => void }) {
+  return (
+    <div className="make-row">
+      <button className="make" onClick={onImport}>
+        <b>From a chat export</b>
+        <span>Reads how they actually wrote</span>
+      </button>
+      <button className="make" onClick={onFigure}>
+        <b>Someone in public life</b>
+        <span>Built from what they said in public</span>
+      </button>
+      {/* This was always possible and had no door. You had to open "From a chat
+          export", get to the second question, and pick "Someone I made up" --
+          behind a button that promises a file upload. */}
+      <button className="make" onClick={onInvent}>
+        <b>Someone you make up</b>
+        <span>Invent them — no export needed</span>
+      </button>
+      {onNewCircle && (
+        <button className="make" onClick={onNewCircle}>
+          <b>A circle</b>
+          <span>Two or more, in a room together</span>
+        </button>
+      )}
+    </div>
+  );
+}
+
+function CircleCard({
+  circle, state, update, onOpen,
+}: { circle: SoloCircle; state: SoloState; update: Update; onOpen: (id: string) => void }) {
+  const members = membersOf(state, circle);
+  return (
+    <div className="card-wrap">
+      <button className="muse-card" onClick={() => onOpen(circle.id)}>
+        <div className="stack-avatars">
+          {members.slice(0, 3).map((m) => <Avatar key={m.id} name={m.name} />)}
+        </div>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <h3>{circle.name}</h3>
+          <span className="rel">{members.map((m) => m.name).join(", ")}</span>
+          <p>
+            {circle.topic?.trim() ? `About ${circle.topic.trim()} · ` : ""}
+            {state.conversations[circle.id]?.length ?? 0} messages
+          </p>
+        </div>
+      </button>
+      {/* Attached to its own card rather than pooled underneath the whole grid,
+          where "delete The Group Chat" sat next to a card it had no visible
+          relationship to. */}
+      <div className="card-actions">
+        <button
+          onClick={() => {
+            if (confirm(`Delete the circle "${circle.name}" and its conversation? The people in it are kept.`)) {
+              update((cur) => deleteCircle(cur, circle.id));
+            }
+          }}
+        >
+          delete
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function countOf(n: number, one: string, many: string): string {
+  return n === 0 ? "none yet" : `${n} ${n === 1 ? one : many}`;
 }
 
 function MuseCard({
@@ -630,15 +746,24 @@ function SoloChat({
   const log = state.conversations[muse.id] ?? [];
   const [draft, setDraft] = useState("");
   const [streaming, setStreaming] = useState("");
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   /* Some failures are worth another go and some are not. Offering "Try again"
      on a prompt-level block just runs the user into the same wall. */
   const [canRetry, setCanRetry] = useState(true);
-  const [lastSent, setLastSent] = useState<string | null>(null);
   const [vibeOpen, setVibeOpen] = useState(false);
+  const [replyTo, setReplyTo] = useState<SoloMessage | null>(null);
   const foot = useRef<HTMLDivElement>(null);
   const box = useRef<HTMLTextAreaElement>(null);
+
+  /* A reply can start seconds after the send that asked for it, and a second
+     text may have landed in between. It reads the state as it is when it
+     starts, not the render that scheduled it. */
+  const latest = useRef(state);
+  useLayoutEffect(() => {
+    latest.current = state;
+  });
+
+  const loop = useReplyLoop(reply);
 
   const vibe: Vibe = state.vibes?.[muse.id] ?? DEFAULT_VIBE;
   const setVibe = (next: Vibe) =>
@@ -676,40 +801,42 @@ function SoloChat({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [muse.id, memoriesFor.length]);
 
-  /* `resend` is a retry of a message already in the thread.
-   *
-   * The failed attempt saved the user's message before the request went out, so
-   * the retry button appending it again added a second copy every single time.
-   * Two failures in a row left three. It is the saved conversation that is
-   * wrong afterwards, not just the screen. */
-  async function send(text: string, resend = false) {
-    const content = text.trim();
-    if (!content || busy) return;
+  const nameOf = (m: SoloMessage) => (m.from === "user" ? "You" : muse.name);
 
-    setBusy(true);
+  function sendDraft() {
+    const content = draft.trim();
+    if (!content) return;
+    const msg = newMessage("user", content, { replyTo: replyTo?.id });
+    update((cur) => ({
+      ...cur,
+      conversations: { ...cur.conversations, [muse.id]: [...(cur.conversations[muse.id] ?? []), msg] },
+    }));
+    setDraft("");
+    setReplyTo(null);
+    setError(null);
+    if (box.current) box.current.style.height = "auto";
+    loop.schedule();
+  }
+
+  /* Answers whatever the user has said since the last reply -- one message or
+     several. Does nothing if the thread already ends with a reply. */
+  async function reply(signal: AbortSignal) {
+    const s = latest.current;
+    const person = findMuse(s, muse.id) ?? muse;
+    const thread = s.conversations[muse.id] ?? [];
+    const last = thread[thread.length - 1];
+    if (!last || last.from !== "user") return;
+
     setError(null);
     setCanRetry(true);
-    setDraft("");
-    setLastSent(content);
-    if (box.current) box.current.style.height = "auto";
 
-    const withUser: SoloMessage[] = resend
-      ? log
-      : [...log, newMessage("user", content)];
+    const vibeNow: Vibe = s.vibes?.[muse.id] ?? DEFAULT_VIBE;
+    const feelingsNow = feelingsOf(s, muse.id);
+    const known = s.memories.filter((m) => m.museId === muse.id);
 
-    /* Functional, like every other write in here: a turn takes seconds and
-       anything committed during it -- a memory landing, an edit -- would be
-       reverted by writing back a snapshot taken before it started. */
-    if (!resend) {
-      update((cur) => ({
-        ...cur,
-        conversations: { ...cur.conversations, [muse.id]: withUser },
-      }));
-    }
-
-    // The last few turns plus the new message, so retrieval follows the subject
-    // rather than a two-word reply carrying no signal.
-    const query = [...withUser.slice(-4).map((m) => m.content)].join("\n");
+    // The last few turns, so retrieval follows the subject rather than a
+    // two-word reply carrying no signal.
+    const query = thread.slice(-4).map((m) => m.content).join("\n");
     /* One extra round trip before the reply, and it is what makes recall work on
        meaning rather than shared words. Falls back to overlap when it fails, so
        the cost of it going wrong is a worse memory, not a failed message. */
@@ -717,69 +844,72 @@ function SoloChat({
        nothing to recall against, and a vector for filler still lands nearest to
        something. Also where most of the half-second goes. */
     const [queryVector] = worthRecalling(query) ? (await embedTexts([query])) ?? [null] : [null];
-    const memories = relevantMemories(state, muse.id, query, queryVector);
+    if (signal.aborted) return;
+    const memories = relevantMemories(s, muse.id, query, queryVector);
 
     let acc = "";
     try {
       const res = await fetch("/api/solo/chat", {
         method: "POST",
+        signal,
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           muse: {
-            name: muse.name.slice(0, 40),
-            description: muse.description.slice(0, 400),
+            name: person.name.slice(0, 40),
+            description: person.description.slice(0, 400),
             /* Clamped to what the route accepts rather than sent as stored.
                These caps are one-sided -- the wizard let a relationship run to
                120 characters while the route rejects past 40 -- and the reply
                path has no tolerance for a rejection: the offending value is in
                localStorage, so every future request carries it and 400s too.
                One long word typed once during setup ended the character. */
-            relationshipType: muse.relationshipType.slice(0, 40) || "someone close",
-            languages: muse.languages ?? ["English"],
+            relationshipType: person.relationshipType.slice(0, 40) || "someone close",
+            languages: person.languages ?? ["English"],
             personality: {
-              traits: muse.traits ?? [],
-              values: muse.values, humour: muse.humour, emotionalStyle: muse.emotionalStyle,
-              opinions: muse.opinions, customInstructions: muse.customInstructions,
-              tone: muse.tone, formality: muse.formality, sentenceLength: muse.sentenceLength,
-              catchphrases: muse.catchphrases, dialect: muse.dialect,
+              traits: (person.traits ?? []).slice(0, 8),
+              values: person.values, humour: person.humour, emotionalStyle: person.emotionalStyle,
+              opinions: person.opinions, customInstructions: person.customInstructions,
+              tone: person.tone, formality: person.formality, sentenceLength: person.sentenceLength,
+              catchphrases: person.catchphrases, dialect: person.dialect,
             },
           },
           // Bounded window, same reason as the server app (§9).
-          messages: withUser.slice(-20).map((m) => ({
-            role: m.from === "user" ? ("user" as const) : ("assistant" as const),
-            /* Same reasoning: one pasted message over the route's limit sat in
-               the window and killed every turn after it, permanently. */
-            content: m.content.slice(0, MAX_MESSAGE),
-          })),
-          /* Present only for someone built from real material. When it is, the
+          messages: thread.slice(-20).map((m) => {
+            const q = quoteOf(thread, m);
+            return {
+              role: m.from === "user" ? ("user" as const) : ("assistant" as const),
+              /* Same reasoning: one pasted message over the route's limit sat in
+                 the window and killed every turn after it, permanently. */
+              content: m.content.slice(0, MAX_MESSAGE),
+              ...(q
+                ? { quote: { role: q.from === "user" ? "user" : "assistant", content: q.content.slice(0, QUOTE_CHARS) } }
+                : {}),
+            };
+          }),
+          /* Present only for someone with a full profile. When it is, the
              server ignores the simple shape above and uses Presence's prompt. */
-          /* `you` is filled here rather than stored: the starters are authored
-             without knowing who will read them, and a built character should
-             follow a rename too. */
-          persona: muse.persona
-            ? { ...muse.persona, you: muse.persona.you || state.userName || "them" }
-            : null,
+          persona: promptPersona(person, s.userName),
           /* Everyone they share a circle with. Being in a circle should mean
              they know those people exist in here too, not only in the group. */
           /* Capped: someone in circles with nine or more other people
              exceeded the route's limit and could no longer hold a one-to-one
              conversation at all. */
-          knows: knownTo(state, muse.id).slice(0, 8).map((k) => ({
+          knows: knownTo(s, muse.id).slice(0, 8).map((k) => ({
             name: k.name.slice(0, 60),
             relationship: k.relationshipType.slice(0, 120),
           })),
-          mood: vibe.mood,
-          topic: vibe.topic,
-          register: vibe.register,
+          mood: vibeNow.mood,
+          topic: vibeNow.topic,
+          register: vibeNow.register,
           /* How they are generally, as opposed to how this conversation is
              going. Sent every turn: it is a state, not an event. */
-          feelings: hasFeelings(feelings) ? feelings : null,
+          feelings: hasFeelings(feelingsNow) ? feelingsNow : null,
           /* Clamped on read as well as on write. The write-side clamp is new,
              so anything already in someone's browser is still over the limit,
              and a single one of those 400s the whole request the moment it
              ranks into the top eight. */
           memories: memories.map((m) => m.slice(0, 400)),
-          userName: state.userName,
+          userName: s.userName,
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         }),
       });
@@ -788,7 +918,6 @@ function SoloChat({
         const data = await res.json().catch(() => ({}));
         setError(data.error ?? "Something went wrong. Try again.");
         setCanRetry(true);
-        setBusy(false);
         return;
       }
 
@@ -813,83 +942,60 @@ function SoloChat({
           }
         }
       }
+      if (signal.aborted) return;
 
-      const reply = acc.trim();
-      if (reply) {
-        /* Presence tells a texting persona to send several short messages
-           separated by a line of ---, because that is how people actually text.
-           Splitting them here is what makes that instruction mean anything;
-           without it the separator just shows up in the message. */
-        /* Only the registers that ask for several messages get split. A letter
-           or a voice note is one piece by definition, and splitting it would
-           contradict the instruction the model was just given. */
-        const reg = REGISTERS[vibe.register as keyof typeof REGISTERS] ?? REGISTERS.texts;
-        const burst = muse.persona ? splitBurst(reply, reg.burst) : [reply];
-        const withMuse: SoloMessage[] = [
-          ...withUser,
-          ...burst.map((content) => newMessage("muse", content)),
-        ];
-        update((cur) => ({
-          ...cur,
-          conversations: { ...cur.conversations, [muse.id]: withMuse },
-        }));
-        setStreaming("");
+      const text = acc.trim();
+      if (!text) return;
+      /* Presence tells a texting persona to send several short messages
+         separated by a line of ---, because that is how people actually text.
+         Splitting them here is what makes that instruction mean anything;
+         without it the separator just shows up in the message. */
+      /* Only the registers that ask for several messages get split. A letter
+         or a voice note is one piece by definition, and splitting it would
+         contradict the instruction the model was just given. */
+      const reg = REGISTERS[vibeNow.register as keyof typeof REGISTERS] ?? REGISTERS.texts;
+      const burst = person.persona ? splitBurst(text, reg.burst) : [text];
+      const answer = burst.map((content) => newMessage("muse", content));
+      update((cur) => insertAfter(cur, muse.id, last.id, answer));
 
-        /* Extraction runs after the reply is on screen and never blocks it, the
-           same shape as the server app's aftercare. */
-        void (async () => {
-          /* Captured once and reused for the write-back, because `replaces`
-             comes back as indexes into exactly this list. Recomputing it after
-             the round trip would renumber it against whatever had changed in
-             the meantime and delete the wrong memory. */
-          const knownForExtraction = memoriesFor.slice(-60).map((m) => m.content);
-          try {
-            const r = await fetch("/api/solo/remember", {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({
-                messages: withMuse.slice(-8).map((m) => ({
-                  role: m.from === "user" ? "user" : "assistant",
-                  content: m.content,
-                })),
-                /* Bounded on the way out as well as clamped on the way in.
-                   This list is only there to stop the model re-proposing
-                   something already known, and sending a year of them every
-                   turn is bandwidth spent on nothing. */
-                known: knownForExtraction,
-              }),
-            });
-            const { memories: found } = await r.json();
-            if (Array.isArray(found) && found.length) {
-              /* Read at commit time, not from the snapshot this turn started
-                 with -- see the save effect above. */
-              update((cur) => addMemories(cur, muse.id, found, knownForExtraction));
-              /* Embedded straight away so the next turn can recall them by
-                 meaning. Separate from the write so a slow or failed embedding
-                 never delays the memory itself landing. */
-              const texts = found.map((f: { content: string }) => f.content);
-              const vecs = await embedTexts(texts);
-              if (vecs) {
-                update((cur) => {
-                  const byContent = new Map(texts.map((t: string, i: number) => [t, vecs[i]]));
-                  const patch: Record<string, number[] | null> = {};
-                  for (const m of cur.memories) {
-                    if (m.museId !== muse.id || m.embedding?.length) continue;
-                    const v = byContent.get(m.content);
-                    if (v) patch[m.id] = v;
-                  }
-                  return attachEmbeddings(cur, patch);
-                });
-              }
-            }
-          } catch { /* a missed memory is not worth an error banner */ }
-        })();
-      }
+      /* Extraction runs after the reply is on screen and never blocks it, the
+         same shape as the server app's aftercare. */
+      void learnFrom(muse.id, [...thread, ...answer].slice(-8), known, update);
     } catch {
-      setError("You're offline.");
+      if (!signal.aborted) setError("You're offline.");
     } finally {
       setStreaming("");
-      setBusy(false);
+    }
+  }
+
+  /* Editing a message changes what the conversation was about.
+   *
+   * Changing the stored text alone left every reply after it answering words
+   * that no longer existed, and the memory made from the old version stayed.
+   * So an edit to your own latest message takes the thread back to it and asks
+   * again. Further up, it asks first, because redoing from there removes
+   * everything said since. Either way the edited version is read for memory. */
+  function editLine(m: SoloMessage, text: string) {
+    const at = log.findIndex((x) => x.id === m.id);
+    const after = log.slice(at + 1);
+    const redo =
+      m.from === "user" &&
+      (!after.some((x) => x.from === "user") ||
+        confirm(
+          `Redo the conversation from this message?\n\nOK takes it back to here and ${muse.name} answers the new version. The ${after.length} messages after it are removed.\n\nCancel just changes the text.`
+        ));
+
+    if (redo) {
+      update((cur) => rewindTo(editMessage(cur, muse.id, m.id, text), muse.id, m.id));
+      setError(null);
+      loop.restart();
+      return;
+    }
+
+    update((cur) => editMessage(cur, muse.id, m.id, text));
+    if (m.from === "user") {
+      const window = log.slice(Math.max(0, at - 7), at + 1).map((x) => (x.id === m.id ? { ...x, content: text } : x));
+      void learnFrom(muse.id, window, memoriesFor, update);
     }
   }
 
@@ -917,6 +1023,8 @@ function SoloChat({
       "application/json"
     );
   }
+
+  const lastLine = log[log.length - 1];
 
   return (
     <main className="shell" style={{ display: "flex", flexDirection: "column", minHeight: "100dvh" }}>
@@ -960,27 +1068,34 @@ function SoloChat({
           </div>
         )}
 
-        {log.map((m) => (
-          <div key={m.id} className={m.from === "user" ? "turn turn-user" : "turn turn-muse"}>
-            {m.content}
-            {m.edited && <span className="stamp"> · edited</span>}
-            <MessageActions
-              content={m.content}
-              onEdit={(text) => update(editMessage(state, muse.id, m.id, text))}
-              onDelete={() => update(deleteMessage(state, muse.id, m.id))}
-              onDeleteFrom={() => update(deleteFrom(state, muse.id, m.id))}
-            />
-          </div>
-        ))}
+        {log.map((m) => {
+          const q = quoteOf(log, m);
+          return (
+            <div key={m.id} id={`msg-${m.id}`} className={m.from === "user" ? "turn turn-user" : "turn turn-muse"}>
+              {m.replyTo && (
+                <QuoteBubble who={q ? nameOf(q) : ""} text={q?.content} onJump={q ? () => jumpTo(q.id) : undefined} />
+              )}
+              {m.content}
+              {m.edited && <span className="stamp"> · edited</span>}
+              <MessageActions
+                content={m.content}
+                onReply={() => { setReplyTo(m); box.current?.focus(); }}
+                onEdit={(text) => editLine(m, text)}
+                onDelete={() => update(deleteMessage(state, muse.id, m.id))}
+                onDeleteFrom={() => update(deleteFrom(state, muse.id, m.id))}
+              />
+            </div>
+          );
+        })}
 
         {streaming && <div className="turn turn-muse">{streaming}</div>}
-        {busy && !streaming && <p className="typing">{muse.name} is typing<i>.</i><i>.</i><i>.</i></p>}
+        {loop.busy && !streaming && <p className="typing">{muse.name} is typing<i>.</i><i>.</i><i>.</i></p>}
 
         {error && (
           <div style={{ marginTop: "1rem" }}>
             <p className="error" role="alert">{error}</p>
-            {lastSent && canRetry && (
-              <button className="link-btn" onClick={() => send(lastSent, true)}>Try again</button>
+            {canRetry && lastLine?.from === "user" && (
+              <button className="link-btn" onClick={() => loop.schedule(0)}>Try again</button>
             )}
             {!canRetry && (
               <button className="link-btn" onClick={onEdit}>Edit {muse.name}</button>
@@ -1039,13 +1154,22 @@ function SoloChat({
                 </div>
               </div>
 
+              <div>
+                <label>What {muse.name} is like</label>
+                <TraitEditor
+                  traits={muse.traits ?? []}
+                  onChange={(traits) => update((cur) => editMuse(cur, muse.id, { traits }))}
+                  suggestions={TRAIT_IDEAS}
+                />
+              </div>
+
               <p className="fine">
                 <strong style={{ color: "var(--accent)" }}>
                   {isDefaultVibe(vibe)
                     ? "Nothing set — they will be however they are."
                     : `From your next message: ${vibeSummary(vibe)}.`}
                 </strong>{" "}
-                This is for today only. For something standing &mdash; what they have going on at
+                Mood, subject and register are for today only. Traits stay. For something standing &mdash; what they have going on at
                 the moment, or where things are between you &mdash; use <em>edit</em> at the top.
               </p>
             </div>
@@ -1054,6 +1178,9 @@ function SoloChat({
       )}
 
       <div className="composer">
+        {replyTo && (
+          <ReplyBar who={replyTo.from === "user" ? "yourself" : muse.name} text={replyTo.content} onCancel={() => setReplyTo(null)} />
+        )}
         <label className="sr-only" htmlFor="solo-composer">Write to {muse.name}</label>
         <textarea
           id="solo-composer"
@@ -1064,18 +1191,65 @@ function SoloChat({
           placeholder={`Write to ${muse.name}`}
           onChange={(e) => {
             setDraft(e.target.value);
+            loop.hold();
             const el = box.current;
             if (el) { el.style.height = "auto"; el.style.height = `${Math.min(el.scrollHeight, 128)}px`; }
           }}
           onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(draft); }
+            if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendDraft(); }
+            if (e.key === "Escape" && replyTo) setReplyTo(null);
           }}
         />
-        <button className="send" onClick={() => send(draft)} disabled={busy || !draft.trim()}>Send</button>
+        {/* Never disabled while they are typing back: a second text is how
+            people talk, and it gets answered with the first. */}
+        <button className="send" onClick={sendDraft} disabled={!draft.trim()}>Send</button>
       </div>
     </main>
   );
 }
+
+/* Memory extraction over a window of the thread. Never blocks anything and
+ * never surfaces an error -- a missed memory is not worth a banner. `known` is
+ * captured by the caller and reused for the write-back, because `replaces`
+ * comes back as indexes into exactly this list; recomputing it after the round
+ * trip would renumber it and delete the wrong memory. */
+async function learnFrom(museId: string, window: SoloMessage[], knownMemories: SoloState["memories"], update: Update) {
+  const known = knownMemories.slice(-60).map((m) => m.content);
+  try {
+    const r = await fetch("/api/solo/remember", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        messages: window.map((m) => ({ role: m.from === "user" ? "user" : "assistant", content: m.content })),
+        known,
+      }),
+    });
+    const { memories: found } = await r.json();
+    if (!Array.isArray(found) || !found.length) return;
+    /* Read at commit time, not from the snapshot this started with -- see the
+       save effect above. */
+    update((cur) => addMemories(cur, museId, found, known));
+    /* Embedded straight away so the next turn can recall them by meaning.
+       Separate from the write so a slow or failed embedding never delays the
+       memory itself landing. */
+    const texts = found.map((f: { content: string }) => f.content);
+    const vecs = await embedTexts(texts);
+    if (!vecs) return;
+    update((cur) => {
+      const byContent = new Map(texts.map((t: string, i: number) => [t, vecs[i]]));
+      const patch: Record<string, number[] | null> = {};
+      for (const m of cur.memories) {
+        if (m.museId !== museId || m.embedding?.length) continue;
+        const v = byContent.get(m.content);
+        if (v) patch[m.id] = v;
+      }
+      return attachEmbeddings(cur, patch);
+    });
+  } catch { /* a missed memory is not worth an error banner */ }
+}
+
+/** Offered as one-tap additions wherever traits are edited. */
+const TRAIT_IDEAS = ["funny", "sarcastic", "caring", "blunt", "chill", "dramatic", "flirty", "nosy", "savage", "soft"];
 
 /* ---------------------------------------------------------------- helpers */
 
