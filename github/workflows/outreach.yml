@@ -1,0 +1,32 @@
+# The outreach scheduler.
+#
+# Every 15 minutes this asks MUSE whether any Muse has a text due. Almost every
+# run sends nothing: whether, and when, a text goes out is decided on the server
+# by src/lib/proactive/decide.ts -- quiet hours, daily limit, gap since the last
+# one, whether outreach is on at all. This only provides the clock, because the
+# Vercel free plan runs its own cron once a day.
+#
+# GitHub may start a scheduled run several minutes late; send times allow for it.
+
+name: Outreach
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Evaluate due outreach
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          MUSE_URL: ${{ vars.MUSE_URL || 'https://muse-two-brown.vercel.app' }}
+        run: |
+          curl --fail-with-body --silent --show-error --max-time 90 \
+            -X POST "$MUSE_URL/api/proactive/run" \
+            -H "Authorization: Bearer $CRON_SECRET"
