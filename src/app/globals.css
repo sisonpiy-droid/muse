@@ -330,14 +330,22 @@ a { color: inherit; }
 @keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 
 /* Them: unboxed serif, given room. The person is the page, not a bubble. */
+/* Them: a bubble on the left, the mirror of yours -- a faint tint of the
+   accent so the two sides read apart at a glance, and the serif kept, so it
+   still sounds like a person rather than a system message. */
 .turn-muse {
   align-self: flex-start;
+  background: color-mix(in srgb, var(--accent) 9%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--accent) 16%, var(--edge));
+  border-radius: var(--r-lg) var(--r-lg) var(--r-lg) var(--r-sm);
+  padding: 0.6rem 0.95rem;
+  color: var(--ink);
   font-family: var(--serif);
-  font-size: 1.08rem;
-  line-height: 1.6;
+  font-size: 1.02rem;
+  line-height: 1.5;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  margin: 0.7rem 0 0.2rem;
+  margin: 1rem 0 0;
 }
 
 /* You: a quiet card, offset right. */
@@ -478,7 +486,7 @@ a { color: inherit; }
 
 /* The tapped message, without moving anything around it. */
 .turn { position: relative; transition: transform 160ms var(--ease); -webkit-tap-highlight-color: transparent; }
-.turn-muse.is-picked { background: var(--surface); box-shadow: 0 0 0 0.5rem var(--surface); border-radius: var(--r-sm); }
+.turn-muse.is-picked { border-color: var(--edge-lit); background: color-mix(in srgb, var(--accent) 14%, var(--surface-2)); }
 .turn-user.is-picked { border-color: var(--edge-lit); background: var(--surface-2); }
 
 /* Swipe to reply. The arrow appears once letting go would reply. */
@@ -497,8 +505,9 @@ a { color: inherit; }
 }
 .turn[data-swiping="ready"]::before { color: var(--accent); opacity: 1; transform: translateY(-50%) scale(1); }
 
-/* A burst of texts reads as a burst, not as separate paragraphs. */
-.turn-muse + .turn-muse { margin-top: 0.1rem; }
+/* A burst of texts reads as a burst: close together, joined on the left. */
+.turn-muse + .turn-muse { margin-top: 0.25rem; border-top-left-radius: var(--r-sm); }
+.turn-user + .turn-user { margin-top: 0.25rem; border-top-right-radius: var(--r-sm); }
 
 .msg-actions button {
   font: inherit;
