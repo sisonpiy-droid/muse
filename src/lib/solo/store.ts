@@ -55,6 +55,31 @@ export interface SoloMessage {
   edited?: boolean;
   /** The id of the message this one answers, WhatsApp-style. */
   replyTo?: string;
+  /* Said out loud on a call rather than typed. The content is the transcript,
+     so everything downstream -- the window, memory, export -- treats it as an
+     ordinary message. No audio is kept. */
+  via?: "voice";
+  /** The call it was said on. */
+  callId?: string;
+  /** A spoken reply cut off by the user talking over it: content is what was actually heard. */
+  interrupted?: boolean;
+}
+
+/* A voice call, as a record beside the conversation rather than a second
+   conversation. Shaped like the account app's Prisma Call model so it can move
+   there unchanged once accounts are on. */
+export type CallStatus = "COMPLETED" | "MISSED" | "CANCELLED" | "FAILED";
+
+export interface SoloCall {
+  id: string;
+  museId: string;
+  startedAt: string;
+  endedAt?: string;
+  durationSeconds: number;
+  status: CallStatus;
+  /** First and last message said on it, in the Muse's ordinary thread. */
+  firstMessageId?: string;
+  lastMessageId?: string;
 }
 
 /* A fresh message, id and timestamp included.
@@ -118,6 +143,11 @@ export interface SoloMuse
      Present only for built characters; the four starters have none, and are
      described by the fields above instead. */
   persona?: PersonaDraft;
+  /* Which voice they speak in on a call. A prebuilt voice id from
+     lib/voice/voices.ts; absent until chosen, at which point one is picked to
+     fit them and saved here. Never hard-coded: the provider's ids live in one
+     catalogue, and this is only a reference into it. */
+  voiceId?: string;
 }
 
 export interface SoloState {
@@ -131,6 +161,8 @@ export interface SoloState {
   vibes?: Record<string, Vibe>;
   /** Circles share the `conversations` map; ids never collide. */
   circles?: SoloCircle[];
+  /** Voice calls, newest last. Metadata only; what was said is in `conversations`. */
+  calls?: SoloCall[];
   /* Changes to a starter, kept as an overlay rather than a copy so the
      originals stay the source of truth. Built characters are edited in place
      and never appear here. */
@@ -225,6 +257,7 @@ export function loadState(): SoloState {
       memories: Array.isArray(parsed.memories) ? parsed.memories : [],
       vibes: parsed.vibes ?? {},
       circles: Array.isArray(parsed.circles) ? parsed.circles : [],
+      calls: Array.isArray(parsed.calls) ? parsed.calls : [],
       edits: parsed.edits ?? {},
       feelings: parsed.feelings ?? {},
       forgotten: parsed.forgotten ?? {},
@@ -1016,6 +1049,8 @@ export interface MusePatch {
   extra?: string;
   arch?: string;
   texture?: string;
+  /** The voice they speak in on a call. */
+  voiceId?: string;
 }
 
 /** Fields that were explicitly set, so an untouched field is left alone and a
@@ -1115,4 +1150,44 @@ export function feelingsOf(state: SoloState, museId: string): Feelings {
 
 export function setFeelings(state: SoloState, museId: string, feelings: Feelings): SoloState {
   return { ...state, feelings: { ...(state.feelings ?? {}), [museId]: feelings } };
+}
+
+/* ------------------------------------------------------------------ calls */
+
+export function newCallId(): string {
+  return `call-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/** A call that has just been answered. Written straight away, so a call the
+ *  browser kills halfway through still leaves a record. */
+export function startCall(state: SoloState, museId: string, id: string, at = new Date()): SoloState {
+  const call: SoloCall = { id, museId, startedAt: at.toISOString(), durationSeconds: 0, status: "CANCELLED" };
+  return { ...state, calls: [...(state.calls ?? []), call] };
+}
+
+/** Closes a call: when, how long, how it ended, and which messages were said on it. */
+export function endCall(
+  state: SoloState,
+  id: string,
+  status: CallStatus,
+  at = new Date()
+): SoloState {
+  const calls = state.calls ?? [];
+  const call = calls.find((c) => c.id === id);
+  if (!call) return state;
+  const said = (state.conversations[call.museId] ?? []).filter((m) => m.callId === id);
+  const ended: SoloCall = {
+    ...call,
+    endedAt: at.toISOString(),
+    durationSeconds: Math.max(0, Math.round((at.getTime() - Date.parse(call.startedAt)) / 1000)),
+    /* Nothing said either way is a call that never really happened. */
+    status: status === "COMPLETED" && !said.length ? "CANCELLED" : status,
+    firstMessageId: said[0]?.id,
+    lastMessageId: said[said.length - 1]?.id,
+  };
+  return { ...state, calls: calls.map((c) => (c.id === id ? ended : c)) };
+}
+
+export function callsOf(state: SoloState, museId: string): SoloCall[] {
+  return (state.calls ?? []).filter((c) => c.museId === museId);
 }

@@ -7,7 +7,7 @@
     "build": "prisma generate && next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "tsx tests/sse.test.mjs && tsx tests/rank.test.mjs && tsx tests/prompt.test.mjs && tsx tests/chat-import.test.mjs && tsx tests/refusal.test.mjs && tsx tests/persona-edit.test.mjs && tsx tests/guard.test.mjs && tsx tests/memory-store.test.mjs && tsx tests/participant.test.mjs && tsx tests/transcript.test.mjs && tsx tests/conversation.test.mjs && tsx tests/threads.test.mjs && tsx tests/research.test.mjs && tsx tests/sync-time.test.mjs",
+    "test": "tsx tests/sse.test.mjs && tsx tests/rank.test.mjs && tsx tests/prompt.test.mjs && tsx tests/chat-import.test.mjs && tsx tests/refusal.test.mjs && tsx tests/persona-edit.test.mjs && tsx tests/guard.test.mjs && tsx tests/memory-store.test.mjs && tsx tests/participant.test.mjs && tsx tests/transcript.test.mjs && tsx tests/conversation.test.mjs && tsx tests/threads.test.mjs && tsx tests/research.test.mjs && tsx tests/sync-time.test.mjs && tsx tests/voice.test.mjs",
     "typecheck": "tsc --noEmit",
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate dev",

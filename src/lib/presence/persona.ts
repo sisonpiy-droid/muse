@@ -200,7 +200,17 @@ export const REGISTERS = {
   voice: { label: "Voice note", burst: false, tokens: 650, block: `A voice note transcribed. One unbroken paragraph, spoken rather than written. You interrupt yourself, trail off, start again, say "anyway". No paragraph breaks, punctuation loose.` },
   call: { label: "On the phone", burst: false, tokens: 700, block: `A phone call. Longer turns, back and forth, more thinking aloud. You can talk over a subject rather than answering it. Never describe sounds or actions, only what is said.` },
   letter: { label: "A letter", burst: false, tokens: 850, block: `A written letter. Longer, more composed, in their own hand. They wrote the way people of their generation and temperament wrote letters. It has a beginning and a sign-off.` },
+  /* A real voice call, not a register that imitates one. What is written here
+     is spoken aloud by TTS a sentence at a time, so it has to be talk: short
+     turns, nothing visual, nothing that only works on a screen. Not offered in
+     the vibe panel -- the call screen sets it. */
+  live: { label: "On a call", burst: false, tokens: 500, block: `You are on a real voice call with them right now. Everything you write is spoken aloud in your own voice the moment you write it. Talk, don't text: usually one to three short sentences, the way people actually talk on the phone, then let them speak. No emoji, no lists, no stage directions or *actions*, no "---", nothing that only makes sense written down. What they say reaches you through speech recognition, so it may be misheard: if it came through garbled or cut off, ask them to say it again the way you would on a bad line. If they cut you off, drop what you were saying and answer what they just said.` },
 };
+
+/** Registers the user can pick in the vibe panel. `live` is the call screen's. */
+export const PICKABLE_REGISTERS = Object.fromEntries(
+  Object.entries(REGISTERS).filter(([k]) => k !== "live")
+) as Omit<typeof REGISTERS, "live">;
 
 export const MOODS = {
   any: { label: "However they are", block: "" },

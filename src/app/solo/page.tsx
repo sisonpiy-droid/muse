@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { Avatar } from "@/components/Avatar";
 import { BuildFigure } from "@/components/BuildFigure";
+import { CallScreen } from "@/components/CallScreen";
 import { CircleChat } from "@/components/CircleChat";
 import { EditMuse } from "@/components/EditMuse";
 import { ImportPersona } from "@/components/ImportPersona";
@@ -16,21 +17,24 @@ import { Turn } from "@/components/Turn";
 import { useReplyLoop } from "@/components/useReplyLoop";
 import { MADE_TAB, TABS } from "@/lib/personas";
 import {
-  DEFAULT_VIBE, MOODS, REGISTERS, TOPICS, feelingsSummary, hasFeelings, splitBurst,
+  DEFAULT_VIBE, MOODS, PICKABLE_REGISTERS, REGISTERS, TOPICS, feelingsSummary, hasFeelings, splitBurst,
   vibeSummary, type Vibe,
 } from "@/lib/presence/persona";
 import { safeFilename, transcriptMarkdown } from "@/lib/export";
 import {
-  QUOTE_CHARS, allMuses, attachEmbeddings, circleOf, deleteCircle, deleteConversation,
+  allMuses, attachEmbeddings, circleOf, deleteCircle, deleteConversation,
   deleteFrom, deleteMemory, deleteMessage, deleteMuse, download, editMemory, editMessage,
-  editMuse, feelingsOf, findMuse, forgetAll, inTab, insertAfter, isEdited, knownTo, KEY as STORE_KEY,
-  membersOf, memoriesOf, needsEmbedding, newMessage, parseBackup, promptPersona, quoteOf,
-  memoriesForTurn, plansForTurn, resetMuse, rewindTo, windowOf, worthRecalling,
+  editMuse, feelingsOf, findMuse, forgetAll, inTab, insertAfter, isEdited, KEY as STORE_KEY,
+  membersOf, memoriesOf, needsEmbedding, newMessage, parseBackup, quoteOf,
+  resetMuse, rewindTo,
   setFeelings,
   type SoloCircle, type SoloMessage, type SoloMuse, type SoloState,
 } from "@/lib/solo/store";
 import { Persister } from "@/lib/solo/sync";
 import { embedTexts, learnFrom } from "@/lib/solo/learn";
+import { MAX_MESSAGE, prepareTurn, streamReply } from "@/lib/solo/turn";
+import { canListen } from "@/lib/voice/listener";
+import { speaker } from "@/lib/voice/speaker";
 
 /** The circles live under the tabs too, as their own. */
 const CIRCLES_TAB = "Circles";
@@ -53,12 +57,15 @@ export type Update = (next: SoloState | ((cur: SoloState) => SoloState)) => void
 /** What /api/solo/chat accepts for one message. Enforced here too, because a
  *  stored message the route rejects is not a failed send -- it stays in the
  *  window and fails every send after it. */
-const MAX_MESSAGE = 8000;
 
 type View =
   | { kind: "home" }
   | { kind: "tab"; tab: string }
   | { kind: "chat"; museId: string }
+  /* A live call. Never restored by a reload or by forward: a call needs the
+     tap that unlocks audio and the mic, so arriving here any other way lands
+     on the conversation instead. */
+  | { kind: "call"; museId: string }
   | { kind: "edit"; museId: string }
   | { kind: "memories"; museId: string }
   /* `tab` is where the new person goes when they were made from inside one. */
@@ -75,6 +82,9 @@ type Entry = { muse: 1; view: View; depth: number };
 function asEntry(s: unknown): Entry | null {
   return s && typeof s === "object" && (s as Entry).muse === 1 ? (s as Entry) : null;
 }
+
+/** A view that cannot be re-entered without a tap, turned into where it came from. */
+const settled = (v: View): View => (v.kind === "call" ? { kind: "chat", museId: v.museId } : v);
 
 const depthNow = () => asEntry(window.history.state)?.depth ?? 0;
 
@@ -109,7 +119,7 @@ export default function SoloPage() {
   useEffect(() => {
     const onPop = (e: PopStateEvent) => {
       const entry = asEntry(e.state);
-      setView(entry ? entry.view : { kind: "home" });
+      setView(entry ? settled(entry.view) : { kind: "home" });
     };
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
@@ -137,7 +147,11 @@ export default function SoloPage() {
     persist.current = new Persister();
     setState(persist.current.open());
     const entry = asEntry(window.history.state);
-    if (entry) setView(entry.view);
+    if (entry) {
+      const v = settled(entry.view);
+      if (v !== entry.view) window.history.replaceState({ ...entry, view: v } satisfies Entry, "");
+      setView(v);
+    }
     else window.history.replaceState({ muse: 1, view: { kind: "home" }, depth: 0 } satisfies Entry, "");
   }, []);
 
@@ -387,6 +401,19 @@ export default function SoloPage() {
     );
   }
 
+  if (view.kind === "call") {
+    const muse = findMuse(state, view.museId);
+    if (!muse) { setView({ kind: "home" }); return null; }
+    return shell(
+      <CallScreen
+        muse={muse}
+        getState={() => latestState.current ?? state}
+        update={update}
+        onClose={back}
+      />
+    );
+  }
+
   if (view.kind === "chat") {
     const muse = findMuse(state, view.museId);
     if (!muse) { setView({ kind: "home" }); return null; }
@@ -398,6 +425,12 @@ export default function SoloPage() {
         onBack={back}
         onEdit={() => go({ kind: "edit", museId: muse.id })}
         onMemories={() => go({ kind: "memories", museId: muse.id })}
+        onCall={() => {
+          /* Inside the tap, before anything is awaited: mobile browsers only
+             allow sound that a gesture started. */
+          speaker.unlock();
+          go({ kind: "call", museId: muse.id });
+        }}
       />
     );
   }
@@ -799,7 +832,7 @@ function MuseCard({
 /* ------------------------------------------------------------------ chat */
 
 function SoloChat({
-  muse, state, update, onBack, onEdit, onMemories,
+  muse, state, update, onBack, onEdit, onMemories, onCall,
 }: {
   muse: SoloMuse;
   state: SoloState;
@@ -807,10 +840,15 @@ function SoloChat({
   onBack: () => void;
   onEdit: () => void;
   onMemories: () => void;
+  onCall: () => void;
 }) {
   const log = state.conversations[muse.id] ?? [];
   /* The message whose actions are open. One at a time, like any chat app. */
   const [picked, setPicked] = useState<string | null>(null);
+  const [canCall, setCanCall] = useState(true);
+  // Read after mount: the server render has no window to ask.
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => setCanCall(canListen()), []);
   const [draft, setDraft] = useState("");
   const [streaming, setStreaming] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -889,7 +927,6 @@ function SoloChat({
      several. Does nothing if the thread already ends with a reply. */
   async function reply(signal: AbortSignal) {
     const s = latest.current;
-    const person = findMuse(s, muse.id) ?? muse;
     const thread = s.conversations[muse.id] ?? [];
     const last = thread[thread.length - 1];
     if (!last || last.from !== "user") return;
@@ -897,127 +934,24 @@ function SoloChat({
     setError(null);
     setCanRetry(true);
 
-    const vibeNow: Vibe = s.vibes?.[muse.id] ?? DEFAULT_VIBE;
-    const feelingsNow = feelingsOf(s, muse.id);
+    /* The request is built in lib/solo/turn.ts, shared with voice calls, so
+       a call is exactly this character with exactly these memories. */
+    const prepared = await prepareTurn(s, muse.id, { signal, fallback: muse });
+    if (!prepared || signal.aborted) return;
+    const { person, vibe: vibeNow } = prepared;
 
-    // The last few turns, so retrieval follows the subject rather than a
-    // two-word reply carrying no signal.
-    const query = thread.slice(-4).map((m) => m.content).join("\n");
-    /* One extra round trip before the reply, and it is what makes recall work on
-       meaning rather than shared words. Falls back to overlap when it fails, so
-       the cost of it going wrong is a worse memory, not a failed message. */
-    /* Skipped entirely when the last few turns are "hmm" and "yeah": there is
-       nothing to recall against, and a vector for filler still lands nearest to
-       something. Also where most of the half-second goes. */
-    const [queryVector] = worthRecalling(query) ? (await embedTexts([query])) ?? [null] : [null];
-    if (signal.aborted) return;
-    const memories = memoriesForTurn(s, muse.id, query, queryVector);
-
-    let acc = "";
     try {
-      const res = await fetch("/api/solo/chat", {
-        method: "POST",
-        signal,
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          muse: {
-            name: person.name.slice(0, 40),
-            description: person.description.slice(0, 400),
-            /* Clamped to what the route accepts rather than sent as stored.
-               These caps are one-sided -- the wizard let a relationship run to
-               120 characters while the route rejects past 40 -- and the reply
-               path has no tolerance for a rejection: the offending value is in
-               localStorage, so every future request carries it and 400s too.
-               One long word typed once during setup ended the character. */
-            relationshipType: person.relationshipType.slice(0, 40) || "someone close",
-            languages: person.languages ?? ["English"],
-            personality: {
-              traits: (person.traits ?? []).slice(0, 8),
-              values: person.values, humour: person.humour, emotionalStyle: person.emotionalStyle,
-              opinions: person.opinions, customInstructions: person.customInstructions,
-              tone: person.tone, formality: person.formality, sentenceLength: person.sentenceLength,
-              catchphrases: person.catchphrases, dialect: person.dialect,
-            },
-          },
-          // Bounded by size rather than count -- see windowOf.
-          messages: windowOf(thread).map((m) => {
-            const q = quoteOf(thread, m);
-            return {
-              role: m.from === "user" ? ("user" as const) : ("assistant" as const),
-              /* Same reasoning: one pasted message over the route's limit sat in
-                 the window and killed every turn after it, permanently. */
-              content: m.content.slice(0, MAX_MESSAGE),
-              at: m.at,
-              ...(q
-                ? { quote: { role: q.from === "user" ? "user" : "assistant", content: q.content.slice(0, QUOTE_CHARS) } }
-                : {}),
-            };
-          }),
-          /* Present only for someone with a full profile. When it is, the
-             server ignores the simple shape above and uses Presence's prompt. */
-          persona: promptPersona(person, s.userName),
-          /* Everyone they share a circle with. Being in a circle should mean
-             they know those people exist in here too, not only in the group. */
-          /* Capped: someone in circles with nine or more other people
-             exceeded the route's limit and could no longer hold a one-to-one
-             conversation at all. */
-          knows: knownTo(s, muse.id).slice(0, 8).map((k) => ({
-            name: k.name.slice(0, 60),
-            relationship: k.relationshipType.slice(0, 120),
-          })),
-          mood: vibeNow.mood,
-          topic: vibeNow.topic,
-          register: vibeNow.register,
-          /* How they are generally, as opposed to how this conversation is
-             going. Sent every turn: it is a state, not an event. */
-          feelings: hasFeelings(feelingsNow) ? feelingsNow : null,
-          /* Clamped on read as well as on write. The write-side clamp is new,
-             so anything already in someone's browser is still over the limit,
-             and a single one of those 400s the whole request the moment it
-             ranks into the top eight. */
-          memories: memories.map((m) => m.slice(0, 400)),
-          /* Dated plans, each with its instant, so the reply knows whether
-             "tomorrow at 11" is still ahead or already behind. */
-          plans: plansForTurn(s, muse.id).map((p) => ({ what: p.what.slice(0, 420), at: p.at })),
-          userName: s.userName,
-          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-        }),
-      });
-
-      if (!res.ok || !res.body) {
-        const data = await res.json().catch(() => ({}));
-        setError(data.error ?? "Something went wrong. Try again.");
-        setCanRetry(true);
-        return;
-      }
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
+      const outcome = await streamReply(prepared.body, signal, (soFar) => setStreaming(soFar));
       /* A reply that ended in an error is not a reply, however much of it
          arrived first. Saving the fragment is how half-sentences got into the
          thread. */
-      let broke = false;
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const frames = buffer.split(/\r?\n\r?\n/);
-        buffer = frames.pop() ?? "";
-        for (const frame of frames) {
-          const line = frame.split(/\r?\n/).find((l) => l.startsWith("data:"));
-          if (!line) continue;
-          let evt: { type?: string; text?: string; message?: string; retryable?: boolean };
-          try { evt = JSON.parse(line.slice(5).trim()); } catch { continue; }
-          if (evt.type === "delta" && evt.text) { acc += evt.text; setStreaming(acc); }
-          else if (evt.type === "error") {
-            broke = true;
-            setError(evt.message ?? "Something went wrong.");
-            setCanRetry(evt.retryable !== false);
-          }
-        }
+      if (!outcome.ok) {
+        setError(outcome.message);
+        setCanRetry(outcome.retryable);
+        return;
       }
-      if (signal.aborted || broke) return;
+      if (signal.aborted) return;
+      const acc = outcome.text;
 
       const text = acc.trim();
       if (!text) return;
@@ -1128,6 +1062,13 @@ function SoloChat({
             )}
           </div>
         </div>
+        {/* Shown to everyone, so the feature is findable; a browser that cannot
+            recognise speech gets the reason on the call screen, not a dead button. */}
+        <button className="menu-btn call-start" aria-label={`Call ${muse.name}`} title={canCall ? `Call ${muse.name}` : "Calls need Chrome, Edge or Safari"} onClick={onCall}>
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            <path d="M5 4h3l2 5-2.5 1.5a11 11 0 0 0 6 6L15 14l5 2v3a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2" />
+          </svg>
+        </button>
         <Menu
           label={`More for ${muse.name}`}
           items={[
@@ -1178,16 +1119,26 @@ function SoloChat({
           </div>
         )}
 
-        {log.map((m) => {
+        {log.map((m, i) => {
           const q = quoteOf(log, m);
           const replyHere = () => { setReplyTo(m); setPicked(null); box.current?.focus(); };
+          /* A call shows where it started, in the same thread as everything else. */
+          const callStarts = m.callId && log.findIndex((x) => x.callId === m.callId) === i;
+          const call = callStarts ? (state.calls ?? []).find((c) => c.id === m.callId) : undefined;
           return (
-            <Turn key={m.id} id={m.id} mine={m.from === "user"} picked={picked === m.id} onPick={setPicked} onReply={replyHere}>
+            <Fragment key={m.id}>
+            {callStarts && (
+              <p className="call-row">
+                Voice call{call?.endedAt ? ` · ${callLength(call.durationSeconds)}` : ""}
+              </p>
+            )}
+            <Turn id={m.id} mine={m.from === "user"} picked={picked === m.id} onPick={setPicked} onReply={replyHere}>
               {m.replyTo && (
                 <QuoteBubble who={q ? nameOf(q) : ""} text={q?.content} onJump={q ? () => jumpTo(q.id) : undefined} />
               )}
               {m.content}
               {m.edited && <span className="stamp"> · edited</span>}
+              {m.interrupted && <span className="stamp"> · cut off</span>}
               <MessageActions
                 content={m.content}
                 onReply={replyHere}
@@ -1197,6 +1148,7 @@ function SoloChat({
                 onDone={() => setPicked(null)}
               />
             </Turn>
+            </Fragment>
           );
         })}
 
@@ -1256,7 +1208,7 @@ function SoloChat({
               <div>
                 <label>How are you talking?</label>
                 <div className="tags">
-                  {Object.entries(REGISTERS).map(([k, v]) => (
+                  {Object.entries(PICKABLE_REGISTERS).map(([k, v]) => (
                     <button key={k} className="tag" aria-pressed={vibe.register === k}
                       onClick={() => setVibe({ ...vibe, register: k })}
                       style={vibe.register === k ? { borderColor: "var(--accent)", color: "var(--accent)" } : undefined}>
@@ -1433,6 +1385,12 @@ function NewCircle({
 
 function isDefaultVibe(v: Vibe): boolean {
   return v.mood === DEFAULT_VIBE.mood && v.topic === DEFAULT_VIBE.topic && v.register === DEFAULT_VIBE.register;
+}
+
+/** "4:32", "1:02:10". */
+function callLength(seconds: number): string {
+  const h = Math.floor(seconds / 3600), m = Math.floor((seconds % 3600) / 60), sec = String(seconds % 60).padStart(2, "0");
+  return h ? `${h}:${String(m).padStart(2, "0")}:${sec}` : `${m}:${sec}`;
 }
 
 function lastAt(state: SoloState, museId: string): number {

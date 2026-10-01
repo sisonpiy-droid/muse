@@ -21,6 +21,11 @@ export interface GenerateOptions {
   maxTokens?: number;
   temperature?: number;
   signal?: AbortSignal;
+  /* How much the model reasons before it answers. "minimal" for a voice call,
+     where a spoken reply is a sentence or two and every second of thinking is
+     a second of silence on the line: measured, it halves the wait for the first
+     word (~3.2s to ~1.4s). Omitted, the provider default -- text chat keeps it. */
+  thinking?: "minimal" | "low";
 }
 
 export interface GenerateResult {
@@ -107,6 +112,17 @@ export interface AIProvider {
    *  Optional: a provider without search leaves it out, and callers fall back
    *  to what the model already knows. */
   searchWeb?(opts: { system: string; prompt: string }): Promise<SearchResult>;
+
+  /** Text spoken in a prebuilt voice, streamed as raw 16-bit mono PCM.
+   *  Optional: without it, calls are unavailable rather than broken. */
+  speak?(text: string, voice: string, signal?: AbortSignal): Promise<SpeechStream>;
+}
+
+export interface SpeechStream {
+  /** Samples per second of the PCM in `audio`. */
+  rate: number;
+  /** Little-endian signed 16-bit mono PCM, as it is generated. */
+  audio: ReadableStream<Uint8Array>;
 }
 
 export interface SearchResult {

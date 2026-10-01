@@ -289,6 +289,9 @@ ${timeBlock({ you: userName || "them", timeZone: tz, ...clock })}`;
           fallbacks,
           messages: messagesForModel,
           name: persona?.them ?? muse.name,
+          /* A live call is a sentence or two spoken aloud; long reasoning there
+             is only silence on the line. */
+          thinking: register === "live" ? "minimal" : undefined,
         })) {
           if (evt.type === "delta") send({ type: "delta", text: evt.text });
           else if (evt.type === "refused") {

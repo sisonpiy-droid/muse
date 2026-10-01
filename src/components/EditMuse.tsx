@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { Avatar } from "@/components/Avatar";
+import { VoicePicker } from "@/components/VoicePicker";
 import {
   ARCHETYPES, DEFAULT_FEELINGS, MOODS, TEXTURES, WARMTHS,
   type Feelings,
@@ -57,6 +58,7 @@ export function EditMuse({
     arch: p?.arch ?? muse.arch ?? "other",
     texture: p?.texture ?? muse.texture ?? "close",
     tab: tabOf(muse),
+    voice: muse.voiceId ?? "",
   };
 
   const [name, setName] = useState(was.name);
@@ -70,6 +72,7 @@ export function EditMuse({
   const [arch, setArch] = useState(was.arch);
   const [texture, setTexture] = useState(was.texture);
   const [tab, setTab] = useState(was.tab);
+  const [voice, setVoice] = useState(was.voice);
   const [feel, setFeel] = useState<Feelings>(feelings ?? DEFAULT_FEELINGS);
 
   /* Functional updates throughout. Three quick chip clicks all read the same
@@ -93,6 +96,7 @@ export function EditMuse({
     arch !== was.arch ||
     texture !== was.texture ||
     tab !== was.tab ||
+    voice !== was.voice ||
     feel.mood !== feelings.mood ||
     feel.warmth !== feelings.warmth ||
     feel.note !== feelings.note;
@@ -115,6 +119,8 @@ export function EditMuse({
         extra: extra.trim(),
         arch,
         texture,
+        /* "" puts it back to chosen-for-them: the next call picks again. */
+        voiceId: voice,
         /* Someone the user built keeps whatever they were filed as ("Personal",
            "Public") while they sit in the user's own tab. */
         category: tab === MADE_TAB ? (was.tab === MADE_TAB ? muse.category : "Personal") : tab,
@@ -226,6 +232,8 @@ export function EditMuse({
           </button>
         </div>
       </div>
+
+      <VoicePicker name={name || muse.name} value={voice} onChange={setVoice} />
 
       <label className="field" style={{ marginTop: "1.25rem" }}>
         <span>How they talk, and what they are like</span>

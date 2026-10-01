@@ -10,6 +10,7 @@ import {
   GenerateResult,
   ProviderError,
   SearchResult,
+  SpeechStream,
 } from "./types";
 
 const BASE = "https://generativelanguage.googleapis.com/v1beta";
@@ -20,6 +21,10 @@ const model = () => process.env.GEMINI_MODEL || "gemini-3.6-flash";
    chat model. Ask the API what it actually serves before changing this. */
 const embedModel = () => process.env.EMBEDDING_MODEL || "gemini-embedding-001";
 const timeoutMs = () => Number(process.env.UPSTREAM_TIMEOUT_MS || 60000);
+/* The TTS model for calls. Measured: 2.5-flash-preview-tts does not stream at
+   all (one chunk after ~9s for 11s of speech); 3.8-flash-lite-tts starts in
+   ~1.2s and finishes faster than it plays. */
+const speechModel = () => process.env.SPEECH_MODEL || "gemini-3.8-flash-lite-tts";
 
 /* The key travels as a header, never in the query string. A key in a URL is
    written to access logs, kept by proxies, and quoted back inside error text. */
@@ -63,6 +68,7 @@ function toGeminiBody(opts: GenerateOptions) {
          text. thinkingConfig.thinkingBudget:0 is not a workaround: 3.6-flash
          rejects it with a 400 and 3.8-flash ignores it. */
       ...(opts.maxTokens ? { maxOutputTokens: opts.maxTokens } : {}),
+      ...(opts.thinking ? { thinkingConfig: { thinkingLevel: opts.thinking } } : {}),
     },
   };
   body.safetySettings = SAFETY_SETTINGS;
@@ -246,6 +252,93 @@ export const geminiProvider: AIProvider = {
 
   extractMemories(transcript: ChatMessage[], existingMemories: string[], clock?: ExtractionClock): Promise<ExtractedMemory[]> {
     return extractMemoriesVia(this, transcript, existingMemories, clock);
+  },
+
+  /* Speech, streamed. Gemini sends base64 PCM inside SSE frames; this decodes
+     them as they come and hands back the raw bytes, so the browser can start
+     playing the first syllable while the rest of the sentence is generated.
+     Deliberately no safetySettings: the text has already been through
+     generation and its filters, and a second pass would make a reply that
+     exists on screen and cannot be heard. */
+  async speak(text: string, voice: string, signal?: AbortSignal): Promise<SpeechStream> {
+    const res = await post(`models/${encodeURIComponent(speechModel())}:streamGenerateContent?alt=sse`, {
+      contents: [{ role: "user", parts: [{ text }] }],
+      generationConfig: {
+        responseModalities: ["AUDIO"],
+        speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } },
+      },
+    }, signal);
+    if (!res.ok || !res.body) throw classify(res.status, (await res.text().catch(() => "")) || "no detail");
+
+    let rate = 24000;
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let first: Uint8Array | null = null;
+
+    /* Read up to the first audio before answering, so a request that fails
+       before speaking fails as an error rather than as silence. */
+    const pull = async (): Promise<Uint8Array[] | null> => {
+      const { done, value } = await reader.read();
+      if (done) return null;
+      buffer += decoder.decode(value, { stream: true });
+      const frames = buffer.split(/\r?\n\r?\n/);
+      buffer = frames.pop() ?? "";
+      const out: Uint8Array[] = [];
+      for (const frame of frames) {
+        const line = frame.split(/\r?\n/).find((l) => l.startsWith("data:"));
+        if (!line) continue;
+        let evt: { candidates?: { content?: { parts?: { inlineData?: { data?: string; mimeType?: string } }[] } }[]; promptFeedback?: { blockReason?: string } };
+        try { evt = JSON.parse(line.slice(5).trim()); } catch { continue; }
+        if (evt.promptFeedback?.blockReason) throw new ProviderError("blocked", `Speech was blocked (${evt.promptFeedback.blockReason}).`);
+        for (const p of evt.candidates?.[0]?.content?.parts ?? []) {
+          const d = p.inlineData;
+          if (!d?.data) continue;
+          rate = Number(/rate=(\d+)/.exec(d.mimeType ?? "")?.[1] ?? rate);
+          out.push(Uint8Array.from(Buffer.from(d.data, "base64")));
+        }
+      }
+      return out;
+    };
+
+    while (!first) {
+      const got = await pull();
+      if (got === null) throw new ProviderError("empty", "No audio came back.");
+      if (got.length) {
+        first = got[0];
+        const queued = got.slice(1);
+        return {
+          rate,
+          audio: new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(first!);
+              for (const q of queued) controller.enqueue(q);
+            },
+            /* Must enqueue something or close before returning: a pull that
+               resolves having added nothing is never called again, and the
+               stream stalls mid-sentence with nothing to say why. SSE frames
+               without audio in them are common, so keep reading past them. */
+            async pull(controller) {
+              try {
+                for (;;) {
+                  const more = await pull();
+                  if (more === null) { controller.close(); return; }
+                  if (!more.length) continue;
+                  for (const m of more) controller.enqueue(m);
+                  return;
+                }
+              } catch (err) {
+                controller.error(err);
+              }
+            },
+            /* The user interrupting cancels this; the upstream read it abandons
+               must not surface as an unhandled rejection. */
+            cancel() { reader.cancel().catch(() => {}); },
+          }),
+        };
+      }
+    }
+    throw new ProviderError("empty", "No audio came back.");
   },
 
   /* Grounded in Google Search. What the model half-remembers about a famous

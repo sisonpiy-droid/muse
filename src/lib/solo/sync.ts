@@ -89,6 +89,7 @@ export function mergeStates(base: SoloState, theirs: SoloState, ours: SoloState)
     muses: mergeList(base.muses, theirs.muses, ours.muses),
     memories: mergeList(base.memories, theirs.memories, ours.memories),
     circles: mergeList(base.circles ?? [], theirs.circles ?? [], ours.circles ?? []),
+    calls: mergeList(base.calls ?? [], theirs.calls ?? [], ours.calls ?? []),
     conversations: mergeRecord(base.conversations, theirs.conversations, ours.conversations,
       (b, t, o) => mergeList(b ?? [], t, o)),
     vibes: mergeRecord(base.vibes, theirs.vibes, ours.vibes),
