@@ -21,13 +21,17 @@ export function MessageActions({
   onEdit,
   onDelete,
   onDeleteFrom,
+  onDone,
 }: {
   content: string;
   onReply: () => void;
   onEdit: (text: string) => void;
   onDelete: () => void;
   onDeleteFrom: () => void;
+  /** Called once an action is taken, so the thread can close the message. */
+  onDone?: () => void;
 }) {
+  const done = () => onDone?.();
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(content);
 
@@ -41,21 +45,22 @@ export function MessageActions({
           autoFocus
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Escape") { setEditing(false); setText(content); }
+            if (e.key === "Escape") { setEditing(false); setText(content); done(); }
             if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
               if (text.trim()) onEdit(text.trim());
               setEditing(false);
+              done();
             }
           }}
         />
         <div className="row" style={{ gap: "0.5rem", marginTop: "0.4rem" }}>
           <button
             className="link-btn"
-            onClick={() => { if (text.trim()) onEdit(text.trim()); setEditing(false); }}
+            onClick={() => { if (text.trim()) onEdit(text.trim()); setEditing(false); done(); }}
           >
             Save
           </button>
-          <button className="link-btn" onClick={() => { setEditing(false); setText(content); }}>
+          <button className="link-btn" onClick={() => { setEditing(false); setText(content); done(); }}>
             Cancel
           </button>
         </div>
@@ -65,12 +70,12 @@ export function MessageActions({
 
   return (
     <span className="msg-actions">
-      <button onClick={onReply} aria-label="Reply to this message">reply</button>
+      <button onClick={() => { onReply(); done(); }} aria-label="Reply to this message">reply</button>
       <button onClick={() => { setText(content); setEditing(true); }} aria-label="Edit message">edit</button>
-      <button onClick={onDelete} aria-label="Delete message">delete</button>
+      <button onClick={() => { onDelete(); done(); }} aria-label="Delete message">delete</button>
       <button
         onClick={() => {
-          if (confirm("Delete this message and everything after it?")) onDeleteFrom();
+          if (confirm("Delete this message and everything after it?")) { onDeleteFrom(); done(); }
         }}
         aria-label="Delete this message and everything after it"
       >

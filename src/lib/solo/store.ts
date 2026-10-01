@@ -17,7 +17,7 @@ import { rankMemories, type RankableMemory } from "@/lib/memory/rank";
  * worse than one that forgets.
  */
 
-const KEY = "muse.solo/1";
+export const KEY = "muse.solo/1";
 
 export interface SoloMemory {
   id: string;
@@ -31,6 +31,15 @@ export interface SoloMemory {
      worked on meaning, and on any turn where embedding failed -- ranking falls
      back to word overlap rather than breaking, so this stays optional. */
   embedding?: number[];
+  /* The absolute moment a plan or an event is for, ISO. Set when the
+     conversation fixed one ("tomorrow at 11" said at 11pm Wednesday is
+     Thursday 11:00 in their timezone), so it can be said every turn whether
+     that moment is still ahead or has passed. */
+  at?: string;
+  /* The circle this was learned in. Absent: learned one to one. A memory is
+     the character's wherever it was learned -- what they were told privately
+     goes into a group with them, marked private so it is not repeated there. */
+  circleId?: string;
 }
 
 export interface SoloMessage {
@@ -144,6 +153,9 @@ export interface SoloState {
   /* Set only when stored data existed but could not be read. Never persisted;
      it exists to stop an empty state being written over something recoverable. */
   corrupt?: boolean;
+  /* Bumped on every write and stored first in the string, so another tab can
+     tell whether disk has moved on since it last looked. See sync.ts. */
+  rev?: number;
 }
 
 const slug = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
@@ -216,6 +228,7 @@ export function loadState(): SoloState {
       edits: parsed.edits ?? {},
       feelings: parsed.feelings ?? {},
       forgotten: parsed.forgotten ?? {},
+      rev: typeof parsed.rev === "number" ? parsed.rev : 0,
     };
   } catch (err) {
     /* Unreadable, which is not the same as absent.
@@ -260,7 +273,8 @@ export function saveState(state: SoloState): SaveResult {
 
   let serialised: string;
   try {
-    serialised = JSON.stringify(state);
+    /* rev first, so sync.ts can read it off the front without parsing megabytes. */
+    serialised = JSON.stringify({ rev: state.rev ?? 0, ...state });
   } catch (err) {
     console.error("solo save failed to serialise", err);
     return { ok: false, reason: "unavailable", bytes: 0 };
@@ -401,10 +415,21 @@ export function memoriesForTurn(
   state: SoloState,
   museId: string,
   query: string,
-  queryEmbedding?: number[] | null
+  queryEmbedding?: number[] | null,
+  opts: {
+    /* In a circle: anything not learned in this one is marked (private), and
+       the prompt says not to repeat it to the room. */
+    room?: string;
+    now?: number;
+  } = {}
 ): string[] {
-  const mine = state.memories.filter((m) => m.museId === museId);
+  const now = opts.now ?? Date.now();
+  /* Plans near enough to matter go through plansForTurn, with their status. */
+  const mine = state.memories.filter((m) => m.museId === museId && !isPlan(m, now));
   if (!mine.length) return [];
+  const byContent = new Map(mine.map((m) => [m.content, m]));
+  const label = (m: SoloMemory | undefined, c: string) =>
+    opts.room !== undefined && m?.circleId !== opts.room ? `(private) ${c}` : c;
 
   const newest = [...mine].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   /* Who they are rather than what happened: events are what retrieval is for. */
@@ -423,8 +448,37 @@ export function memoriesForTurn(
   };
   for (const m of standing) add(m.content);
   for (const m of newest.slice(0, 4)) add(m.content);
-  for (const c of relevantMemories(state, museId, query, queryEmbedding)) add(c);
-  return out;
+  for (const c of relevantMemories(state, museId, query, queryEmbedding)) if (byContent.has(c)) add(c);
+  return out.map((c) => label(byContent.get(c), c));
+}
+
+/* How far either side of now a dated memory counts as a plan, rather than as
+   something that happened once and is simply a fact now. */
+const PLAN_PAST_MS = 14 * 24 * 3600_000;
+const PLAN_AHEAD_MS = 90 * 24 * 3600_000;
+const PLANS_PER_TURN = 8;
+
+function isPlan(m: SoloMemory, now: number): boolean {
+  if (!m.at) return false;
+  const t = Date.parse(m.at);
+  return Number.isFinite(t) && t > now - PLAN_PAST_MS && t < now + PLAN_AHEAD_MS;
+}
+
+/** Dated plans and events for this turn, nearest first, each with its moment. */
+export function plansForTurn(
+  state: SoloState,
+  museId: string,
+  opts: { room?: string; now?: number } = {}
+): { what: string; at: string }[] {
+  const now = opts.now ?? Date.now();
+  return state.memories
+    .filter((m) => m.museId === museId && isPlan(m, now))
+    .sort((a, b) => Math.abs(Date.parse(a.at!) - now) - Math.abs(Date.parse(b.at!) - now))
+    .slice(0, PLANS_PER_TURN)
+    .map((m) => ({
+      what: (opts.room !== undefined && m.circleId !== opts.room ? "(private) " : "") + m.content,
+      at: m.at!,
+    }));
 }
 
 /* How much of the conversation goes with each turn.
@@ -491,10 +545,14 @@ export function addMemories(
     content: string; type: string; importance: number; confidence: number;
     /* Indexes into `known` that this fact makes untrue. */
     replaces?: number[];
+    /** The moment a plan or event is for, already resolved to ISO by the route. */
+    when?: string | null;
   }[],
   /* The list the indexes point into -- exactly what was sent for extraction, in
      the same order. Without it a `replaces` index means nothing. */
-  known: string[] = []
+  known: string[] = [],
+  /** Where it was learned. Absent: one to one. */
+  where: { circleId?: string } = {}
 ): SoloState {
   const alreadyHave = new Set(
     state.memories.filter((m) => m.museId === museId).map((m) => m.content.trim().toLowerCase())
@@ -521,6 +579,8 @@ export function addMemories(
     importance: m.importance,
     confidence: m.confidence,
     createdAt: new Date().toISOString(),
+    ...(typeof m.when === "string" && Number.isFinite(Date.parse(m.when)) ? { at: new Date(m.when).toISOString() } : {}),
+    ...(where.circleId ? { circleId: where.circleId } : {}),
   }));
 
   /* Things that have stopped being true.

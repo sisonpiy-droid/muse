@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { streamGuarded, userFacingError } from "@/lib/ai";
 import { circleBlock, circleHistory, coveredBlock, coveredGround, personaSystem } from "@/lib/presence/persona";
+import { previousMoment, stampPauses } from "@/lib/presence/time";
 
 /* One turn in a circle: several people in a room, one of them replying.
  *
@@ -69,6 +70,8 @@ const bodySchema = z.object({
             content: z.string().min(1).max(300),
           })
           .optional(),
+        /** When it was sent, ISO. */
+        at: z.string().max(40).optional(),
       })
     )
     .min(1)
@@ -77,7 +80,11 @@ const bodySchema = z.object({
   topic: z.string().max(300).optional(),
   roomTraits: traitList,
   /** What the speaker remembers about the user from talking one to one. */
-  memories: z.array(z.string().max(400)).max(12).default([]),
+  /* Everything the speaker remembers about the user. Lines learned anywhere
+     but this circle arrive marked "(private)" -- see circleBlock. */
+  memories: z.array(z.string().max(420)).max(12).default([]),
+  /** The speaker's dated plans and events, each with its instant. */
+  plans: z.array(z.object({ what: z.string().max(430), at: z.string().max(40) })).max(8).default([]),
   /** Maps a speakerId to a display name, so the transcript reads as a room. */
   names: z.record(z.string(), z.string().max(60)),
   userName: z.string().trim().max(80).nullish(),
@@ -110,8 +117,15 @@ export async function POST(req: Request) {
   if (!parsed.success) {
     return Response.json({ error: "Check the request and try again." }, { status: 400 });
   }
-  const { circleName, speaker, others, log, names, userName, timezone, mood, register, feelings, topic, roomTraits, memories } =
+  const { circleName, speaker, others, log, names, userName, timezone, mood, register, feelings, topic, roomTraits, memories, plans } =
     parsed.data;
+  const tz = timezone ?? undefined;
+  const now = Date.now();
+  const asTimed = log.map((m) => ({ role: m.from === "user" ? ("user" as const) : ("assistant" as const), content: m.content, at: m.at }));
+  const clock = { now, previousAt: previousMoment(asTimed), plans };
+  /* Pauses marked on the user's lines, before the room is labelled. */
+  const stamped = stampPauses(asTimed, tz, now);
+  const timedLog = log.map((m, i) => ({ ...m, content: stamped[i].content }));
 
   if (log.reduce((n, m) => n + m.content.length, 0) > MAX_TOTAL_CHARS) {
     return Response.json({ error: "This conversation has got too long to send." }, { status: 413 });
@@ -119,7 +133,7 @@ export async function POST(req: Request) {
 
   const you = userName?.trim() || speaker.persona.you || "them";
 
-  const messages = circleHistory(log, speaker.id, you, (id) => names[id] ?? "Someone");
+  const messages = circleHistory(timedLog, speaker.id, you, (id) => names[id] ?? "Someone");
 
   const system =
     personaSystem(
@@ -127,8 +141,9 @@ export async function POST(req: Request) {
       memories,
       false,
       { mood: mood || "any", topic: "any", register: register || "texts" },
-      timezone ?? undefined,
-      feelings ?? undefined
+      tz,
+      feelings ?? undefined,
+      clock
     ) +
     coveredBlock(coveredGround(messages), you) +
     circleBlock({ you, me: speaker.persona.them, others, circleName, topic, roomTraits });

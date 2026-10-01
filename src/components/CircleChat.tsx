@@ -10,10 +10,12 @@ import { REGISTERS, hasFeelings, splitBurst } from "@/lib/presence/persona";
 import type { Update } from "@/app/solo/page";
 import {
   QUOTE_CHARS, circleOf, deleteFrom, deleteMessage, editCircle, editMessage, editMuse, feelingsOf,
-  insertAfter, membersOf, memoriesForTurn, newMessage, promptPersona, quoteOf, rewindTo, windowOf,
+  insertAfter, membersOf, memoriesForTurn, newMessage, plansForTurn, promptPersona, quoteOf, rewindTo, windowOf,
   type SoloCircle, type SoloMessage, type SoloMuse, type SoloState,
 } from "@/lib/solo/store";
+import { learnFrom } from "@/lib/solo/learn";
 import { MessageActions } from "./MessageActions";
+import { Turn } from "./Turn";
 
 /* A circle: several people in one conversation.
  *
@@ -46,6 +48,8 @@ export function CircleChat({
   const [speaking, setSpeaking] = useState<{ name: string; text: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [replyTo, setReplyTo] = useState<SoloMessage | null>(null);
+  /* The message whose actions are open. One at a time, like any chat app. */
+  const [picked, setPicked] = useState<string | null>(null);
   const [panelOpen, setPanelOpen] = useState(false);
   const foot = useRef<HTMLDivElement>(null);
   const box = useRef<HTMLTextAreaElement>(null);
@@ -135,6 +139,7 @@ export function CircleChat({
                 from: x.from,
                 speakerId: x.speakerId,
                 content: x.content.slice(0, 8000),
+                at: x.at,
                 ...(q ? { quote: { from: q.from, speakerId: q.speakerId, content: q.content.slice(0, QUOTE_CHARS) } } : {}),
               };
             }),
@@ -143,7 +148,13 @@ export function CircleChat({
             timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
             register: "texts",
             /* So nobody in the room asks what you already told them. */
-            memories: memoriesForTurn(s, m.id, unanswered.map((u) => u.content).join("\n")).map((x) => x.slice(0, 400)),
+            /* Their own memories, wherever learned. Anything from outside this
+               room is marked private: it shapes what they say here without
+               being repeated in front of the others. The 1:1 thread itself is
+               never sent. */
+            memories: memoriesForTurn(s, m.id, unanswered.map((u) => u.content).join("\n"), null, { room: room.id })
+              .map((x) => x.slice(0, 420)),
+            plans: plansForTurn(s, m.id, { room: room.id }).map((p) => ({ what: p.what.slice(0, 430), at: p.at })),
             topic: room.topic?.trim() || undefined,
             roomTraits: room.traits?.length ? room.traits.slice(0, 8) : undefined,
             /* Each speaker brings their own standing state into the room. One
@@ -203,6 +214,20 @@ export function CircleChat({
       }
     }
     setSpeaking(null);
+
+    /* What the user said in the room becomes memory for everyone in it -- they
+       all heard it. Learned here, so marked as known to this room. */
+    if (!signal.aborted) {
+      const nameById = new Map(people.map((p) => [p.id, p.name]));
+      void learnFrom({
+        museIds: people.map((p) => p.id),
+        window: running.slice(-10),
+        state: latest.current,
+        update,
+        circleId: room.id,
+        nameOf: (x) => nameById.get(x.speakerId ?? "") ?? "Someone",
+      });
+    }
   }
 
   /* Same rule as one to one: an edit to your latest message redoes the room's
@@ -238,7 +263,7 @@ export function CircleChat({
         <div className="stack-avatars">
           {members.slice(0, 3).map((m) => <Avatar key={m.id} name={m.name} />)}
         </div>
-        <div style={{ minWidth: 0 }}>
+        <div className="chat-who">
           <h1>{circle.name}</h1>
           <div className="rel">
             {members.map((m) => m.name).join(", ")}
@@ -262,8 +287,9 @@ export function CircleChat({
 
         {log.map((m) => {
           const q = quoteOf(log, m);
+          const replyHere = () => { setReplyTo(m); setPicked(null); box.current?.focus(); };
           return (
-            <div key={m.id} id={`msg-${m.id}`} className={m.from === "user" ? "turn turn-user" : "turn turn-muse"}>
+            <Turn key={m.id} id={m.id} mine={m.from === "user"} picked={picked === m.id} onPick={setPicked} onReply={replyHere}>
               {m.from === "muse" && <span className="who">{nameOf(m.speakerId ?? "")}</span>}
               {m.replyTo && (
                 <QuoteBubble who={q ? whoSaid(q) : ""} text={q?.content} onJump={q ? () => jumpTo(q.id) : undefined} />
@@ -272,12 +298,13 @@ export function CircleChat({
               {m.edited && <span className="stamp"> · edited</span>}
               <MessageActions
                 content={m.content}
-                onReply={() => { setReplyTo(m); box.current?.focus(); }}
+                onReply={replyHere}
                 onEdit={(text) => editLine(m, text)}
                 onDelete={() => update(deleteMessage(state, circle.id, m.id))}
                 onDeleteFrom={() => update(deleteFrom(state, circle.id, m.id))}
+                onDone={() => setPicked(null)}
               />
-            </div>
+            </Turn>
           );
         })}
 

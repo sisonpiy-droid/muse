@@ -4,6 +4,7 @@ import { streamGuarded, userFacingError } from "@/lib/ai";
 import { looksLikeRefusal } from "@/lib/ai/refusal";
 import { buildMuseSystemPrompt } from "@/lib/muse/prompt";
 import { coveredBlock, coveredGround, personaSystem, withQuote, type Feelings } from "@/lib/presence/persona";
+import { previousMoment, stampPauses, timeBlock } from "@/lib/presence/time";
 
 /* Several texts in a row are one turn.
  *
@@ -73,6 +74,8 @@ const bodySchema = z.object({
         quote: z
           .object({ role: z.enum(["user", "assistant"]), content: z.string().min(1).max(300) })
           .optional(),
+        /** When it was sent, ISO. Optional only so an older client still works. */
+        at: z.string().max(40).optional(),
       })
     )
     .min(1)
@@ -121,6 +124,8 @@ const bodySchema = z.object({
     })
     .nullish(),
   memories: z.array(z.string().max(400)).max(12).default([]),
+  /** Dated plans and events, each with the instant it is for. */
+  plans: z.array(z.object({ what: z.string().max(420), at: z.string().max(40) })).max(8).default([]),
   userName: z.string().trim().max(80).nullish(),
   timezone: z.string().max(64).nullish(),
 });
@@ -142,8 +147,13 @@ export async function POST(req: Request) {
   if (!parsed.success) {
     return Response.json({ error: "Check the request and try again." }, { status: 400 });
   }
-  const { muse, persona, knows, mood, topic, register, feelings, messages, memories, userName, timezone } =
+  const { muse, persona, knows, mood, topic, register, feelings, messages, memories, plans, userName, timezone } =
     parsed.data;
+  const tz = timezone ?? undefined;
+  /* The server's clock, not the phone's: a phone set five minutes wrong should
+     not move a meeting. Timestamps on messages are compared against it. */
+  const now = Date.now();
+  const clock = { now, previousAt: previousMoment(messages), plans };
 
   const standing: Feelings | undefined = feelings ?? undefined;
 
@@ -156,13 +166,18 @@ export async function POST(req: Request) {
     (m) => !(m.role === "assistant" && looksLikeRefusal(m.content))
   );
   const messagesForModel = mergeRuns(
-    (cleaned.length ? cleaned : messages).map((m) => ({
-      role: m.role,
-      content: withQuote(
-        m.content,
-        m.quote && { who: m.quote.role === "assistant" ? "you" : "their own earlier message", text: m.quote.content }
-      ),
-    }))
+    stampPauses(
+      (cleaned.length ? cleaned : messages).map((m) => ({
+        role: m.role,
+        at: m.at,
+        content: withQuote(
+          m.content,
+          m.quote && { who: m.quote.role === "assistant" ? "you" : "their own earlier message", text: m.quote.content }
+        ),
+      })),
+      tz,
+      now
+    ).map(({ role, content }) => ({ role, content }))
   );
 
   const total = messages.reduce((n, m) => n + m.content.length, 0)
@@ -176,7 +191,7 @@ export async function POST(req: Request) {
         mood: mood || "any",
         topic: topic || "any",
         register: register || "texts",
-      }, timezone ?? undefined, standing) +
+      }, tz, standing, clock) +
       /* Computed from the character's own past turns, not asked of the model.
          A model cannot see its own loop -- each turn reads fine alone. */
       coveredBlock(coveredGround(messagesForModel), userName || "they") +
@@ -214,7 +229,9 @@ You may mention them, ask after them, or have opinions about them. Do not invent
     memories,
     localTime: new Date(),
     timezone: timezone ?? undefined,
-      });
+      }) + `
+
+${timeBlock({ you: userName || "them", timeZone: tz, ...clock })}`;
 
   /* Progressively less of the real message data, for when the provider will not
      accept the full profile.

@@ -68,6 +68,17 @@ export interface ExtractedMemory {
      character that believed both at once, and both got injected into the same
      prompt. Usually empty. */
   replaces?: number[];
+  /** For a plan or event with a known moment: ISO, resolved to the user's timezone. */
+  when?: string | null;
+}
+
+/* When the conversation being mined happened. Without it "tomorrow at 11"
+   could only be stored as the words "tomorrow at 11", which are wrong a day later. */
+export interface ExtractionClock {
+  timeZone?: string;
+  now: number;
+  /** One per transcript message, same order. */
+  at?: (string | undefined)[];
 }
 
 export interface AIProvider {
@@ -88,7 +99,8 @@ export interface AIProvider {
 
   extractMemories(
     transcript: ChatMessage[],
-    existingMemories: string[]
+    existingMemories: string[],
+    clock?: ExtractionClock
   ): Promise<ExtractedMemory[]>;
 
   /** A reply grounded in a live web search, with the pages it drew on.

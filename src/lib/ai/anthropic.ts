@@ -3,7 +3,7 @@ import { sseData } from "./sse";
 import {
   AIProvider,
   ChatMessage,
-  ExtractedMemory,
+  ExtractedMemory, ExtractionClock,
   GenerateOptions,
   GenerateResult,
   ProviderError,
@@ -129,7 +129,7 @@ export const anthropicProvider: AIProvider = {
     return out;
   },
 
-  extractMemories(transcript: ChatMessage[], existing: string[]): Promise<ExtractedMemory[]> {
-    return extractMemoriesVia(this, transcript, existing);
+  extractMemories(transcript: ChatMessage[], existing: string[], clock?: ExtractionClock): Promise<ExtractedMemory[]> {
+    return extractMemoriesVia(this, transcript, existing, clock);
   },
 };

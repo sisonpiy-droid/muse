@@ -8,9 +8,11 @@ import { CircleChat } from "@/components/CircleChat";
 import { EditMuse } from "@/components/EditMuse";
 import { ImportPersona } from "@/components/ImportPersona";
 import { Memories } from "@/components/Memories";
+import { Menu } from "@/components/Menu";
 import { MessageActions } from "@/components/MessageActions";
 import { QuoteBubble, ReplyBar, jumpTo } from "@/components/Quote";
 import { TraitEditor } from "@/components/TraitEditor";
+import { Turn } from "@/components/Turn";
 import { useReplyLoop } from "@/components/useReplyLoop";
 import { MADE_TAB, TABS } from "@/lib/personas";
 import {
@@ -19,14 +21,16 @@ import {
 } from "@/lib/presence/persona";
 import { safeFilename, transcriptMarkdown } from "@/lib/export";
 import {
-  QUOTE_CHARS, addMemories, allMuses, attachEmbeddings, circleOf, deleteCircle, deleteConversation,
+  QUOTE_CHARS, allMuses, attachEmbeddings, circleOf, deleteCircle, deleteConversation,
   deleteFrom, deleteMemory, deleteMessage, deleteMuse, download, editMemory, editMessage,
-  editMuse, feelingsOf, findMuse, forgetAll, inTab, insertAfter, isEdited, knownTo, loadState,
+  editMuse, feelingsOf, findMuse, forgetAll, inTab, insertAfter, isEdited, knownTo, KEY as STORE_KEY,
   membersOf, memoriesOf, needsEmbedding, newMessage, parseBackup, promptPersona, quoteOf,
-  memoriesForTurn, resetMuse, rewindTo, saveState, windowOf, worthRecalling,
+  memoriesForTurn, plansForTurn, resetMuse, rewindTo, windowOf, worthRecalling,
   setFeelings,
   type SoloCircle, type SoloMessage, type SoloMuse, type SoloState,
 } from "@/lib/solo/store";
+import { Persister } from "@/lib/solo/sync";
+import { embedTexts, learnFrom } from "@/lib/solo/learn";
 
 /** The circles live under the tabs too, as their own. */
 const CIRCLES_TAB = "Circles";
@@ -116,8 +120,12 @@ export default function SoloPage() {
      the lot on reload. Silence there is the worst failure the product has. */
   const [saveIssue, setSaveIssue] = useState<null | "quota" | "unavailable" | "nearly" | "corrupt">(null);
 
-  /* Skips the write that would immediately follow the first read. */
-  const loaded = useRef(false);
+  /* One per page: it remembers what disk looked like when this tab last read
+     or wrote it, which is what makes a second tab merge instead of overwrite. */
+  const persist = useRef<Persister | null>(null);
+  /* The newest state, for the listeners below, which outlive any one render. */
+  const latestState = useRef<SoloState | null>(null);
+  useLayoutEffect(() => { latestState.current = state; });
 
   /* Deliberately not a lazy useState initializer: this runs during SSR too,
      where there is no localStorage, so the server and the client's first
@@ -126,8 +134,8 @@ export default function SoloPage() {
   /* A reload keeps the screen it was on: the entry survives it, and so do the
      ones behind it, so back still works afterwards. */
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setState(loadState());
+    persist.current = new Persister();
+    setState(persist.current.open());
     const entry = asEntry(window.history.state);
     if (entry) setView(entry.view);
     else window.history.replaceState({ muse: 1, view: { kind: "home" }, depth: 0 } satisfies Entry, "");
@@ -141,15 +149,53 @@ export default function SoloPage() {
      discarded when it landed. Callers now pass a function of the current state
      instead, and the save happens once, here, on whatever actually committed. */
   useEffect(() => {
-    if (!state) return;
-    if (!loaded.current) { loaded.current = true; return; }
-    const saved = saveState(state);
+    const p = persist.current;
+    if (!state || !p || state === p.persisted) return;
+    const { result: saved, state: written } = p.save(state);
+    /* Another copy had written in the meantime and the two were merged: show
+       the merged state, which is now what is on disk. */
+    if (written !== state) setState(written);
     const issue = saved.ok ? (saved.nearlyFull ? "nearly" : null) : saved.reason;
     /* Only when it actually changes. This runs on every state change, which is
        every keystroke-driven write, and setting the same value each time would
        schedule a render per save for no reason. */
     setSaveIssue((cur) => (cur === issue ? cur : issue));
   }, [state]);
+
+  const ready = state !== null;
+  /* Other copies of the app, and the trip into the background.
+     - storage: another tab wrote. Fold its changes in now, while they are small.
+     - visible again / restored from the back-forward cache: the same, because a
+       frozen phone tab hears no storage events.
+     - hidden / pagehide: save whatever has not been, because on a phone that is
+       the last moment any code is guaranteed to run. */
+  useEffect(() => {
+    const p = persist.current;
+    if (!p) return;
+    const pull = () => {
+      const cur = latestState.current;
+      if (!cur) return;
+      const next = p.refresh(cur);
+      if (next) setState(next);
+    };
+    const flush = () => {
+      const cur = latestState.current;
+      if (cur && cur !== p.persisted) p.save(cur);
+    };
+    const onStorage = (e: StorageEvent) => { if (e.key === STORE_KEY) pull(); };
+    const onVisibility = () => (document.visibilityState === "visible" ? pull() : flush());
+    const onShow = (e: PageTransitionEvent) => { if (e.persisted) pull(); };
+    window.addEventListener("storage", onStorage);
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("pagehide", flush);
+    window.addEventListener("pageshow", onShow);
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("pagehide", flush);
+      window.removeEventListener("pageshow", onShow);
+    };
+  }, [ready]);
 
   const update: Update = (next) =>
     setState((cur) => (typeof next === "function" ? next(cur as SoloState) : next));
@@ -413,7 +459,7 @@ function blurbOf(tab: string): string {
  * were talking to most recently, because opening a tab to carry on a
  * conversation you had an hour ago is a tap too many. */
 function SoloHome({
-  state, update, onOpen, onEdit, onImport, onInvent, onFigure, onNewCircle, onTab,
+  state, update, onOpen, onImport, onInvent, onFigure, onNewCircle, onTab,
 }: { state: SoloState; update: Update } & Nav) {
   const [name, setName] = useState(state.userName ?? "");
   const muses = allMuses(state);
@@ -465,19 +511,22 @@ function SoloHome({
 
       {state.userName && (
         <>
-          <h2 className="section-title">Make someone new</h2>
-          <MakeRow onImport={() => onImport()} onFigure={() => onFigure()} onInvent={() => onInvent()} onNewCircle={onNewCircle} />
-
+          {/* The people you are already talking to come first. Making someone
+              new is the rarer thing, and four full-width panels of it pushed
+              your own chats below the fold on a phone. */}
           {recent.length > 0 && (
             <>
               <h2 className="section-title">Continue talking</h2>
               <div className="card-grid">
                 {recent.map((m) => (
-                  <MuseCard key={m.id} muse={m} state={state} update={update} onOpen={onOpen} onEdit={onEdit} />
+                  <MuseCard key={m.id} muse={m} state={state} onOpen={onOpen} />
                 ))}
               </div>
             </>
           )}
+
+          <h2 className="section-title">Make someone new</h2>
+          <MakeRow onImport={() => onImport()} onFigure={() => onFigure()} onInvent={() => onInvent()} onNewCircle={onNewCircle} />
 
           <h2 className="section-title">Your people</h2>
           <div className="tab-tiles">
@@ -566,7 +615,7 @@ function SoloHome({
  * through home, which is how people actually browse -- "who's in family,
  * actually who's in close friends". */
 function SoloTab({
-  state, update, tab, onHome, onOpen, onEdit, onImport, onInvent, onFigure, onOpenCircle, onNewCircle, onTab,
+  state, update, tab, onHome, onOpen, onImport, onInvent, onFigure, onOpenCircle, onNewCircle, onTab,
 }: { state: SoloState; update: Update; tab: string; onHome: () => void } & Nav) {
   const all = [...TABS.map((t) => t.id as string), MADE_TAB, CIRCLES_TAB];
   const people = tab === CIRCLES_TAB ? [] : inTab(state, tab);
@@ -613,7 +662,7 @@ function SoloTab({
           {people.length ? (
             <div className="card-grid">
               {people.map((m) => (
-                <MuseCard key={m.id} muse={m} state={state} update={update} onOpen={onOpen} onEdit={onEdit} />
+                <MuseCard key={m.id} muse={m} state={state} onOpen={onOpen} />
               ))}
             </div>
           ) : (
@@ -649,7 +698,7 @@ function MakeRow({
       </button>
       <button className="make" onClick={onFigure}>
         <b>Someone in public life</b>
-        <span>Built from what they said in public</span>
+        <span>Any celebrity, creator or character</span>
       </button>
       {/* This was always possible and had no door. You had to open "From a chat
           export", get to the second question, and pick "Someone I made up" --
@@ -709,19 +758,18 @@ function countOf(n: number, one: string, many: string): string {
   return n === 0 ? "none yet" : `${n} ${n === 1 ? one : many}`;
 }
 
+/* No edit or delete links under the card any more: they sat one mis-tap from
+   "delete chat" on a phone, and they are all in the chat's ⋯ menu now. */
 function MuseCard({
-  muse, state, update, onOpen, onEdit,
+  muse, state, onOpen,
 }: {
   muse: SoloMuse;
   state: SoloState;
-  update: Update;
   onOpen: (id: string) => void;
-  onEdit: (id: string) => void;
 }) {
   const log = state.conversations[muse.id] ?? [];
   const last = log[log.length - 1];
-  const remembered = state.memories.filter((m) => m.museId === muse.id).length;
-  const hasThread = log.length > 0;
+  const when = last ? ago(new Date(last.at).getTime()) : "";
 
   return (
     <div className="card-wrap">
@@ -730,9 +778,7 @@ function MuseCard({
       <div style={{ minWidth: 0, flex: 1 }}>
         <div className="row" style={{ gap: "0.5rem", justifyContent: "space-between" }}>
           <h3>{muse.name}</h3>
-          {remembered > 0 && (
-            <span className="stamp">remembers {remembered}</span>
-          )}
+          {when && <span className="stamp">{when}</span>}
         </div>
         <span className="rel">{muse.relationshipType}</span>
         <p style={last ? { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } : undefined}>
@@ -746,39 +792,6 @@ function MuseCard({
       </div>
     </button>
 
-    {/* Outside the card button — a delete control nested inside a button is
-        not clickable, and screen readers announce it as one control. */}
-    <div className="card-actions">
-      <button className="safe" onClick={() => onEdit(muse.id)}>edit</button>
-      {hasThread && (
-        <button
-          onClick={() => {
-            if (!confirm(`Delete your conversation with ${muse.name}?
-
-OK also forgets what they learned. Cancel keeps the memories.`)) {
-              if (confirm(`Delete the conversation but keep what ${muse.name} remembers?`)) {
-                update(deleteConversation(state, muse.id, false));
-              }
-              return;
-            }
-            update(deleteConversation(state, muse.id, true));
-          }}
-        >
-          delete chat
-        </button>
-      )}
-      {!muse.builtin && (
-        <button
-          onClick={() => {
-            if (confirm(`Delete ${muse.name} completely? Their conversation and everything they remember goes too.`)) {
-              update(deleteMuse(state, muse.id));
-            }
-          }}
-        >
-          delete {muse.name}
-        </button>
-      )}
-    </div>
     </div>
   );
 }
@@ -796,6 +809,8 @@ function SoloChat({
   onMemories: () => void;
 }) {
   const log = state.conversations[muse.id] ?? [];
+  /* The message whose actions are open. One at a time, like any chat app. */
+  const [picked, setPicked] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [streaming, setStreaming] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -884,7 +899,6 @@ function SoloChat({
 
     const vibeNow: Vibe = s.vibes?.[muse.id] ?? DEFAULT_VIBE;
     const feelingsNow = feelingsOf(s, muse.id);
-    const known = s.memories.filter((m) => m.museId === muse.id);
 
     // The last few turns, so retrieval follows the subject rather than a
     // two-word reply carrying no signal.
@@ -933,6 +947,7 @@ function SoloChat({
               /* Same reasoning: one pasted message over the route's limit sat in
                  the window and killed every turn after it, permanently. */
               content: m.content.slice(0, MAX_MESSAGE),
+              at: m.at,
               ...(q
                 ? { quote: { role: q.from === "user" ? "user" : "assistant", content: q.content.slice(0, QUOTE_CHARS) } }
                 : {}),
@@ -961,6 +976,9 @@ function SoloChat({
              and a single one of those 400s the whole request the moment it
              ranks into the top eight. */
           memories: memories.map((m) => m.slice(0, 400)),
+          /* Dated plans, each with its instant, so the reply knows whether
+             "tomorrow at 11" is still ahead or already behind. */
+          plans: plansForTurn(s, muse.id).map((p) => ({ what: p.what.slice(0, 420), at: p.at })),
           userName: s.userName,
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         }),
@@ -1017,7 +1035,7 @@ function SoloChat({
 
       /* Extraction runs after the reply is on screen and never blocks it, the
          same shape as the server app's aftercare. */
-      void learnFrom(muse.id, [...thread, ...answer].slice(-8), known, update);
+      void learnFrom({ museIds: [muse.id], window: [...thread, ...answer].slice(-8), state: s, update });
     } catch {
       if (!signal.aborted) setError("You're offline.");
     } finally {
@@ -1052,7 +1070,7 @@ function SoloChat({
     update((cur) => editMessage(cur, muse.id, m.id, text));
     if (m.from === "user") {
       const window = log.slice(Math.max(0, at - 7), at + 1).map((x) => (x.id === m.id ? { ...x, content: text } : x));
-      void learnFrom(muse.id, window, memoriesFor, update);
+      void learnFrom({ museIds: [muse.id], window, state, update });
     }
   }
 
@@ -1088,7 +1106,7 @@ function SoloChat({
       <header className="chat-head">
         <button className="link-btn" onClick={onBack} aria-label="Back" style={{ textDecoration: "none" }}>←</button>
         <Avatar name={muse.name} />
-        <div style={{ minWidth: 0 }}>
+        <div className="chat-who">
           <h1>{muse.name}</h1>
           <div className="rel">
             {muse.relationshipType}
@@ -1110,11 +1128,46 @@ function SoloChat({
             )}
           </div>
         </div>
-        <div className="row" style={{ marginLeft: "auto", gap: "0.5rem" }}>
-          <button className="link-btn" onClick={onEdit} title={`Edit ${muse.name}`}>edit</button>
-          <button className="link-btn" onClick={exportChat} disabled={!log.length} title="Export conversation">chat ↓</button>
-          <button className="link-btn" onClick={exportPersona} title="Export persona">persona ↓</button>
-        </div>
+        <Menu
+          label={`More for ${muse.name}`}
+          items={[
+            { label: `Edit ${muse.name}`, onSelect: onEdit },
+            { label: `What ${muse.name} remembers`, onSelect: onMemories },
+            "divider",
+            { label: "Save this chat", onSelect: exportChat, disabled: !log.length },
+            { label: `Save ${muse.name} as a file`, onSelect: exportPersona },
+            "divider",
+            {
+              label: "Clear this chat",
+              disabled: !log.length,
+              onSelect: () => {
+                if (confirm(`Clear your conversation with ${muse.name}? They keep what they remember about you.`)) {
+                  update(deleteConversation(state, muse.id, false));
+                }
+              },
+            },
+            {
+              label: "Clear chat and memories",
+              danger: true,
+              disabled: !log.length && !memoriesFor.length,
+              onSelect: () => {
+                if (confirm(`Clear the conversation and everything ${muse.name} remembers? This cannot be undone.`)) {
+                  update(deleteConversation(state, muse.id, true));
+                }
+              },
+            },
+            ...(muse.builtin ? [] : [{
+              label: `Delete ${muse.name}`,
+              danger: true,
+              onSelect: () => {
+                if (confirm(`Delete ${muse.name} completely? Their conversation and everything they remember goes too.`)) {
+                  onBack();
+                  update((cur) => deleteMuse(cur, muse.id));
+                }
+              },
+            }]),
+          ]}
+        />
       </header>
 
       <div className="thread" role="log" aria-live="polite" aria-label={`Conversation with ${muse.name}`}>
@@ -1127,8 +1180,9 @@ function SoloChat({
 
         {log.map((m) => {
           const q = quoteOf(log, m);
+          const replyHere = () => { setReplyTo(m); setPicked(null); box.current?.focus(); };
           return (
-            <div key={m.id} id={`msg-${m.id}`} className={m.from === "user" ? "turn turn-user" : "turn turn-muse"}>
+            <Turn key={m.id} id={m.id} mine={m.from === "user"} picked={picked === m.id} onPick={setPicked} onReply={replyHere}>
               {m.replyTo && (
                 <QuoteBubble who={q ? nameOf(q) : ""} text={q?.content} onJump={q ? () => jumpTo(q.id) : undefined} />
               )}
@@ -1136,12 +1190,13 @@ function SoloChat({
               {m.edited && <span className="stamp"> · edited</span>}
               <MessageActions
                 content={m.content}
-                onReply={() => { setReplyTo(m); box.current?.focus(); }}
+                onReply={replyHere}
                 onEdit={(text) => editLine(m, text)}
                 onDelete={() => update(deleteMessage(state, muse.id, m.id))}
                 onDeleteFrom={() => update(deleteFrom(state, muse.id, m.id))}
+                onDone={() => setPicked(null)}
               />
-            </div>
+            </Turn>
           );
         })}
 
@@ -1265,46 +1320,6 @@ function SoloChat({
   );
 }
 
-/* Memory extraction over a window of the thread. Never blocks anything and
- * never surfaces an error -- a missed memory is not worth a banner. `known` is
- * captured by the caller and reused for the write-back, because `replaces`
- * comes back as indexes into exactly this list; recomputing it after the round
- * trip would renumber it and delete the wrong memory. */
-async function learnFrom(museId: string, window: SoloMessage[], knownMemories: SoloState["memories"], update: Update) {
-  const known = knownMemories.slice(-60).map((m) => m.content);
-  try {
-    const r = await fetch("/api/solo/remember", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        messages: window.map((m) => ({ role: m.from === "user" ? "user" : "assistant", content: m.content })),
-        known,
-      }),
-    });
-    const { memories: found } = await r.json();
-    if (!Array.isArray(found) || !found.length) return;
-    /* Read at commit time, not from the snapshot this started with -- see the
-       save effect above. */
-    update((cur) => addMemories(cur, museId, found, known));
-    /* Embedded straight away so the next turn can recall them by meaning.
-       Separate from the write so a slow or failed embedding never delays the
-       memory itself landing. */
-    const texts = found.map((f: { content: string }) => f.content);
-    const vecs = await embedTexts(texts);
-    if (!vecs) return;
-    update((cur) => {
-      const byContent = new Map(texts.map((t: string, i: number) => [t, vecs[i]]));
-      const patch: Record<string, number[] | null> = {};
-      for (const m of cur.memories) {
-        if (m.museId !== museId || m.embedding?.length) continue;
-        const v = byContent.get(m.content);
-        if (v) patch[m.id] = v;
-      }
-      return attachEmbeddings(cur, patch);
-    });
-  } catch { /* a missed memory is not worth an error banner */ }
-}
-
 /** Offered as one-tap additions wherever traits are edited. */
 const TRAIT_IDEAS = ["funny", "sarcastic", "caring", "blunt", "chill", "dramatic", "flirty", "nosy", "savage", "soft"];
 
@@ -1420,27 +1435,22 @@ function isDefaultVibe(v: Vibe): boolean {
   return v.mood === DEFAULT_VIBE.mood && v.topic === DEFAULT_VIBE.topic && v.register === DEFAULT_VIBE.register;
 }
 
-/** Vectors for some text, or null when there is no embedding model configured
- *  or the call fails. Never throws: worse recall for one turn is not worth
- *  failing a message over. */
-async function embedTexts(texts: string[]): Promise<(number[] | null)[] | null> {
-  if (!texts.length) return null;
-  try {
-    const res = await fetch("/api/solo/embed", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ texts }),
-    });
-    if (!res.ok) return null;
-    const { vectors } = await res.json();
-    return Array.isArray(vectors) ? vectors : null;
-  } catch {
-    return null;
-  }
-}
-
 function lastAt(state: SoloState, museId: string): number {
   const log = state.conversations[museId];
   if (!log?.length) return 0;
   return new Date(log[log.length - 1].at).getTime();
+}
+
+/** When you last talked, the way a chat list says it: "now", "14m", "3h", "Mon", "12 Sep". */
+function ago(ts: number): string {
+  const s = (Date.now() - ts) / 1000;
+  if (s < 60) return "now";
+  if (s < 3600) return `${Math.floor(s / 60)}m`;
+  const d = new Date(ts);
+  const today = new Date();
+  if (d.toDateString() === today.toDateString()) return `${Math.floor(s / 3600)}h`;
+  const yesterday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1);
+  if (d.toDateString() === yesterday.toDateString()) return "yesterday";
+  if (s < 6 * 86400) return d.toLocaleDateString(undefined, { weekday: "short" });
+  return d.toLocaleDateString(undefined, { day: "numeric", month: "short" });
 }

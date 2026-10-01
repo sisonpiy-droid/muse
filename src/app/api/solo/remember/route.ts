@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { getProvider } from "@/lib/ai";
+import { resolveWhen } from "@/lib/presence/time";
 
 /* Memory extraction for solo mode. Stateless: the client sends the turn and
    what it already knows, and gets back new memories to store itself.
@@ -29,7 +30,12 @@ const KNOWN_CHARS = 400;
 
 const bodySchema = z.object({
   messages: z
-    .array(z.object({ role: z.enum(["user", "assistant"]), content: z.string().max(8000) }))
+    .array(z.object({
+      role: z.enum(["user", "assistant"]),
+      content: z.string().max(8000),
+      /* When it was said. What lets "tomorrow at 11" become a date. */
+      at: z.string().max(40).optional(),
+    }))
     .min(1)
     .max(40),
   known: z
@@ -43,6 +49,7 @@ const bodySchema = z.object({
         .slice(-KNOWN_MAX)
         .map((x) => x.slice(0, KNOWN_CHARS))
     ),
+  timezone: z.string().max(64).nullish(),
 });
 
 export async function POST(req: Request) {
@@ -66,7 +73,16 @@ export async function POST(req: Request) {
   }
 
   try {
-    const memories = await getProvider().extractMemories(parsed.data.messages, parsed.data.known);
+    const { messages, known, timezone } = parsed.data;
+    const tz = timezone ?? undefined;
+    const found = await getProvider().extractMemories(
+      messages.map(({ role, content }) => ({ role, content })),
+      known,
+      { timeZone: tz, now: Date.now(), at: messages.map((m) => m.at) }
+    );
+    /* Resolved here, against the user's own timezone, so the client only ever
+       stores an absolute instant. */
+    const memories = found.map((m) => ({ ...m, when: resolveWhen(m.when, tz) }));
     return Response.json({ memories });
   } catch (err) {
     /* Never fails the caller. A missed memory is a smaller harm than an error

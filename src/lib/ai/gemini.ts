@@ -1,8 +1,11 @@
+import { offsetOf, wallClock } from "@/lib/presence/time";
+
 import { sseData } from "./sse";
 import {
   AIProvider,
   ChatMessage,
   ExtractedMemory,
+  ExtractionClock,
   GenerateOptions,
   GenerateResult,
   ProviderError,
@@ -241,8 +244,8 @@ export const geminiProvider: AIProvider = {
     return out;
   },
 
-  extractMemories(transcript: ChatMessage[], existingMemories: string[]): Promise<ExtractedMemory[]> {
-    return extractMemoriesVia(this, transcript, existingMemories);
+  extractMemories(transcript: ChatMessage[], existingMemories: string[], clock?: ExtractionClock): Promise<ExtractedMemory[]> {
+    return extractMemoriesVia(this, transcript, existingMemories, clock);
   },
 
   /* Grounded in Google Search. What the model half-remembers about a famous
@@ -290,9 +293,21 @@ export const geminiProvider: AIProvider = {
 export async function extractMemoriesVia(
   provider: AIProvider,
   transcript: ChatMessage[],
-  existingMemories: string[]
+  existingMemories: string[],
+  clock?: ExtractionClock
 ): Promise<ExtractedMemory[]> {
-  const convo = transcript.map((m) => `${m.role === "user" ? "User" : "Muse"}: ${m.content}`).join("\n");
+  const tz = clock?.timeZone;
+  /* Each line stamped with when it was said, in their own timezone, so
+     "tomorrow" can be turned into a date. */
+  const stamp = (i: number) => {
+    const at = clock?.at?.[i];
+    const t = at ? Date.parse(at) : NaN;
+    return Number.isFinite(t) ? `[${wallClock(t, tz)}] ` : "";
+  };
+  const convo = transcript.map((m, i) => `${stamp(i)}${m.role === "user" ? "User" : "Muse"}: ${m.content}`).join("\n");
+  const timing = clock
+    ? `It is now ${wallClock(clock.now, tz)} where the user is (timezone ${tz || "UTC"}, UTC${offsetOf(tz, clock.now)}). Lines are stamped with when they were said.\n\n`
+    : "";
   /* Numbered, so a new fact can point at the one it replaces. */
   const known = existingMemories.length
     ? `Already known. Do not repeat these, but note their numbers -- you may need one:\n${existingMemories
@@ -302,10 +317,22 @@ export async function extractMemoriesVia(
 
   const system = `You pull durable facts out of a conversation so a companion can remember them later.
 
-${known}
+${timing}${known}
 
 Return ONLY a JSON array. No prose, no code fence. Each item:
-{"content": string, "type": "PERMANENT"|"PREFERENCE"|"GOAL"|"RELATIONSHIP"|"EVENT", "importance": 1-5, "confidence": 0-1, "replaces": number[] }
+{"content": string, "type": "PERMANENT"|"PREFERENCE"|"GOAL"|"RELATIONSHIP"|"EVENT", "importance": 1-5, "confidence": 0-1, "replaces": number[], "when": string|null }
+
+Plans, appointments and dated events -- a meeting, an exam, a trip, a deadline,
+something that happened on a particular day -- are EVENTs. For an EVENT whose
+moment the conversation pins down, set "when" to that moment as ISO 8601 with the
+user's UTC offset, e.g. "2026-10-02T11:00:00+05:30", working it out from when the
+line was said: "tomorrow at 11" said on Wednesday night is Thursday 11:00. Write
+the content with the actual day and date ("User plans to meet Rhea at 11:00 on
+Thursday 2 October"), never with words like today, tonight or tomorrow, which
+stop being true. "when" is null for anything without a definite moment. A plan
+is a plan: record that it was arranged, not that it happened. If a later line
+says how a plan went, or that it moved, that is a new fact which replaces the
+plan.
 
 "replaces" lists the numbers of any known facts this one makes untrue, and is
 usually empty. People change jobs, move city, end relationships, stop smoking --
@@ -387,6 +414,8 @@ export function parseMemories(raw: string): ExtractedMemory[] {
             .map((i) => Number(i))
             .filter((i) => Number.isInteger(i) && i >= 0)
         : [],
+      /* Raw here; the route resolves it against the user's timezone. */
+      when: typeof m.when === "string" && m.when.trim() ? m.when.trim() : null,
     }))
     .filter((m) => m.content.length > 0 && m.content.length <= 500);
 }

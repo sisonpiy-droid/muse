@@ -1,3 +1,5 @@
+import { timeBlock, type Plan } from "./time";
+
 /* Presence's persona model, ported verbatim.
  *
  * These blocks are the reason Presence produced characters that sounded like
@@ -491,7 +493,10 @@ export function personaSystem(
   timeZone?: string,
   /* Standing state, set once and carried between conversations. Optional so
      every existing call site keeps producing exactly the prompt it did. */
-  feelings?: Feelings
+  feelings?: Feelings,
+  /* Real time: how long the conversation was paused and where each plan
+     stands. Without it the prompt only knows what time it is now. */
+  clock?: { now: number; previousAt?: string | null; plans?: Plan[] }
 ): string {
   const callsYou = p.callsYou?.trim() || p.you?.trim() || "";
   const arch = pick(ARCHETYPES, p.arch, ARCHETYPES.other);
@@ -503,7 +508,7 @@ export function personaSystem(
   const about = [p.extra, p.interests].map((x) => (x || "").trim()).filter(Boolean).join("\n");
   return `You are ${p.them}. You are texting ${p.you}${callsYou && callsYou !== p.you ? `, who you call ${callsYou}` : ""}. You were ${p.relationship}. ${mode.frame(p)}
 
-${timeContext(timeZone)}
+${clock ? timeBlock({ you: p.you, timeZone, ...clock }) : timeContext(timeZone)}
 
 WHO YOU ARE
 ${p.brief}
@@ -801,9 +806,11 @@ HOW TO BE IN A GROUP
   someone's side, pick up something they said two messages ago.
 - Never speak for anyone else and never write their lines. Say your own part and
   stop.
-- What you remember about ${you} comes from talking one to one. Use it the way a
-  friend would in company: it shapes what you say, but you do not announce
-  something private to the room.
+- In what you remember about ${you}, lines marked (private) are things they told
+  you on your own, outside this group. Use them the way a friend would in
+  company: they shape what you say, but you never repeat them, hint at them or
+  reveal you know them in front of the others unless ${you} brings it up here
+  first. Unmarked lines were said in this group, so everyone here knows them.
 - Do not narrate the room or announce that you are joining in. No stage
   directions.
 - Keep it shorter than you would one to one. In a group people interrupt and

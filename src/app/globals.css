@@ -254,14 +254,77 @@ a { color: inherit; }
   align-items: center;
   gap: 0.75rem;
   padding: 0.85rem 0;
-  background: color-mix(in srgb, var(--bg) 88%, transparent);
-  backdrop-filter: blur(14px);
   border-bottom: 1px solid var(--edge);
 }
+/* The blur lives on a layer behind the header, not on the header itself: with
+   backdrop-filter on the parent, Chrome let the conversation show through the
+   ⋯ menu that hangs below it. */
+.chat-head::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
 .chat-head h1 { font-family: var(--serif); font-size: 1.1rem; font-weight: 400; margin: 0; }
-.chat-head .rel { color: var(--faint); font-size: 0.72rem; }
+.chat-head .rel {
+  color: var(--faint);
+  font-size: 0.72rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.chat-who { flex: 1; min-width: 0; }
 
-.thread { padding: 1.25rem 0 1rem; display: flex; flex-direction: column; gap: 0.4rem; }
+.menu { position: relative; margin-left: auto; flex: 0 0 auto; }
+.menu-btn {
+  display: grid;
+  place-items: center;
+  width: var(--tap);
+  height: var(--tap);
+  border-radius: var(--r-full);
+  border: 0;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+.menu-btn:hover, .menu-btn[aria-expanded="true"] { background: var(--surface-2); color: var(--ink); }
+.menu-list {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 0.35rem);
+  z-index: 10;
+  min-width: 14rem;
+  padding: 0.35rem;
+  background: var(--surface-2);
+  border: 1px solid var(--edge-lit);
+  border-radius: var(--r-md);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.45);
+  display: flex;
+  flex-direction: column;
+  animation: rise 140ms var(--ease) both;
+}
+.menu-list button {
+  font: inherit;
+  font-size: 0.88rem;
+  text-align: left;
+  color: var(--ink);
+  background: none;
+  border: 0;
+  border-radius: var(--r-sm);
+  padding: 0.65rem 0.75rem;
+  cursor: pointer;
+}
+.menu-list button:hover:not(:disabled) { background: var(--surface); }
+.menu-list button:disabled { color: var(--faint); cursor: default; opacity: 0.6; }
+.menu-list button.danger { color: var(--danger); }
+.menu-list hr { border: 0; border-top: 1px solid var(--edge); margin: 0.3rem 0.4rem; }
+
+/* flex: 1 so a short conversation still has its composer at the bottom of
+   the screen, where a thumb expects it, rather than halfway up. */
+.thread { flex: 1; padding: 1.25rem 0 1rem; display: flex; flex-direction: column; gap: 0.4rem; }
 
 .turn { animation: rise 300ms var(--ease) both; max-width: 84%; }
 @keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
@@ -392,8 +455,50 @@ a { color: inherit; }
   transition: opacity 140ms var(--ease);
 }
 .turn:hover .msg-actions,
-.turn:focus-within .msg-actions { opacity: 1; }
-@media (hover: none) { .msg-actions { opacity: 1; } }
+.turn:focus-within .msg-actions,
+.turn.is-picked .msg-actions { opacity: 1; }
+
+/* On a phone there is no hover to hide them behind, and four links under
+   every line nearly doubled a conversation. They take no room until a message
+   is tapped, and they are real buttons when they do. */
+@media (hover: none) {
+  .msg-actions { display: none; }
+  .turn.is-picked .msg-actions { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.55rem; }
+  .turn.is-picked .msg-actions button {
+    font-size: 0.78rem;
+    text-decoration: none;
+    color: var(--muted);
+    background: var(--surface-2);
+    border: 1px solid var(--edge-lit);
+    border-radius: var(--r-full);
+    padding: 0.4rem 0.8rem;
+    font-family: var(--sans);
+  }
+}
+
+/* The tapped message, without moving anything around it. */
+.turn { position: relative; transition: transform 160ms var(--ease); -webkit-tap-highlight-color: transparent; }
+.turn-muse.is-picked { background: var(--surface); box-shadow: 0 0 0 0.5rem var(--surface); border-radius: var(--r-sm); }
+.turn-user.is-picked { border-color: var(--edge-lit); background: var(--surface-2); }
+
+/* Swipe to reply. The arrow appears once letting go would reply. */
+.turn[data-swiping] { transition: none; }
+.turn[data-swiping]::before {
+  content: "↩";
+  position: absolute;
+  left: -2rem;
+  top: 50%;
+  transform: translateY(-50%) scale(0.7);
+  color: var(--faint);
+  font-family: var(--sans);
+  font-size: 1rem;
+  opacity: 0.5;
+  transition: transform 120ms var(--ease), opacity 120ms var(--ease);
+}
+.turn[data-swiping="ready"]::before { color: var(--accent); opacity: 1; transform: translateY(-50%) scale(1); }
+
+/* A burst of texts reads as a burst, not as separate paragraphs. */
+.turn-muse + .turn-muse { margin-top: 0.1rem; }
 
 .msg-actions button {
   font: inherit;
@@ -530,7 +635,8 @@ a { color: inherit; }
    once and then talk to them for months, so the weight was backwards. */
 .make-row {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr));
+  /* Two across even on a phone: four stacked full-width rows was most of a screen. */
+  grid-template-columns: repeat(auto-fit, minmax(min(calc(50% - 0.3rem), 13rem), 1fr));
   gap: 0.6rem;
 }
 .make {
