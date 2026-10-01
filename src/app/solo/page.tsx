@@ -5,6 +5,8 @@ import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Avatar } from "@/components/Avatar";
 import { BuildFigure } from "@/components/BuildFigure";
 import { CallScreen } from "@/components/CallScreen";
+import { OutreachPanel, applyOutreach } from "@/components/OutreachPanel";
+import { useOutreach } from "@/components/useOutreach";
 import { CircleChat } from "@/components/CircleChat";
 import { EditMuse } from "@/components/EditMuse";
 import { ImportPersona } from "@/components/ImportPersona";
@@ -34,6 +36,7 @@ import { Persister } from "@/lib/solo/sync";
 import { embedTexts, learnFrom } from "@/lib/solo/learn";
 import { MAX_MESSAGE, prepareTurn, streamReply } from "@/lib/solo/turn";
 import { canListen } from "@/lib/voice/listener";
+import { settingsOf } from "@/lib/proactive/client";
 import { speaker } from "@/lib/voice/speaker";
 
 /** The circles live under the tabs too, as their own. */
@@ -213,6 +216,10 @@ export default function SoloPage() {
 
   const update: Update = (next) =>
     setState((cur) => (typeof next === "function" ? next(cur as SoloState) : next));
+
+  /* Texts a Muse sent first: collected into the thread, notification taps
+     landed on the right conversation, new reasons offered to the server. */
+  useOutreach(state, latestState, update, (museId) => go({ kind: "chat", museId }));
 
   const banner = saveIssue && state && (
     <div className={saveIssue === "nearly" ? "notice" : "notice notice-bad"} role="alert">
@@ -577,6 +584,9 @@ function SoloHome({
             ))}
           </div>
 
+          <h2 className="section-title">Texts from them</h2>
+          <OutreachPanel state={state} update={update} />
+
           <div className="row" style={{ marginTop: "2.5rem", gap: "0.75rem", flexWrap: "wrap" }}>
             <button
               className="btn-ghost"
@@ -637,8 +647,10 @@ function SoloHome({
       )}
 
       <p className="fine" style={{ marginTop: "2.5rem" }}>
-        Every Muse is an AI. Nothing is stored on a server — clearing this browser&apos;s data deletes
-        it all, and there is no way to get it back.
+        Every Muse is an AI. Your people, conversations and memories are never stored on a server —
+        clearing this browser&apos;s data deletes them all, and there is no way to get them back.
+        {settingsOf(state).proactiveEnabled &&
+          " The one exception: a text someone has scheduled to send you waits on the server until it is sent."}
       </p>
     </main>
   );
@@ -1074,6 +1086,19 @@ function SoloChat({
           items={[
             { label: `Edit ${muse.name}`, onSelect: onEdit },
             { label: `What ${muse.name} remembers`, onSelect: onMemories },
+            {
+              label: settingsOf(state).proactiveEnabled && settingsOf(state).allowedMuseIds.includes(muse.id)
+                ? `Stop ${muse.name} texting first`
+                : `Let ${muse.name} text you first`,
+              onSelect: () => {
+                const cur = settingsOf(state);
+                const on = cur.proactiveEnabled && cur.allowedMuseIds.includes(muse.id);
+                void applyOutreach(state, update, {
+                  proactiveEnabled: on ? cur.proactiveEnabled : true,
+                  allowedMuseIds: on ? cur.allowedMuseIds.filter((x) => x !== muse.id) : [...new Set([...cur.allowedMuseIds, muse.id])],
+                }, !on && !cur.proactiveEnabled);
+              },
+            },
             "divider",
             { label: "Save this chat", onSelect: exportChat, disabled: !log.length },
             { label: `Save ${muse.name} as a file`, onSelect: exportPersona },

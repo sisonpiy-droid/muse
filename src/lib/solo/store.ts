@@ -63,6 +63,51 @@ export interface SoloMessage {
   callId?: string;
   /** A spoken reply cut off by the user talking over it: content is what was actually heard. */
   interrupted?: boolean;
+  /* The Muse texted first: this came from the server's outreach, collected
+     into the thread like any other message. `responded` once they replied. */
+  proactive?: { interactionId: string; responded?: boolean };
+}
+
+/* Outreach, as the app knows it. The server holds the finished messages and
+   their times; this is the app's side -- the settings it last saved, which
+   memories it has already offered, and what is pending, so it can call one
+   off when the user brings the subject up first. */
+export interface OutreachSettings {
+  proactiveEnabled: boolean;
+  initiationFrequency: "NEVER" | "RARELY" | "SOMETIMES" | "OFTEN";
+  /** Minutes from local midnight. */
+  quietHoursStart: number;
+  quietHoursEnd: number;
+  maxDailyProactive: number;
+  allowedMuseIds: string[];
+}
+
+export const DEFAULT_OUTREACH: OutreachSettings = {
+  proactiveEnabled: false,
+  initiationFrequency: "SOMETIMES",
+  quietHoursStart: 22 * 60,
+  quietHoursEnd: 8 * 60,
+  maxDailyProactive: 1,
+  allowedMuseIds: [],
+};
+
+export interface OutreachTrigger {
+  id: string;
+  museId: string;
+  sourceMemoryId: string;
+  type: string;
+  reason: string;
+  scheduledFor: string;
+  keywords: string[];
+  createdAt: string;
+  status: "PENDING" | "CANCELLED" | "SENT";
+}
+
+export interface OutreachState {
+  settings?: OutreachSettings;
+  /** Memory ids already offered to the server, so none is classified twice. */
+  evaluated?: Record<string, true>;
+  triggers?: OutreachTrigger[];
 }
 
 /* A voice call, as a record beside the conversation rather than a second
@@ -163,6 +208,8 @@ export interface SoloState {
   circles?: SoloCircle[];
   /** Voice calls, newest last. Metadata only; what was said is in `conversations`. */
   calls?: SoloCall[];
+  /** Texting first. Off unless switched on. */
+  outreach?: OutreachState;
   /* Changes to a starter, kept as an overlay rather than a copy so the
      originals stay the source of truth. Built characters are edited in place
      and never appear here. */
@@ -258,6 +305,7 @@ export function loadState(): SoloState {
       vibes: parsed.vibes ?? {},
       circles: Array.isArray(parsed.circles) ? parsed.circles : [],
       calls: Array.isArray(parsed.calls) ? parsed.calls : [],
+      outreach: parsed.outreach ?? {},
       edits: parsed.edits ?? {},
       feelings: parsed.feelings ?? {},
       forgotten: parsed.forgotten ?? {},

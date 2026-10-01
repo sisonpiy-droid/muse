@@ -7,7 +7,7 @@
     "build": "prisma generate && next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "tsx tests/sse.test.mjs && tsx tests/rank.test.mjs && tsx tests/prompt.test.mjs && tsx tests/chat-import.test.mjs && tsx tests/refusal.test.mjs && tsx tests/persona-edit.test.mjs && tsx tests/guard.test.mjs && tsx tests/memory-store.test.mjs && tsx tests/participant.test.mjs && tsx tests/transcript.test.mjs && tsx tests/conversation.test.mjs && tsx tests/threads.test.mjs && tsx tests/research.test.mjs && tsx tests/sync-time.test.mjs && tsx tests/voice.test.mjs",
+    "test": "tsx tests/sse.test.mjs && tsx tests/rank.test.mjs && tsx tests/prompt.test.mjs && tsx tests/chat-import.test.mjs && tsx tests/refusal.test.mjs && tsx tests/persona-edit.test.mjs && tsx tests/guard.test.mjs && tsx tests/memory-store.test.mjs && tsx tests/participant.test.mjs && tsx tests/transcript.test.mjs && tsx tests/conversation.test.mjs && tsx tests/threads.test.mjs && tsx tests/research.test.mjs && tsx tests/sync-time.test.mjs && tsx tests/voice.test.mjs && tsx tests/outreach.test.mjs",
     "typecheck": "tsc --noEmit",
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate dev",
@@ -28,6 +28,7 @@
     "prisma": "7.10.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
+    "web-push": "^3.6.7",
     "zod": "^4.5.4"
   },
   "devDependencies": {
@@ -37,6 +38,7 @@
     "@types/pg": "^8.23.1",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@types/web-push": "^3.6.4",
     "dotenv": "^17.4.2",
     "eslint": "^9",
     "eslint-config-next": "16.3.4",

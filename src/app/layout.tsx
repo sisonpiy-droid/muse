@@ -20,6 +20,10 @@ const serif = Newsreader({
 export const metadata: Metadata = {
   title: "MUSE — create anyone, talk to anyone",
   description: "AI personalities who remember you.",
+  /* Added to an iPhone Home Screen, MUSE opens as an app -- and only then can
+     Safari show it a notification. */
+  appleWebApp: { capable: true, title: "MUSE", statusBarStyle: "black-translucent" },
+  icons: { icon: "/icon-192.png", apple: "/apple-touch-icon.png" },
 };
 
 export const viewport: Viewport = {

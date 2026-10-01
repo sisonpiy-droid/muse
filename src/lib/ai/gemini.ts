@@ -422,10 +422,18 @@ user's UTC offset, e.g. "2026-10-02T11:00:00+05:30", working it out from when th
 line was said: "tomorrow at 11" said on Wednesday night is Thursday 11:00. Write
 the content with the actual day and date ("User plans to meet Rhea at 11:00 on
 Thursday 2 October"), never with words like today, tonight or tomorrow, which
-stop being true. "when" is null for anything without a definite moment. A plan
+stop being true. If only the day is known ("a presentation on Monday"), give
+that date alone, e.g. "2026-10-05" -- a day is enough to know when it is.
+"when" is null only when not even the day is known. A plan
 is a plan: record that it was arranged, not that it happened. If a later line
 says how a plan went, or that it moved, that is a new fact which replaces the
 plan.
+
+Two kinds of EVENT matter in particular. If the user asks to be reminded of
+something, record "User asked to be reminded on <day and date> to <what>",
+with "when" set to the moment they want the reminder. If the user says they
+will report back ("I'll tell you tomorrow how it goes"), record "User said they
+would tell the Muse how <what> went", with "when" set to when that was due.
 
 "replaces" lists the numbers of any known facts this one makes untrue, and is
 usually empty. People change jobs, move city, end relationships, stop smoking --

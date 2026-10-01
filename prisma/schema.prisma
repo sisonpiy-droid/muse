@@ -496,3 +496,123 @@ model Report {
   @@index([status])
   @@index([museId])
 }
+
+// ------------------------------------------------- proactive outreach (solo)
+//
+// Solo mode has no accounts and keeps every character, conversation and
+// memory in the browser. Outreach is the one thing that has to happen with the
+// browser closed, so it is the one thing the server holds -- and it holds as
+// little as possible: an anonymous device with its settings and push address,
+// and for each reason to reach out, the finished message and when to send it.
+// Never the persona, never the memories, never the conversation.
+//
+// Settings reuse the account app's names (User.proactiveEnabled/timezone,
+// MuseBehaviour.initiationFrequency/quietHours*/maxDailyProactive) so the two
+// can be merged once accounts are on.
+
+enum ProactiveTriggerType {
+  UPCOMING_EVENT
+  REMINDER
+  FOLLOW_UP
+  GOAL_CHECK_IN
+}
+
+enum ProactiveTriggerStatus {
+  PENDING
+  SENT
+  SKIPPED
+  CANCELLED
+  EXPIRED
+}
+
+enum ProactiveInteractionStatus {
+  SENT
+  OPENED
+  RESPONDED
+  DISMISSED
+  FAILED
+}
+
+model OutreachDevice {
+  /// Random, generated in the browser and known only to it. Doubles as its credential.
+  id       String @id
+  timezone String @default("UTC")
+
+  proactiveEnabled    Boolean             @default(false)
+  initiationFrequency InitiationFrequency @default(SOMETIMES)
+  /// Minutes from local midnight, as in MuseBehaviour.
+  quietHoursStart   Int @default(1320) // 22:00
+  quietHoursEnd     Int @default(480)  // 08:00
+  maxDailyProactive Int @default(1)
+  /// Which Muses may text first (MuseBehaviour.messagingPermission = ALLOWED, per Muse).
+  allowedMuseIds String[] @default([])
+
+  /// Web Push subscription. Absent: outreach still waits in the app for next open.
+  pushEndpoint String?
+  pushP256dh   String?
+  pushAuth     String?
+
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  lastSeenAt DateTime @default(now())
+
+  triggers     ProactiveTrigger[]
+  interactions ProactiveInteraction[]
+}
+
+model ProactiveTrigger {
+  id       String @id @default(cuid())
+  deviceId String
+  /// The Muse's id in the browser's store, and the name to show on the notification.
+  museId   String
+  museName String
+
+  type ProactiveTriggerType
+  /// A few words, for the decision engine and the record: "interview on Friday".
+  reason         String
+  /// The browser-side memory this came from. One trigger per memory, ever.
+  sourceMemoryId String
+
+  /// When the event itself is, if it has a moment. Past it, an UPCOMING_EVENT is moot.
+  eventAt      DateTime?
+  scheduledFor DateTime
+  expiresAt    DateTime
+  /// Written in the Muse's voice when the trigger was made, from that memory alone.
+  message      String
+
+  status          ProactiveTriggerStatus @default(PENDING)
+  statusReason    String?
+  lastEvaluatedAt DateTime?
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+
+  device      OutreachDevice        @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  interaction ProactiveInteraction?
+
+  @@unique([deviceId, sourceMemoryId])
+  @@index([status, scheduledFor])
+  @@index([deviceId, museId])
+}
+
+model ProactiveInteraction {
+  id        String @id @default(cuid())
+  deviceId  String
+  museId    String
+  triggerId String @unique
+
+  message     String
+  sentAt      DateTime  @default(now())
+  /// Picked up by the app and added to the conversation.
+  collectedAt DateTime?
+  openedAt    DateTime?
+  respondedAt DateTime?
+  /// Whether a push went out; the app collects it either way.
+  pushed      Boolean   @default(false)
+
+  status ProactiveInteractionStatus @default(SENT)
+
+  device  OutreachDevice   @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  trigger ProactiveTrigger @relation(fields: [triggerId], references: [id], onDelete: Cascade)
+
+  @@index([deviceId, sentAt])
+}
