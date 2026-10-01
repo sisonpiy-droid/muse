@@ -880,7 +880,10 @@ function SoloChat({
     latest.current = state;
   });
 
-  const loop = useReplyLoop(reply);
+  /* Owed a reply: the thread ends with something the user said. Checked on
+     opening the chat and on coming back to the app, so a reply interrupted by
+     leaving, a reload or a dead connection is picked up rather than lost. */
+  const loop = useReplyLoop(muse.id, reply, () => (latest.current.conversations[muse.id] ?? []).at(-1)?.from === "user");
 
   const vibe: Vibe = state.vibes?.[muse.id] ?? DEFAULT_VIBE;
   const setVibe = (next: Vibe) =>
@@ -966,7 +969,13 @@ function SoloChat({
       const acc = outcome.text;
 
       const text = acc.trim();
-      if (!text) return;
+      /* Nothing came back. Saying so, with a way to ask again, beats a thread
+         that simply stops. */
+      if (!text) {
+        setError(`${muse.name} didn't answer that time. Try again?`);
+        setCanRetry(true);
+        return;
+      }
       /* Presence tells a texting persona to send several short messages
          separated by a line of ---, because that is how people actually text.
          Splitting them here is what makes that instruction mean anything;

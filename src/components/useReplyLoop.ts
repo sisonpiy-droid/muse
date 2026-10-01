@@ -1,68 +1,98 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useSyncExternalStore } from "react";
 
-/* When a reply gets asked for, so that double-texting works.
+/* When a reply gets asked for, so that double-texting works -- and so that a
+ * reply, once owed, always comes.
  *
- * Sending used to ask for a reply straight away and lock the composer until it
- * came back, so two texts in a row were impossible: the second could not be
- * sent, and if it could have been it would have got its own separate answer.
- * People text in runs. So a send now waits for a short pause first, and every
- * message sent inside that pause is answered together, as one turn.
- *
- * Typing holds it too. Someone halfway through their second message has not
- * finished talking, and a reply landing on top of them is an interruption.
+ * Sending waits for a short pause first, and every message sent inside it is
+ * answered together, as one turn. Typing holds it too: someone halfway through
+ * their second message has not finished talking.
  *
  * A message sent while a reply is already being written is not lost and not
  * interrupted: the reply finishes, and then the loop goes round again for what
- * arrived during it. Only `restart` throws a reply away -- that is for an edit,
- * where what was being answered no longer exists.
+ * arrived during it. Only `restart` throws a reply away -- for an edit, where
+ * what was being answered no longer exists.
+ *
+ * Replies used to belong to the chat screen, and die with it. Opening Edit,
+ * the memories, a call, or just going back while someone was typing cancelled
+ * the reply, and nothing ever asked again: the message sat unanswered until the
+ * user edited it to force a new one. Now:
+ *
+ *   - a reply in progress is tracked per conversation, outside any screen, and
+ *     carries on (and is saved) after the screen closes;
+ *   - leaving during the pause before a reply sends it then, rather than never;
+ *   - opening a conversation, or coming back to the app, answers anything still
+ *     unanswered -- after a reload, after the phone killed the tab, after an
+ *     error -- unless a reply for it is already on its way.
  */
 
 /** How long after a send before asking for a reply. */
 export const REPLY_PAUSE_MS = 1600;
 /** How long a reply waits once someone starts typing again. */
 export const TYPING_PAUSE_MS = 3500;
+/** Opening a conversation that is owed a reply: a moment to settle, then answer. */
+const RESUME_MS = 500;
 
-export function useReplyLoop(run: (signal: AbortSignal) => Promise<void>) {
-  const [busy, setBusy] = useState(false);
+/* Replies in progress, by conversation. Module-level so a screen that closes
+   and opens again sees the reply the previous one started. */
+const flights = new Map<string, AbortController>();
+const listeners = new Map<string, Set<() => void>>();
+
+function notify(key: string) {
+  listeners.get(key)?.forEach((f) => f());
+}
+
+function subscribe(key: string, f: () => void) {
+  let set = listeners.get(key);
+  if (!set) listeners.set(key, (set = new Set()));
+  set.add(f);
+  return () => { set!.delete(f); };
+}
+
+export function useReplyLoop(
+  /** The conversation: a Muse id, or a circle id. */
+  key: string,
+  run: (signal: AbortSignal) => Promise<void>,
+  /** True when the conversation ends with something nobody has answered yet. */
+  owed: () => boolean
+) {
+  const busy = useSyncExternalStore(
+    (f) => subscribe(key, f),
+    () => flights.has(key),
+    () => false
+  );
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const inFlight = useRef<AbortController | null>(null);
   const again = useRef(false);
+  const mounted = useRef(false);
 
-  /* The latest `run`, so a timer set several renders ago still reads the
-     thread as it is now rather than as it was when the timer started. */
+  /* The latest `run` and `owed`, so a timer set several renders ago still
+     reads the thread as it is now rather than as it was when it started. */
   const runRef = useRef(run);
+  const owedRef = useRef(owed);
   useLayoutEffect(() => {
     runRef.current = run;
+    owedRef.current = owed;
   });
-
-  useEffect(
-    () => () => {
-      if (timer.current) clearTimeout(timer.current);
-      inFlight.current?.abort();
-    },
-    []
-  );
 
   async function fire() {
     timer.current = null;
-    if (inFlight.current) {
+    if (flights.has(key)) {
       again.current = true;
       return;
     }
     const ctrl = new AbortController();
-    inFlight.current = ctrl;
-    setBusy(true);
+    flights.set(key, ctrl);
+    notify(key);
     try {
       await runRef.current(ctrl.signal);
     } finally {
-      const wasCurrent = inFlight.current === ctrl;
-      if (wasCurrent) inFlight.current = null;
-      if (!inFlight.current) setBusy(false);
-      if (wasCurrent && again.current) {
+      if (flights.get(key) === ctrl) flights.delete(key);
+      notify(key);
+      if (again.current) {
         again.current = false;
-        schedule();
+        if (mounted.current) schedule();
+        else void fire();
       }
     }
   }
@@ -72,6 +102,30 @@ export function useReplyLoop(run: (signal: AbortSignal) => Promise<void>) {
     timer.current = setTimeout(() => void fire(), delay);
   }
 
+  useEffect(() => {
+    mounted.current = true;
+    /* Owed a reply and none on its way: answer it. */
+    const resume = () => {
+      if (!flights.has(key) && !timer.current && owedRef.current()) schedule(RESUME_MS);
+    };
+    resume();
+    const onVisible = () => { if (document.visibilityState === "visible") resume(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      mounted.current = false;
+      document.removeEventListener("visibilitychange", onVisible);
+      /* Leaving in the pause before a reply: they have finished talking, so
+         ask now instead of dropping it. A reply already in flight carries on. */
+      if (timer.current) {
+        clearTimeout(timer.current);
+        timer.current = null;
+        void fire();
+      }
+    };
+    // Per conversation; the handlers read the latest callbacks through refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+
   /** Someone is typing: push back a reply that has not started yet. */
   function hold() {
     if (timer.current) schedule(TYPING_PAUSE_MS);
@@ -79,8 +133,9 @@ export function useReplyLoop(run: (signal: AbortSignal) => Promise<void>) {
 
   /** Drop whatever is being written and answer the thread as it is now. */
   function restart(delay = 250) {
-    inFlight.current?.abort();
-    inFlight.current = null;
+    flights.get(key)?.abort();
+    flights.delete(key);
+    notify(key);
     again.current = false;
     schedule(delay);
   }

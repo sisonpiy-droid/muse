@@ -60,7 +60,8 @@ export function CircleChat({
     latest.current = state;
   });
 
-  const loop = useReplyLoop(turn);
+  /* Owed a reply when the room ends on something the user said. */
+  const loop = useReplyLoop(circle.id, turn, () => (latest.current.conversations[circle.id] ?? []).at(-1)?.from === "user");
 
   useEffect(() => {
     foot.current?.scrollIntoView({ behavior: "smooth", block: "end" });
