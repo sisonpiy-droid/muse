@@ -46,6 +46,7 @@ const KIND: Record<string, string> = {
   RELATIONSHIP: "people",
   EVENT: "something that happened",
   SHARED: "between you two",
+  PROMISE: "said they'd tell you",
 };
 
 function Row({

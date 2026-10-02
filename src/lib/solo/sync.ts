@@ -100,6 +100,12 @@ export function mergeStates(base: SoloState, theirs: SoloState, ours: SoloState)
     conversations: mergeRecord(base.conversations, theirs.conversations, ours.conversations,
       (b, t, o) => mergeList(b ?? [], t, o)),
     vibes: mergeRecord(base.vibes, theirs.vibes, ours.vibes),
+    lives: mergeRecord(base.lives, theirs.lives, ours.lives),
+    scores: mergeRecord(base.scores, theirs.scores, ours.scores),
+    /* Like tombstones, these only grow: unlocked once is unlocked, started once is started. */
+    unlocked: mergeRecord(base.unlocked, theirs.unlocked, ours.unlocked,
+      (_b, t, o) => [...t, ...o.filter((x) => !t.some((y) => y.key === x.key))]),
+    started: { ...(theirs.started ?? {}), ...(ours.started ?? {}) },
     edits: mergeRecord(base.edits, theirs.edits, ours.edits),
     feelings: mergeRecord(base.feelings, theirs.feelings, ours.feelings),
     /* Tombstones only ever grow: something forgotten in either copy stays forgotten. */

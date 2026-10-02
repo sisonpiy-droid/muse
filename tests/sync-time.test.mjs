@@ -288,10 +288,11 @@ check("a plan long past is just a fact again", () => {
   assert.ok(memoriesForTurn(s, RHEA, "meet", null, { now: later }).some((m) => m.includes("meet Rhea")));
 });
 
-check("the room is told what (private) means", () => {
+check("the room is told what (private) means: remembered, but confidences kept", () => {
   const block = circleBlock({ you: "Sam", me: "Rhea", others: [{ name: "Dev", relationship: "friend" }], circleName: "Goa" });
-  assert.match(block, /lines marked \(private\) are things they told\s+you on your own/);
-  assert.match(block, /never repeat them, hint at them or\s+reveal you know them/);
+  assert.match(block, /You remember everything you and Sam have talked about on your own -- lines\s+marked \(private\)/);
+  assert.match(block, /never act as if you are meeting them\s+fresh/);
+  assert.match(block, /you do not spill it\s+unless Sam brings it up here/);
 });
 
 check("new messages carry a timestamp", () => {

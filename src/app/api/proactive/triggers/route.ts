@@ -60,6 +60,8 @@ const bodySchema = z.object({
     .array(z.object({ role: z.enum(["user", "assistant"]), content: z.string().max(2000), at: z.string().max(40).optional() }))
     .max(8)
     .default([]),
+  /** Her storylines, for telling a story she promised. Not stored. */
+  life: z.array(z.string().max(400)).max(6).default([]),
 });
 
 export async function POST(req: Request) {
@@ -93,9 +95,18 @@ export async function POST(req: Request) {
   const evaluated = [...existing, ...fresh.map((c) => c.id)];
   if (!fresh.length) return Response.json({ created: [], evaluated });
 
+  /* Something she said she would tell them is its own reason: no need to ask
+     whether it is one. It goes out as a follow-up, a few hours on. */
+  const promised = fresh.filter((c) => c.type === "PROMISE");
   let reasons;
   try {
-    reasons = await classify(fresh, { now, tz });
+    reasons = [
+      ...(await classify(fresh.filter((c) => c.type !== "PROMISE"), { now, tz })),
+      ...promised.map((c) => ({
+        id: c.id, kind: "FOLLOW_UP" as const, reason: "what she said she would tell them",
+        remindAt: null, dateOnly: false, eventAt: null, keywords: [] as string[],
+      })),
+    ];
   } catch (err) {
     console.error("outreach classify failed", err);
     /* Not evaluated: the app will offer them again next time. */
@@ -108,12 +119,15 @@ export async function POST(req: Request) {
   /* One at a time, so the same-event check below sees what this batch made. */
   for (const r of reasons) await (async () => {
     const c = fresh.find((x) => x.id === r.id)!;
+    const promise = c.type === "PROMISE";
     /* The memory's own date first; failing that, the date the note states. */
     const stated = c.at ?? r.eventAt;
     const eventAt = stated ? Date.parse(stated) : null;
+    /* A promise is timed from when she made it: a few hours on, that evening. */
+    const madeAt = c.createdAt ? Date.parse(c.createdAt) : now;
     const plan = planTime({
       type: r.kind, id: c.id, now, tz,
-      eventAt: Number.isFinite(eventAt) ? eventAt : null,
+      eventAt: promise ? madeAt : Number.isFinite(eventAt) ? eventAt : null,
       remindAt: r.remindAt ? Date.parse(r.remindAt) : Number.isFinite(eventAt) ? eventAt : null,
       remindDateOnly: r.dateOnly,
       createdAt: c.createdAt ? Date.parse(c.createdAt) : now,
@@ -143,6 +157,7 @@ export async function POST(req: Request) {
       message = await compose({
         persona: body.persona, you, tz, kind: r.kind, reason: r.reason, note: c.content,
         sendAt, eventAt: stated ?? null, recent: body.recent,
+        ...(promise ? { promise: true, life: body.life } : {}),
       });
     } catch (err) {
       console.error("outreach compose failed", err);

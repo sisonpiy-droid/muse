@@ -4,6 +4,7 @@ import {
   DEFAULT_OUTREACH, newMessage, promptPersona, findMuse,
   type OutreachSettings, type OutreachTrigger, type SoloMemory, type SoloMessage, type SoloState,
 } from "@/lib/solo/store";
+import { lifeForTurn } from "@/lib/solo/life";
 
 /* The app's half of outreach.
  *
@@ -130,6 +131,8 @@ export function candidates(s: SoloState, museId: string, now = Date.now()): Solo
         const t = Date.parse(m.at);
         return Number.isFinite(t) && t > now - DAY && t < now + 90 * DAY;
       }
+      /* Something she said she would tell them, while it is still owed. */
+      if (m.type === "PROMISE") return !m.circleId && now - Date.parse(m.createdAt) < 2 * DAY;
       /* A goal, or an event whose date is only in the words, said recently. */
       return (m.type === "GOAL" || m.type === "EVENT") && now - Date.parse(m.createdAt) < 10 * DAY;
     })
@@ -155,6 +158,8 @@ export async function offer(s: SoloState, museId: string): Promise<{ created: Ou
         candidates: list.map((m) => ({ id: m.id, content: m.content.slice(0, 420), type: m.type, at: m.at ?? null, createdAt: m.createdAt })),
         keep: s.memories.filter((m) => m.museId === museId).map((m) => m.id).slice(-400),
         recent: thread.slice(-6).map((m) => ({ role: m.from === "user" ? "user" : "assistant", content: m.content.slice(0, 2000), at: m.at })),
+        /* Her storylines, so a story she promised is told in keeping with them. */
+        life: lifeForTurn(s, museId).map((a) => `${a.title}: ${a.beats.join(" Then: ")}`.slice(0, 400)),
       }),
     });
     if (!res.ok) return null;

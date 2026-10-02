@@ -69,7 +69,9 @@ export interface ExtractedMemory {
      joke, a nickname, a bit they keep coming back to. Solo keeps it as its own
      kind; the account app, whose database has no such kind, files it under
      RELATIONSHIP. */
-  type: "PERMANENT" | "PREFERENCE" | "GOAL" | "RELATIONSHIP" | "EVENT" | "SHARED";
+  /* PROMISE is something the Muse owes them ("I'll tell you later"); DONE
+     closes one, through `replaces`, and is never stored itself. */
+  type: "PERMANENT" | "PREFERENCE" | "GOAL" | "RELATIONSHIP" | "EVENT" | "SHARED" | "PROMISE" | "DONE";
   importance: number; // 1-5
   confidence: number; // 0-1
   /* Indexes into the `known` list this fact makes untrue.

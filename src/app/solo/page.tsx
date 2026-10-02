@@ -38,11 +38,12 @@ import {
   type MediaAllowed, type SoloCircle, type SoloMessage, type SoloMuse, type SoloState,
 } from "@/lib/solo/store";
 import { makePicture, recordVoiceNote, voiceFor } from "@/lib/solo/media";
+import { addPoint, advanceLife, markStarted, planDue, readPoint, unlock } from "@/lib/solo/life";
 import { Persister, mergeStates, onOtherTabWrite } from "@/lib/solo/sync";
 import { embedTexts, learnFrom } from "@/lib/solo/learn";
 import { PHOTO_ONLY, savePhoto, shrink } from "@/lib/solo/photos";
 import { canStoreImages, deleteImages } from "@/lib/solo/backend";
-import { MAX_MESSAGE, prepareTurn, primeRecall, streamReply } from "@/lib/solo/turn";
+import { MAX_MESSAGE, prepareTurn, primeRecall, streamReply, withAppMessage } from "@/lib/solo/turn";
 import { canListen } from "@/lib/voice/listener";
 import { settingsOf } from "@/lib/proactive/client";
 import { speaker } from "@/lib/voice/speaker";
@@ -959,7 +960,9 @@ function SoloChat({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [log.length, clock]);
 
-  const typing = (loop.busy || typingNext) && !streaming;
+  /* She is starting a plan made together: typing, without a reply owed. */
+  const [starting, setStarting] = useState(false);
+  const typing = (loop.busy || typingNext || starting) && !streaming;
   useFollow(shown.length * 2 + (typing ? 1 : 0), streaming, shown.at(-1)?.from === "user");
 
   const memoriesFor = state.memories.filter((m) => m.museId === muse.id);
@@ -984,6 +987,14 @@ function SoloChat({
        when there is new work, not on every keystroke that changes anything. */
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [muse.id, memoriesFor.length]);
+
+  /* Her life moves on about once a day; opening the chat is when it is checked. */
+  useEffect(() => {
+    void advanceLife(latest.current, muse.id, update);
+    // Once per conversation opened; it reads the latest state through the ref.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [muse.id]);
+
 
   const nameOf = (m: SoloMessage) => (m.from === "user" ? "You" : muse.name);
 
@@ -1084,6 +1095,10 @@ function SoloChat({
 
       /* Extraction runs after the reply is on screen and never blocks it, the
          same shape as the server app's aftercare. */
+      /* A moment, once she has had it. */
+      const moment = prepared.body.moment as string | null | undefined;
+      if (moment) update((cur) => unlock(cur, muse.id, moment));
+
       void learnFrom({ museIds: [muse.id], window: [...thread, ...answer].slice(-8), state: s, update });
     } catch {
       if (!signal.aborted) setError("You're offline.");
@@ -1127,11 +1142,19 @@ function SoloChat({
     /* One thing besides texts per reply: a photo and a voice note and a song in
        one go is a performance, not someone texting. */
     const spent = () => { left.photo = left.voice = left.song = false; };
-    for (const raw of splitMediaLines(parts)) {
+    for (const tagged of splitMediaLines(parts)) {
       if (signal.aborted) break;
+      /* "[point: …]": a quiz question settled. Counted, and kept on the message. */
+      const { point, rest: untagged } = readPoint(tagged);
+      if (point) update((cur) => addPoint(cur, muse.id, point));
+      /* A reaction tag that came after another tag, rather than first in the
+         reply: still a reaction to what they said, never text in a bubble. */
+      const { emoji, rest: raw } = readReaction(untagged);
+      if (emoji && after) update((cur) => react(cur, muse.id, after, "muse", emoji));
+      if (!raw) continue;
       const part = readMedia(raw);
       if (part.kind === "text") {
-        pending.push(newMessage("muse", part.text));
+        pending.push({ ...newMessage("muse", part.text), ...(point ? { point } : {}) });
       } else if (part.kind === "song") {
         if (left.song) {
           spent();
@@ -1165,6 +1188,45 @@ function SoloChat({
     flush();
     return out;
   }
+
+  async function startPlan(what: string) {
+    setStarting(true);
+    try {
+      const signal = new AbortController().signal;
+      const prepared = await prepareTurn(latest.current, muse.id, { fallback: muse, canStore: canPhoto });
+      if (!prepared) return;
+      withAppMessage(prepared, `(It is time for what you two planned: ${what} You start it now: text ${state.userName ?? "them"} the way you would when it is time, and get it going.)`);
+      const out = await streamReply(prepared.body, signal, () => {});
+      if (!out.ok) return;
+      const text = readReaction(out.text.trim()).rest;
+      const parts = splitBurst(text, true);
+      const anchor = (latest.current.conversations[muse.id] ?? []).at(-1)?.id;
+      if (parts.length) await deliver(parts, { photo: false, voice: false, song: false }, anchor ?? "", prepared.person, signal);
+    } catch { /* the plan is still on; they can start it themselves */ } finally {
+      setStarting(false);
+    }
+  }
+
+  /* A plan made together, when its time comes with the chat open: she starts
+     it. Checked every minute, and never over a reply that is owed or on its
+     way. If she already texted first about it, that was the start. */
+  useEffect(() => {
+    const check = () => {
+      const s = latest.current;
+      const plan = planDue(s, muse.id);
+      if (!plan || loop.busy || starting) return;
+      const thread = s.conversations[muse.id] ?? [];
+      if (thread.at(-1)?.from === "user") return;
+      const texted = thread.some((m) => m.proactive && Date.now() - Date.parse(m.at) < 3 * 3_600_000);
+      update((cur) => markStarted(cur, plan.id));
+      if (!texted) void startPlan(plan.content);
+    };
+    check();
+    const t = setInterval(check, 60_000);
+    return () => clearInterval(t);
+    // Re-armed per conversation; reads the latest state through the ref.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [muse.id, loop.busy]);
 
   /* Editing a message changes what the conversation was about.
    *
@@ -1346,6 +1408,7 @@ function SoloChat({
                 : m.content}
               {m.edited && <span className="stamp"> · edited</span>}
               {m.interrupted && <span className="stamp"> · cut off</span>}
+              {m.point && <span className="stamp point"> · point to {m.point === "user" ? "you" : muse.name}</span>}
               <MessageActions
                 content={m.content}
                 onReply={replyHere}

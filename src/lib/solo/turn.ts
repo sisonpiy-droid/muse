@@ -3,8 +3,9 @@
 import { DEFAULT_VIBE, REGISTERS, hasFeelings, wornPhrases, type Vibe } from "@/lib/presence/persona";
 import {
   QUOTE_CHARS, feelingsOf, findMuse, isMediaCaption, knownTo, mediaAllowed, memoriesForTurn, plansForTurn,
-  promptPersona, quoteOf, sharedForTurn, windowOf, worthRecalling, type SoloMessage, type SoloMuse, type SoloState,
+  promisesForTurn, promptPersona, quoteOf, sharedForTurn, windowOf, worthRecalling, type SoloMessage, type SoloMuse, type SoloState,
 } from "./store";
+import { lifeForTurn, momentDue, togetherNow } from "./life";
 import { photoBase64 } from "./photos";
 import { storyLine, storyOf } from "./story";
 import { embedTexts } from "./learn";
@@ -67,6 +68,7 @@ export async function prepareTurn(
   const stored: Vibe = s.vibes?.[museId] ?? DEFAULT_VIBE;
   const vibe: Vibe = opts.register ? { ...stored, register: opts.register } : stored;
   const feelingsNow = feelingsOf(s, museId);
+  const together = togetherNow(s, museId);
 
   // The last few turns, so retrieval follows the subject rather than a
   // two-word reply carrying no signal.
@@ -142,7 +144,17 @@ export async function prepareTurn(
     memories: memories.map((m) => m.slice(0, 400)),
     /* Dated plans, each with its instant, so the reply knows whether
        "tomorrow at 11" is still ahead or already behind. */
-    plans: plansForTurn(s, museId).map((p) => ({ what: p.what.slice(0, 420), at: p.at })),
+    /* A plan made together that is on right now goes as `together` instead:
+       the plan list would call it "time passed, outcome unknown". */
+    plans: plansForTurn(s, museId)
+      .filter((p) => !together || p.what.slice(0, 300) !== together.what)
+      .map((p) => ({ what: p.what.slice(0, 420), at: p.at })),
+    together: together ? { what: together.what, since: together.since } : null,
+    /* Her own storylines, what she owes them, and a moment if one is due. */
+    life: lifeForTurn(s, museId),
+    promises: promisesForTurn(s, museId).map((p) => ({ what: p.what.slice(0, 300), ago: Math.round(p.ago) })),
+    moment: opts.register === "live" ? null : momentDue(s, museId, Date.now(), Intl.DateTimeFormat().resolvedOptions().timeZone),
+    score: s.scores?.[museId] ?? null,
     userName: s.userName,
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     /* How often you actually talk, here. Background for the model. */

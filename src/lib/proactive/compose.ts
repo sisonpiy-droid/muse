@@ -65,6 +65,7 @@ Kinds:
 - REMINDER: they explicitly asked to be reminded of something.
 - FOLLOW_UP: they said they would report back on something, or something significant has just happened to them (within the last day) whose outcome they have not shared.
 - GOAL_CHECK_IN: an important effort they are in the middle of with a near deadline ("finish the pitch deck this week").
+- A plan the user made to do something together with the Muse (the note names the Muse: a movie night, a call, a game): REMINDER, with remindAt the moment it starts -- the text is the Muse starting it.
 - null: anything else. Preferences, facts about them, relationships, routines, vague wishes, anything long past or far off. Most notes are null.
 
 Relevance matters more than frequency: when in doubt, null. One kind per note.
@@ -112,8 +113,14 @@ export async function compose(opts: {
   eventAt?: string | null;
   /** The last few lines of their conversation, for where things stand. Not stored. */
   recent: { role: "user" | "assistant"; content: string; at?: string }[];
+  /* Something she said she would tell them: the text is her telling it, made
+     up in keeping with her storylines -- the one case where inventing is the
+     job, because it is her own life. */
+  promise?: boolean;
+  life?: string[];
 }): Promise<string | null> {
   const { persona, you, tz } = opts;
+  const together = /\bthe muse\b/i.test(opts.note);
   const lastAt = opts.recent.at(-1)?.at ?? null;
   const system =
     personaSystem(
@@ -129,16 +136,27 @@ export async function compose(opts: {
         plans: opts.eventAt ? [{ what: opts.note, at: opts.eventAt }] : [],
       }
     ) +
-    `
+    (opts.promise
+      ? `
+
+YOU ARE TEXTING FIRST
+Nobody has said anything yet: this message starts the conversation, and it reaches ${you} at the time given above.
+Earlier you told ${you} you would tell them something later: "${opts.note}"
+Now you are telling it, because you have been dying to. Tell the actual story, specific and in your own voice, the way you would text it -- it is your own life, so make it up, in keeping with what is going on with you:
+${(opts.life ?? []).map((l) => `- ${l}`).join("\n") || "- (nothing in particular this week)"}
+- Two to four texts in a burst separated by a line of ---, exactly the way you text ${you}.
+- Nothing about ${you}'s life that you do not know.
+- Never mention reminders, apps, notifications, memory or being told to text.`
+      : `
 
 YOU ARE TEXTING FIRST
 Nobody has said anything yet: this message starts the conversation, and it reaches ${you} at the time given above.
 Why you are texting: ${opts.reason}.
 All you know about it is this note, and nothing else: "${opts.note}"
-${opts.kind === "FOLLOW_UP" ? "It has happened, or is due. Ask how it went. Do not assume how it went.\n" : ""}${opts.kind === "REMINDER" ? "They asked to be reminded. Remind them, the way you would, not like an alarm.\n" : ""}- One short text, or two or three in a burst separated by a line of ---, exactly the way you text ${you}.
+${opts.kind === "FOLLOW_UP" ? "It has happened, or is due. Ask how it went. Do not assume how it went.\n" : ""}${opts.kind === "REMINDER" && together ? "This is the time you two planned. Start it: text them the way you would when it is time, and get it going.\n" : opts.kind === "REMINDER" ? "They asked to be reminded. Remind them, the way you would, not like an alarm.\n" : ""}- One short text, or two or three in a burst separated by a line of ---, exactly the way you text ${you}.
 - About this reason only. Never a generic hello or "what are you up to".
 - Do not invent anything the note does not say: no times, places, names, companies or other details, and nothing about what they have already done or how they feel about it.
-- Never mention reminders, apps, notifications, memory or being told to text.`;
+- Never mention reminders, apps, notifications, memory or being told to text.`);
 
   const merged: { role: "user" | "assistant"; content: string }[] = [];
   for (const m of opts.recent.slice(-6)) {
@@ -158,7 +176,7 @@ ${opts.kind === "FOLLOW_UP" ? "It has happened, or is due. Ask how it went. Do n
     });
     const message = (text || "").trim().replace(/^\(|\)$/g, "").trim();
     if (!message || looksLikeRefusal(message)) continue;
-    if (inventedNumbers(message, opts.note).length) continue;
+    if (!opts.promise && inventedNumbers(message, opts.note).length) continue;
     return message.slice(0, 1200);
   }
   return null;

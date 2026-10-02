@@ -4,7 +4,8 @@ import { streamGuarded, userFacingError } from "@/lib/ai";
 import { looksLikeRefusal } from "@/lib/ai/refusal";
 import { buildMuseSystemPrompt } from "@/lib/muse/prompt";
 import {
-  coveredBlock, coveredGround, personaSystem, sendBlock, sharedBlock, withQuote, wornBlock, type Feelings,
+  coveredBlock, coveredGround, lifeBlock, momentBlock, personaSystem, promiseBlock, quizBlock, sendBlock, sharedBlock,
+  togetherBlock, withQuote, wornBlock, type Feelings,
 } from "@/lib/presence/persona";
 import { previousMoment, stampPauses, timeBlock } from "@/lib/presence/time";
 
@@ -153,6 +154,16 @@ const bodySchema = z.object({
     .nullish(),
   /** What they can send besides texts this turn. Absent: texts only. */
   can: z.object({ photo: z.boolean(), voice: z.boolean(), song: z.boolean() }).nullish(),
+  /** Her own storylines this week (lib/solo/life.ts). */
+  life: z.array(z.object({ title: z.string().max(80), beats: z.array(z.string().max(300)).max(2), untold: z.boolean() })).max(3).default([]),
+  /** What she said she would tell them later, and how long ago in ms. */
+  promises: z.array(z.object({ what: z.string().max(300), ago: z.number().min(0) })).max(3).default([]),
+  /** A moment due this turn, by key; the words for it are decided here (MOMENTS). */
+  moment: z.string().max(30).nullish(),
+  /** A plan made together that is on right now. */
+  together: z.object({ what: z.string().max(300), since: z.number().min(0) }).nullish(),
+  /** The "how well do you know each other" score. */
+  score: z.object({ user: z.number().int().min(0), muse: z.number().int().min(0), rounds: z.number().int().min(0), lastAt: z.string().max(40) }).nullish(),
 });
 
 /* Input bounds matter more here than in the signed-in app: there is no account
@@ -172,8 +183,8 @@ export async function POST(req: Request) {
   if (!parsed.success) {
     return Response.json({ error: "Check the request and try again." }, { status: 400 });
   }
-  const { muse, persona, knows, mood, topic, register, feelings, messages, memories, plans, userName, timezone, story, shared, worn, can } =
-    parsed.data;
+  const { muse, persona, knows, mood, topic, register, feelings, messages, memories, plans, userName, timezone, story, shared, worn, can,
+    life, promises, moment, together, score } = parsed.data;
   const tz = timezone ?? undefined;
   /* The server's clock, not the phone's: a phone set five minutes wrong should
      not move a meeting. Timestamps on messages are compared against it. */
@@ -231,6 +242,9 @@ export async function POST(req: Request) {
       coveredBlock(coveredGround(messagesForModel), userName || "they") +
       wornBlock(worn) +
       sharedBlock(shared, userName || "them") +
+      lifeBlock(life, userName || "them") +
+      promiseBlock(promises, userName || "them") +
+      togetherBlock(together, userName || "them") +
       (knows?.length
         ? `
 
@@ -263,7 +277,12 @@ You can react to their latest message with one emoji, the way people do in a cha
 - Lines in their messages like (reacted ❤️ to your "...") mean they reacted to something you said; you may notice it, you need not mention it.`
         : "") +
       /* Voice notes, photos, songs and games: texting only, never on a call. */
-      (register !== "live" ? sendBlock(can, userName || "they") : "")
+      (register !== "live" ? sendBlock(can, userName || "they") : "") +
+      /* The quiz goes with the games: texting only. */
+      (register !== "live" && can ? quizBlock(score, userName || "they") : "") +
+      /* Last, so nothing after it crowds it out: a moment is the one thing this
+         reply must do. */
+      momentBlock(moment, userName || "them")
     : buildMuseSystemPrompt({
     name: muse.name,
     description: muse.description,

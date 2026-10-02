@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { streamGuarded, userFacingError } from "@/lib/ai";
-import { circleBlock, circleHistory, coveredBlock, coveredGround, personaSystem } from "@/lib/presence/persona";
+import { circleBlock, circleHistory, coveredBlock, coveredGround, oneToOneBlock, personaSystem } from "@/lib/presence/persona";
 import { previousMoment, stampPauses } from "@/lib/presence/time";
 
 /* One turn in a circle: several people in a room, one of them replying.
@@ -83,6 +83,11 @@ const bodySchema = z.object({
   /* Everything the speaker remembers about the user. Lines learned anywhere
      but this circle arrive marked "(private)" -- see circleBlock. */
   memories: z.array(z.string().max(420)).max(12).default([]),
+  /** The recent end of the speaker's own one-to-one chat with the user. */
+  oneToOne: z
+    .array(z.object({ from: z.enum(["user", "muse"]), content: z.string().max(600), at: z.string().max(40).optional() }))
+    .max(20)
+    .default([]),
   /** The speaker's dated plans and events, each with its instant. */
   plans: z.array(z.object({ what: z.string().max(430), at: z.string().max(40) })).max(8).default([]),
   /** Maps a speakerId to a display name, so the transcript reads as a room. */
@@ -117,7 +122,7 @@ export async function POST(req: Request) {
   if (!parsed.success) {
     return Response.json({ error: "Check the request and try again." }, { status: 400 });
   }
-  const { circleName, speaker, others, log, names, userName, timezone, mood, register, feelings, topic, roomTraits, memories, plans } =
+  const { circleName, speaker, others, log, names, userName, timezone, mood, register, feelings, topic, roomTraits, memories, plans, oneToOne } =
     parsed.data;
   const tz = timezone ?? undefined;
   const now = Date.now();
@@ -146,6 +151,7 @@ export async function POST(req: Request) {
       clock
     ) +
     coveredBlock(coveredGround(messages), you) +
+    oneToOneBlock(oneToOne, you, tz) +
     circleBlock({ you, me: speaker.persona.them, others, circleName, topic, roomTraits });
 
   const encoder = new TextEncoder();

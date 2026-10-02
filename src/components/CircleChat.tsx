@@ -11,7 +11,7 @@ import { REGISTERS, hasFeelings, splitBurst } from "@/lib/presence/persona";
 import type { Update } from "@/app/solo/page";
 import {
   QUOTE_CHARS, circleOf, deleteFrom, deleteMessage, editCircle, editMessage, editMuse, feelingsOf,
-  insertAfter, lastShowAt, membersOf, memoriesForTurn, newMessage, paced, plansForTurn, promptPersona, quoteOf, rewindTo, windowOf,
+  insertAfter, lastShowAt, membersOf, memoriesForTurn, newMessage, paced, plansForTurn, promptPersona, quoteOf, recentOneToOne, rewindTo, windowOf,
   type SoloCircle, type SoloMessage, type SoloMuse, type SoloState,
 } from "@/lib/solo/store";
 import { learnFrom } from "@/lib/solo/learn";
@@ -163,12 +163,13 @@ export function CircleChat({
             register: "texts",
             /* So nobody in the room asks what you already told them. */
             /* Their own memories, wherever learned. Anything from outside this
-               room is marked private: it shapes what they say here without
-               being repeated in front of the others. The 1:1 thread itself is
-               never sent. */
+               room is marked private; see circleBlock for what that means. */
             memories: memoriesForTurn(s, m.id, unanswered.map((u) => u.content).join("\n"), null, { room: room.id })
               .map((x) => x.slice(0, 420)),
             plans: plansForTurn(s, m.id, { room: room.id }).map((p) => ({ what: p.what.slice(0, 430), at: p.at })),
+            /* The recent end of their own one-to-one chat with the user, so
+               they walk in remembering it -- theirs only, never anyone else's. */
+            oneToOne: recentOneToOne(s, m.id),
             topic: room.topic?.trim() || undefined,
             roomTraits: room.traits?.length ? room.traits.slice(0, 8) : undefined,
             /* Each speaker brings their own standing state into the room. One

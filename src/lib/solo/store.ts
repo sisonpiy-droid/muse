@@ -81,7 +81,21 @@ export interface SoloMessage {
   voiceNote?: { id: string; seconds: number };
   /* A song the Muse sent. The content says so in words, for the model. */
   song?: { title: string; artist: string };
+  /** A quiz point this reply awarded: to the user, or to the Muse. */
+  point?: "user" | "muse";
 }
+
+/* Her own life, going on between conversations: a few storylines, each moving
+   on a little every day. See lib/solo/life.ts. */
+export interface LifeBeat { id: string; at: string; text: string; told?: boolean }
+export interface LifeArc { id: string; title: string; done?: boolean; beats: LifeBeat[] }
+export interface Life { arcs: LifeArc[]; advancedAt: string }
+
+/** A moment unlocked by how far the two of you have come. */
+export interface Unlocked { key: string; at: string }
+
+/** "How well do you know each other", kept per Muse. */
+export interface Score { user: number; muse: number; rounds: number; lastAt: string }
 
 /* Outreach, as the app knows it. The server holds the finished messages and
    their times; this is the app's side -- the settings it last saved, which
@@ -225,6 +239,15 @@ export interface SoloState {
   calls?: SoloCall[];
   /** Texting first. Off unless switched on. */
   outreach?: OutreachState;
+  /** Her storylines, keyed by Muse. */
+  lives?: Record<string, Life>;
+  /** Moments unlocked, keyed by Muse. */
+  unlocked?: Record<string, Unlocked[]>;
+  /** Quiz scores, keyed by Muse. */
+  scores?: Record<string, Score>;
+  /* Plans made together that have been started, by the memory id of the plan,
+     so a movie night begins once. */
+  started?: Record<string, string>;
   /** "How it's going", in their words, from the story screen. Kept until asked again. */
   stories?: Record<string, { text: string; at: string }>;
   /* Changes to a starter, kept as an overlay rather than a copy so the
@@ -334,6 +357,10 @@ export function parseState(raw: string | null | undefined): SoloState {
       circles: Array.isArray(parsed.circles) ? parsed.circles : [],
       calls: Array.isArray(parsed.calls) ? parsed.calls : [],
       outreach: parsed.outreach ?? {},
+      lives: parsed.lives ?? {},
+      unlocked: parsed.unlocked ?? {},
+      scores: parsed.scores ?? {},
+      started: parsed.started ?? {},
       stories: parsed.stories ?? {},
       edits: parsed.edits ?? {},
       feelings: parsed.feelings ?? {},
@@ -543,7 +570,7 @@ export function memoriesForTurn(
   /* Plans near enough to matter go through plansForTurn, with their status. */
   /* Inside jokes go separately, through sharedForTurn: they are not facts to
      rank against the subject, and they would crowd out the ones that are. */
-  const mine = state.memories.filter((m) => m.museId === museId && !isPlan(m, now) && m.type !== "SHARED");
+  const mine = state.memories.filter((m) => m.museId === museId && !isPlan(m, now) && m.type !== "SHARED" && m.type !== "PROMISE");
   if (!mine.length) return [];
   const byContent = new Map(mine.map((m) => [m.content, m]));
   const label = (m: SoloMemory | undefined, c: string) =>
@@ -674,6 +701,42 @@ export function sharedForTurn(state: SoloState, museId: string, now = Date.now()
   return [...new Set([...fresh, ...picked])].map((m) => m.content);
 }
 
+/* What the Muse said it would tell them later and has not yet. With how long
+   ago, because "remind me to tell you" means something different after five
+   minutes and after a day. */
+export function promisesForTurn(state: SoloState, museId: string, now = Date.now()): { what: string; ago: number }[] {
+  return state.memories
+    .filter((m) => m.museId === museId && m.type === "PROMISE" && !m.circleId)
+    .map((m) => ({ what: m.content, ago: now - Date.parse(m.createdAt) }))
+    /* Owed for up to three days; past that it has quietly lapsed, as it would. */
+    .filter((p) => Number.isFinite(p.ago) && p.ago < 3 * 86_400_000)
+    .slice(-3);
+}
+
+/* The end of someone's own one-to-one chat with the user, for when they are in
+ * a group. Memory alone carried only distilled facts, so a person who had just
+ * spent an hour talking to you walked into the group knowing "User works at a
+ * bank" and nothing about the last hour. This is theirs -- only their own chat,
+ * never anyone else's -- and only the recent end of it. */
+export function recentOneToOne(
+  state: SoloState,
+  museId: string,
+  now = Date.now(),
+  opts: { messages?: number; chars?: number } = {}
+): { from: "user" | "muse"; content: string; at: string }[] {
+  const max = opts.messages ?? 16;
+  let budget = opts.chars ?? 4000;
+  const shown = (state.conversations[museId] ?? []).filter((m) => !m.showAt || Date.parse(m.showAt) <= now);
+  const out: { from: "user" | "muse"; content: string; at: string }[] = [];
+  for (let i = shown.length - 1; i >= 0 && out.length < max; i--) {
+    const content = shown[i].content.slice(0, 500);
+    if (content.length > budget) break;
+    budget -= content.length;
+    out.unshift({ from: shown[i].from, content, at: shown[i].at });
+  }
+  return out;
+}
+
 export function addMemories(
   state: SoloState,
   museId: string,
@@ -707,7 +770,8 @@ export function addMemories(
     );
   if (!fresh.length) return state;
 
-  const added: SoloMemory[] = fresh.map((m, i) => ({
+  /* DONE only closes a promise, through `replaces`; it is not a memory. */
+  const added: SoloMemory[] = fresh.filter((m) => m.type !== "DONE").map((m, i) => ({
     id: `mem-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 8)}`,
     museId,
     content: m.content,

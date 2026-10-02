@@ -101,13 +101,19 @@ export async function extractAndStoreMemories(opts: {
     const fresh = extracted.filter((m) => !known.has(m.content.trim().toLowerCase()));
     if (!fresh.length) return 0;
 
+    /* Solo-only kinds -- a promise the Muse made, and one kept -- have no
+       place in the database, which records facts about the user. */
+    type Stored = Exclude<(typeof fresh)[number]["type"], "PROMISE" | "DONE">;
+    const keep = fresh.filter((m): m is (typeof fresh)[number] & { type: Stored } => m.type !== "PROMISE" && m.type !== "DONE");
+    if (!keep.length) return 0;
+
     const embedder = getEmbeddingProvider();
     const embeddings = await Promise.all(
-      fresh.map((m) => embedder?.generateEmbedding(m.content).catch(() => null) ?? Promise.resolve(null))
+      keep.map((m) => embedder?.generateEmbedding(m.content).catch(() => null) ?? Promise.resolve(null))
     );
 
     await prisma.memory.createMany({
-      data: fresh.map((m, i) => ({
+      data: keep.map((m, i) => ({
         userId, museId,
         content: m.content,
         /* The database has no SHARED kind; it is closest to RELATIONSHIP. */
@@ -119,7 +125,7 @@ export async function extractAndStoreMemories(opts: {
       })),
     });
 
-    return fresh.length;
+    return keep.length;
   } catch (err) {
     console.error("memory extraction failed", err);
     return 0;

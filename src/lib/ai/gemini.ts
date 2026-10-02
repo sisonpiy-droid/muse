@@ -443,10 +443,14 @@ export async function extractMemoriesVia(
 ${timing}${known}
 
 Return ONLY a JSON array. No prose, no code fence. Each item:
-{"content": string, "type": "PERMANENT"|"PREFERENCE"|"GOAL"|"RELATIONSHIP"|"EVENT"|"SHARED", "importance": 1-5, "confidence": 0-1, "replaces": number[], "when": string|null }
+{"content": string, "type": "PERMANENT"|"PREFERENCE"|"GOAL"|"RELATIONSHIP"|"EVENT"|"SHARED"|"PROMISE"|"DONE", "importance": 1-5, "confidence": 0-1, "replaces": number[], "when": string|null }
 
 Plans, appointments and dated events -- a meeting, an exam, a trip, a deadline,
-something that happened on a particular day -- are EVENTs. For an EVENT whose
+something that happened on a particular day -- are EVENTs. A plan to do
+something together with the Muse (a movie night, a call, a game, "dinner"
+over text) is an EVENT too: name the Muse in it, e.g. "User and the Muse plan
+to watch a movie together at 21:00 on Saturday 4 October". Only name the Muse in
+a plan when the Muse is part of it. For an EVENT whose
 moment the conversation pins down, set "when" to that moment as ISO 8601 with the
 user's UTC offset, e.g. "2026-10-02T11:00:00+05:30", working it out from when the
 line was said: "tomorrow at 11" said on Wednesday night is Thursday 11:00. Write
@@ -490,8 +494,18 @@ again: "Running joke: the Muse calls User 'chotu' since User fell asleep on a
 call at 9pm." or "Shared bit: User and the Muse rate every meal out of 10 and
 argue about the score." Use importance 4 for one that has clearly stuck.
 
-Do not invent anything. Apart from SHARED, do not record the Muse's own
-statements as facts about the user. If nothing qualifies, return [].
+PROMISE is the Muse leaving something open that it owes the user: it said it
+would tell them something later ("remind me to tell you what happened with
+Riya", "baad me batati hu", "wait till you hear this"), or would do something
+for them later. Record what is owed, in a few words: "The Muse said it would
+tell User what happened with Riya." Only when the Muse said it, in the turns
+marked (latest), and only if it has not already told them in these turns.
+DONE closes one: if a known PROMISE (by its number) was kept in these turns --
+the Muse told the story, did the thing -- return {"content": "Kept: <what>",
+"type": "DONE", "replaces": [its number]}.
+
+Do not invent anything. Apart from SHARED and PROMISE, do not record the
+Muse's own statements as facts about the user. If nothing qualifies, return [].
 
 Intimate or sexual parts of a conversation are recorded, if at all, in general
 terms -- "User and the Muse are affectionate with each other" -- never as a
@@ -533,7 +547,7 @@ export function parseMemories(raw: string): ExtractedMemory[] {
   }
   if (!Array.isArray(parsed)) return [];
 
-  const types = new Set(["PERMANENT", "PREFERENCE", "GOAL", "RELATIONSHIP", "EVENT", "SHARED"]);
+  const types = new Set(["PERMANENT", "PREFERENCE", "GOAL", "RELATIONSHIP", "EVENT", "SHARED", "PROMISE", "DONE"]);
   const clamp = (n: unknown, lo: number, hi: number, dflt: number) => {
     const v = Number(n);
     return Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : dflt;

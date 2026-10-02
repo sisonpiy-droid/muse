@@ -1,0 +1,173 @@
+/* Her own life, the moments a relationship unlocks, the quiz score, plans made
+ * together, promises she owes, and what a member brings into a group.
+ *
+ * All of it is state the screen trusts: when her life is due to move on and
+ * what a day of it does to the storylines, which moment is due and for whom,
+ * who a quiz point goes to, when a plan starts and stops being "now", and what
+ * the prompt is told about each.
+ */
+import assert from "node:assert";
+
+globalThis.localStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
+
+const life = await import("../src/lib/solo/life.ts");
+const store = await import("../src/lib/solo/store.ts");
+const persona = await import("../src/lib/presence/persona.ts");
+const { prepareTurn } = await import("../src/lib/solo/turn.ts");
+
+const results = [];
+const check = (n, f) => results.push([n, f]);
+const RHEA = "builtin-rhea";
+const blank = () => ({ userName: "Piyush", muses: [], conversations: {}, memories: [], vibes: {}, circles: [], calls: [] });
+const NOW = Date.parse("2026-10-02T12:00:00Z");
+const hoursAgo = (h) => new Date(NOW - h * 3_600_000).toISOString();
+const made = (mode, extra = {}) => ({ id: "x", name: "Aisha", description: "d", relationshipType: "friend", persona: { them: "Aisha", you: "Piyush", mode, arch: "friend", ...extra } });
+
+/* ------------------------------------------------------------- her life */
+
+check("only someone invented has a life of her own, and it moves on about once a day", () => {
+  assert.equal(life.lifeDue(blank(), RHEA, NOW), true, "a starter is a made-up character");
+  for (const mode of ["living", "memorial", "figure"]) {
+    assert.equal(life.lifeDue({ ...blank(), muses: [made(mode)] }, "x", NOW), false, mode);
+  }
+  const s = { ...blank(), lives: { [RHEA]: { arcs: [], advancedAt: hoursAgo(5) } } };
+  assert.equal(life.lifeDue(s, RHEA, NOW), false);
+  assert.equal(life.lifeDue({ ...s, lives: { [RHEA]: { arcs: [], advancedAt: hoursAgo(21) } } }, RHEA, NOW), true);
+});
+
+check("a day of her life moves storylines on, starts new ones, marks what she told, and keeps at most three going", () => {
+  let s = life.applyLife(blank(), RHEA, { arcs: [
+    { title: "Flatmate war", beat: "Riya keeps the AC at 16." },
+    { title: "Pottery class", beat: "Signed up for a Saturday class." },
+  ], told: [] }, NOW);
+  const [war, pottery] = s.lives[RHEA].arcs;
+  assert.equal(s.lives[RHEA].arcs.length, 2);
+  s = life.applyLife(s, RHEA, { arcs: [
+    { id: war.id, title: war.title, beat: "Riya left a note on the fridge." },
+    { id: pottery.id, title: pottery.title, beat: "Made a lopsided bowl.", done: true },
+    { title: "Cousin's wedding", beat: "Mummy wants her to dance at the sangeet." },
+    { title: "New job hunt", beat: "Two interviews lined up." },
+  ], told: [war.beats[0].id] }, NOW + 86_400_000);
+  const arcs = s.lives[RHEA].arcs;
+  assert.equal(arcs.filter((a) => !a.done).length, 3, "three going");
+  assert.ok(arcs.find((a) => a.title === "Pottery class")?.done, "a finished one is kept a while, done");
+  const w = arcs.find((a) => a.title === "Flatmate war");
+  assert.deepEqual(w.beats.map((b) => b.text), ["Riya keeps the AC at 16.", "Riya left a note on the fridge."]);
+  assert.equal(w.beats[0].told, true);
+
+  const turn = life.lifeForTurn(s, RHEA);
+  assert.ok(turn.every((a) => a.untold), "the newest steps are news");
+  assert.match(persona.lifeBlock(turn, "Piyush"), /WHAT IS GOING ON IN YOUR LIFE[\s\S]*fridge[\s\S]*have not told Piyush yet/);
+  assert.equal(persona.lifeBlock([], "Piyush"), "");
+});
+
+/* -------------------------------------------------------------- promises */
+
+check("what she said she would tell them is owed for three days, and pushed once it has been a while", () => {
+  const mem = (id, h, type = "PROMISE") => ({ id, museId: RHEA, content: `owed ${id}`, type, importance: 3, confidence: 1, createdAt: hoursAgo(h) });
+  const s = { ...blank(), memories: [mem("a", 1), mem("b", 80), mem("c", 3), { ...mem("d", 1, "PERMANENT"), content: "User works at a bank." }] };
+  const owed = store.promisesForTurn(s, RHEA, NOW);
+  assert.deepEqual(owed.map((p) => p.what), ["owed a", "owed c"]);
+  assert.match(persona.promiseBlock(owed, "Piyush"), /Tell it now/);
+  assert.match(persona.promiseBlock(owed.slice(0, 1), "Piyush"), /keep the suspense/);
+  assert.ok(!store.memoriesForTurn(s, RHEA, "x", null, { now: NOW }).some((m) => m.startsWith("owed")), "not listed as facts about them");
+});
+
+check("a kept promise closes the owed one and is not stored itself", () => {
+  const known = ["The Muse said it would tell User what happened with Riya."];
+  let s = { ...blank(), memories: [{ id: "p", museId: RHEA, content: known[0], type: "PROMISE", importance: 3, confidence: 1, createdAt: hoursAgo(2) }] };
+  s = store.addMemories(s, RHEA, [{ content: "Kept: told User about Riya.", type: "DONE", importance: 3, confidence: 1, replaces: [0] }], known);
+  assert.deepEqual(s.memories, []);
+});
+
+/* --------------------------------------------------------------- moments */
+
+const talked = (days, extra = {}) => {
+  const log = [];
+  for (let d = 0; d < days; d++) log.push({ id: `m${d}`, from: "user", content: "hi", at: new Date(NOW - (days - 1 - d) * 86_400_000).toISOString() });
+  return { ...blank(), conversations: { [RHEA]: log }, ...extra };
+};
+
+check("a moment is due once it is reached, one a day, each once", () => {
+  assert.equal(life.momentDue(talked(2), RHEA, NOW, "UTC"), null);
+  assert.equal(life.momentDue(talked(3), RHEA, NOW, "UTC"), "days-3");
+  const had = talked(8, { unlocked: { [RHEA]: [{ key: "days-3", at: hoursAgo(48) }] } });
+  assert.equal(life.momentDue(had, RHEA, NOW, "UTC"), "days-7");
+  const today = talked(8, { unlocked: { [RHEA]: [{ key: "days-3", at: hoursAgo(2) }] } });
+  assert.equal(life.momentDue(today, RHEA, NOW, "UTC"), null, "not two in a day");
+  const s = life.unlock(talked(3), RHEA, "days-3", NOW);
+  assert.equal(life.unlock(s, RHEA, "days-3", NOW), s, "once only");
+  assert.match(persona.momentBlock("days-7", "Piyush"), /A MOMENT[\s\S]*never told them[\s\S]*never mention days/);
+});
+
+check("a portrait of a real person never gets a moment that would make up their life", () => {
+  const s = { ...talked(8), muses: [made("living")], conversations: { x: talked(8).conversations[RHEA] } };
+  assert.equal(life.momentDue(s, "x", NOW, "UTC"), "streak-7", "days-3 and days-7 invent; the streak does not");
+});
+
+check("the story page shows what is unlocked and the next one to come", () => {
+  const s = life.unlock(talked(4), RHEA, "days-3", NOW);
+  const m = life.momentsOf(s, RHEA, NOW, "UTC");
+  assert.deepEqual(m.unlocked.map((u) => u.label), ["Three days talking"]);
+  assert.deepEqual(m.next, { label: "Your first call", toGo: "your first call" });
+});
+
+/* ------------------------------------------------------------------ quiz */
+
+check("a quiz point is read from the tag, given to the right side, and counted", () => {
+  assert.deepEqual(life.readPoint("[point: Piyush] haan sahi jawab 😤"), { point: "user", rest: "haan sahi jawab 😤" });
+  assert.deepEqual(life.readPoint("galat! [point: me] mera fav color purple hai"), { point: "muse", rest: "galat! mera fav color purple hai" });
+  assert.deepEqual(life.readPoint("no tag"), { point: null, rest: "no tag" });
+  let s = life.addPoint(blank(), RHEA, "user", NOW);
+  s = life.addPoint(s, RHEA, "muse", NOW);
+  s = life.addPoint(s, RHEA, "muse", NOW);
+  assert.deepEqual({ ...s.scores[RHEA], lastAt: null }, { user: 1, muse: 2, rounds: 3, lastAt: null });
+  assert.match(persona.quizBlock(s.scores[RHEA], "Piyush", NOW), /Piyush 1, you 2, over 3 questions/);
+  assert.match(persona.quizBlock(null, "Piyush", NOW), /never played/);
+});
+
+/* ---------------------------------------------------- plans made together */
+
+check("a plan made together is due at its time, runs for three hours once started, then is over", () => {
+  const plan = { id: "p1", museId: RHEA, content: "User and the Muse plan to watch a movie together at 21:00 on Saturday 4 October", type: "EVENT", importance: 3, confidence: 1, createdAt: hoursAgo(30), at: new Date(NOW + 5 * 60_000).toISOString() };
+  const other = { ...plan, id: "p2", content: "User has an exam on Saturday", at: plan.at };
+  let s = { ...blank(), memories: [plan, other] };
+  assert.equal(life.planDue(s, RHEA, NOW - 30 * 60_000), null, "not yet");
+  assert.equal(life.planDue(s, RHEA, NOW)?.id, "p1", "ten minutes before counts; an exam is not a plan together");
+  s = life.markStarted(s, "p1", NOW);
+  assert.equal(life.planDue(s, RHEA, NOW), null, "started once");
+  assert.equal(life.togetherNow(s, RHEA, NOW + 60 * 60_000)?.id, "p1");
+  assert.equal(life.togetherNow(s, RHEA, NOW + 4 * 3_600_000), null, "over after three hours");
+  assert.match(persona.togetherBlock({ what: "watch a movie", since: 20 * 60_000 }, "Piyush"), /RIGHT NOW, TOGETHER[\s\S]*20 minutes ago/);
+});
+
+check("while a plan made together is on, the turn says so instead of 'time passed, outcome unknown'", async () => {
+  const at = new Date(Date.now() - 30 * 60_000).toISOString();
+  const plan = { id: "p1", museId: RHEA, content: "User and the Muse plan to watch a movie together tonight", type: "EVENT", importance: 3, confidence: 1, createdAt: at, at };
+  const s = { ...blank(), memories: [plan], started: { p1: at }, conversations: { [RHEA]: [{ id: "u", from: "user", content: "shuru?", at: new Date().toISOString() }] } };
+  const { body } = await prepareTurn(s, RHEA);
+  assert.equal(body.together.what, plan.content);
+  assert.ok(!body.plans.some((p) => p.what === plan.content), "not also in the plan list");
+});
+
+/* ----------------------------------------------------------------- groups */
+
+check("in a group, each member brings the recent end of their own one-to-one chat, and only theirs", () => {
+  const log = Array.from({ length: 30 }, (_, i) => ({ id: `m${i}`, from: i % 2 ? "muse" : "user", content: `line ${i}`, at: new Date(NOW - (30 - i) * 60_000).toISOString() }));
+  const s = { ...blank(), conversations: { [RHEA]: log, other: [{ id: "o", from: "user", content: "secret", at: hoursAgo(1) }] } };
+  const mine = store.recentOneToOne(s, RHEA, NOW);
+  assert.equal(mine.length, 16);
+  assert.equal(mine.at(-1).content, "line 29");
+  assert.ok(!mine.some((l) => l.content === "secret"));
+  const block = persona.oneToOneBlock(mine, "Piyush", "UTC");
+  assert.match(block, /YOU AND PIYUSH, ON YOUR OWN[\s\S]*Nobody else in this group[\s\S]*Piyush: line 28/);
+  assert.equal(persona.oneToOneBlock([], "Piyush"), "");
+});
+
+let pass = 0, fail = 0;
+for (const [n, f] of results) {
+  try { await f(); console.log(`  PASS  ${n}`); pass++; }
+  catch (e) { console.log(`  FAIL  ${n}\n        ${e.message}`); fail++; }
+}
+console.log(`\n${pass} passed, ${fail} failed`);
+process.exit(fail ? 1 : 0);

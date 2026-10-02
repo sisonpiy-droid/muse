@@ -1124,3 +1124,12 @@ button.tag:disabled { opacity: 0.45; cursor: not-allowed; }
 .song-name span { font-size: 0.78rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .song-links { display: flex; flex-direction: column; gap: 0.15rem; font-size: 0.72rem; }
 .song-links a { color: var(--accent); text-decoration: none; }
+
+/* The story page: the moment still to come, and the quiz score. */
+.story-next { opacity: 0.6; }
+.story-score { display: flex; flex-wrap: wrap; align-items: baseline; gap: 1.25rem; }
+.story-score div { display: flex; flex-direction: column; }
+.story-score b { font-family: var(--serif); font-size: 2rem; line-height: 1; }
+.story-score span { font-size: 0.75rem; color: var(--muted); }
+.story-score p { flex-basis: 100%; margin: 0; }
+.stamp.point { color: var(--accent); }

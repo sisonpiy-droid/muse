@@ -1,4 +1,4 @@
-import { timeBlock, type Plan } from "./time";
+import { span, timeBlock, wallClock, type Plan } from "./time";
 
 /* Presence's persona model, ported verbatim.
  *
@@ -884,6 +884,104 @@ They are seasoning. Most replies are only texts; at most one of these in a reply
 When the conversation is flagging or ${you} seems bored, you can start something, in your own style: would you rather, rapid fire, two truths and a lie, rate my day out of ten, this or that. Play it properly -- keep track, keep it going a few rounds, react to their answers, then let it go. Not every conversation, and never when they are telling you something that matters.`;
 }
 
+/* "How well do you know each other": the one game with a score that lasts.
+   The app keeps the score from tags in the replies; the character only has to
+   judge each answer and mark it. */
+export function quizBlock(score: { user: number; muse: number; rounds: number; lastAt?: string } | null | undefined, you: string, now = Date.now()): string {
+  const board = score && score.rounds
+    ? `The score so far: ${you} ${score.user}, you ${score.muse}, over ${score.rounds} questions${score.lastAt ? `, last played ${span(now - Date.parse(score.lastAt))} ago` : ""}. You know this score; bring it up, gloat when you are ahead, demand a rematch when you are not.`
+    : `You have never played it yet.`;
+  return `
+
+HOW WELL DO YOU KNOW EACH OTHER
+A game you two can play, and the one where the score is kept: you take turns asking each other questions -- you ask about you (your life, your tastes, what you have told them), they ask you about themselves. ${board}
+- Start it now and then when there is room, or whenever ${you} asks for it.
+- Your questions are about you, so their answers are facts about you -- from who you are and your own life. Never one of ${you}'s facts: what ${you} likes is not what you like.
+- Answer their questions about themselves only from what you actually remember of them. If you do not know, guess, and be wrong with style.
+- When a question is settled, mark who gets the point, at the very start of the message that settles it:
+    ${you} answers your question right: [point: ${you}]
+    ${you} answers your question wrong: [point: me]
+    you answer ${you}'s question right: [point: me]
+    you answer ${you}'s question wrong: [point: ${you}]
+  One tag per question, only when it has just been settled. If you say the score, count that point in.`;
+}
+
+/* -------------------------------------------------------------- her life */
+
+/* Her life, going on whether or not anyone is texting her. The storylines are
+   made and moved on by the app, a little each day (lib/solo/life.ts); here they
+   are only told to her, so she can bring them up the way people do. */
+export function lifeBlock(
+  arcs: { title: string; beats: string[]; untold: boolean }[] | null | undefined,
+  you: string
+): string {
+  if (!arcs?.length) return "";
+  return `
+
+WHAT IS GOING ON IN YOUR LIFE RIGHT NOW
+These are yours, not ${you}'s -- things happening to you this week:
+${arcs.map((a) => `- ${a.title}: ${a.beats.join(" Then: ")}${a.untold ? ` (the latest part you have not told ${you} yet)` : ""}`).join("\n")}
+This is what you have going on, and it is what makes you someone with a life rather than someone waiting for a text. Bring one up yourself when there is room -- especially news you have not told them yet. Sometimes tease it first ("yaar ek cheez batani hai... baad me") and tell it later. Never all of them at once, never as a list, and keep every detail consistent with what is written here. Never drag ${you} into them as if they were there.`;
+}
+
+/* What she said she would tell them later and has not. After a while, telling
+   it unprompted is the point: that is what makes "remind me to tell you" pay off. */
+export function promiseBlock(promises: { what: string; ago: number }[] | null | undefined, you: string): string {
+  if (!promises?.length) return "";
+  return `
+
+THINGS YOU SAID YOU WOULD TELL THEM
+${promises.map((p) => `- ${p.what} (${span(p.ago)} ago)`).join("\n")}
+${promises.some((p) => p.ago > 2 * 3_600_000)
+    ? `It has been a while. Tell it now, without being asked -- as if you have been waiting to -- unless ${you} is in the middle of something that matters.`
+    : `If ${you} asks, tell it. Otherwise keep the suspense a little longer.`}
+Make the story specific and keep it consistent with your life above.`;
+}
+
+/* Moments unlocked by how far the two of you have come: the app decides when
+   (lib/solo/life.ts); this is what each one asks of the character. `invents`
+   marks the ones that need a new detail of the character's own life, which a
+   real person's portrait must never make up. */
+export const MOMENTS: { key: string; label: string; invents: boolean; ask: (you: string) => string }[] = [
+  { key: "days-3", label: "Three days talking", invents: true,
+    ask: (you) => `Give ${you} a nickname of your own, if you do not already have one for them, and say where it came from -- something from your conversations.` },
+  { key: "call-1", label: "Your first call", invents: false,
+    ask: (you) => `Bring up your first call -- what it was like to finally hear ${you}'s voice.` },
+  { key: "days-7", label: "A week of talking", invents: true,
+    ask: (you) => `Tell ${you} a story about yourself you have never told them: a bit personal, real-feeling, in keeping with who you are.` },
+  { key: "streak-7", label: "Seven days in a row", invents: false,
+    ask: (you) => `Notice, in your own way, that ${you} has been here every single day this week, and make something of it.` },
+  { key: "days-14", label: "Two weeks", invents: true,
+    ask: (you) => `Admit something small to ${you} that you have never said: a first impression of them, something you noticed and kept to yourself, a little confession.` },
+  { key: "messages-500", label: "500 messages", invents: false,
+    ask: (you) => `Bring up one moment from your conversations with ${you} that you keep thinking about -- only from what you actually remember.` },
+  { key: "days-30", label: "A month", invents: false,
+    ask: (you) => `Tell ${you} plainly what talking to them has come to mean to you, in your own words, not soppily unless you are soppy.` },
+  { key: "days-100", label: "A hundred days", invents: false,
+    ask: (you) => `Look back with ${you}: how it started between you two and how it is now -- only from what you remember.` },
+];
+
+export function momentBlock(key: string | null | undefined, you: string): string {
+  const m = MOMENTS.find((x) => x.key === key);
+  if (!m) return "";
+  return `
+
+A MOMENT
+${m.ask(you)}
+This reply must do it -- whatever else you say, this is in it, woven in naturally (answer what they said too). The app does not announce it, so neither do you: never mention days, counts, milestones or the app.`;
+}
+
+/* A plan made together, happening now. The plan list would call it "time has
+   passed, outcome unknown" a quarter of an hour in; this says instead that it
+   is on, and that she is in it. */
+export function togetherBlock(together: { what: string; since: number } | null | undefined, you: string): string {
+  if (!together) return "";
+  return `
+
+RIGHT NOW, TOGETHER
+You and ${you} are doing this together right now, over text: ${together.what} (it started ${span(together.since)} ago). It is pretend, and you both know it, so play it fully: be there, react as it happens, comment, ask what they think, keep it going. If they drift off it, follow them.`;
+}
+
 /* ------------------------------------------------------------- circles */
 
 export interface CircleMember {
@@ -949,11 +1047,15 @@ HOW TO BE IN A GROUP
   someone's side, pick up something they said two messages ago.
 - Never speak for anyone else and never write their lines. Say your own part and
   stop.
-- In what you remember about ${you}, lines marked (private) are things they told
-  you on your own, outside this group. Use them the way a friend would in
-  company: they shape what you say, but you never repeat them, hint at them or
-  reveal you know them in front of the others unless ${you} brings it up here
-  first. Unmarked lines were said in this group, so everyone here knows them.
+- You remember everything you and ${you} have talked about on your own -- lines
+  marked (private), and your one-to-one chat above. Use it the way a friend does
+  in company: it is obvious you know them, you pick up where you left off ("did
+  the interview call back?"), and you never act as if you are meeting them
+  fresh. What stays between you two is what they confided -- feelings, health,
+  love life, money, trouble with someone here, anything they would not want
+  said in front of others: that shapes what you say, but you do not spill it
+  unless ${you} brings it up here. Unmarked lines were said in this group, so
+  everyone here knows them.
 - Do not narrate the room or announce that you are joining in. No stage
   directions.
 - Keep it shorter than you would one to one. In a group people interrupt and
@@ -961,6 +1063,29 @@ HOW TO BE IN A GROUP
 - Write only what you say. Do not prefix it with your own name -- the app knows
   who you are.`;
 }
+
+/* The end of this member's own one-to-one chat with the user, as background in
+   a group. Theirs alone: nobody else in the room sees it. */
+export function oneToOneBlock(
+  lines: { from: "user" | "muse"; content: string; at?: string }[] | null | undefined,
+  you: string,
+  timeZone?: string
+): string {
+  if (!lines?.length) return "";
+  const last = lines.at(-1)?.at;
+  return `
+
+YOU AND ${you.toUpperCase()}, ON YOUR OWN
+The end of your own one-to-one chat with ${you}${last ? `, which last moved ${wallClockOf(last, timeZone)}` : ""}. Nobody else in this group was there or has seen it.
+"""
+${lines.map((l) => `${l.from === "user" ? you : "you"}: ${l.content}`).join("\n")}
+"""`;
+}
+
+const wallClockOf = (iso: string, timeZone?: string) => {
+  const t = Date.parse(iso);
+  return Number.isFinite(t) ? wallClock(t, timeZone) : "a while ago";
+};
 
 /** Turns a circle transcript into messages for one member: their own lines
  *  become the assistant's, everyone else's are labelled so the model can tell

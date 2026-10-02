@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import { Avatar } from "@/components/Avatar";
 import { readReaction, type SoloMuse, type SoloState } from "@/lib/solo/store";
+import { momentsOf } from "@/lib/solo/life";
 import { storyOf } from "@/lib/solo/story";
 import { prepareTurn, streamReply, withAppMessage } from "@/lib/solo/turn";
 
@@ -55,6 +56,8 @@ export function Story({
   const [writing, setWriting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const known = state.memories.filter((m) => m.museId === muse.id).length;
+  const moments = momentsOf(state, muse.id, now, Intl.DateTimeFormat().resolvedOptions().timeZone);
+  const score = state.scores?.[muse.id];
 
   async function ask() {
     setWriting(true);
@@ -122,6 +125,31 @@ export function Story({
         {s.messages < 4 && <p className="fine" style={{ margin: 0 }}>Talk a little first.</p>}
         {error && <p className="error" role="alert">{error}</p>}
       </div>
+
+      {(moments.unlocked.length > 0 || moments.next) && (
+        <>
+          <h2 className="section-title">Moments</h2>
+          <ol className="story-line">
+            {moments.unlocked.map((m) => (
+              <li key={m.key}><span>{when(m.at)}</span>{m.label}</li>
+            ))}
+            {moments.next && (
+              <li className="story-next"><span>Next</span>{moments.next.label} · {moments.next.toGo}</li>
+            )}
+          </ol>
+        </>
+      )}
+
+      {score && score.rounds > 0 && (
+        <>
+          <h2 className="section-title">How well you know each other</h2>
+          <div className="story-score">
+            <div><b>{score.user}</b><span>you</span></div>
+            <div><b>{score.muse}</b><span>{muse.name}</span></div>
+            <p className="fine">{score.rounds} question{score.rounds === 1 ? "" : "s"} · ask {muse.name} for a rematch</p>
+          </div>
+        </>
+      )}
 
       {s.milestones.length > 0 && (
         <>
