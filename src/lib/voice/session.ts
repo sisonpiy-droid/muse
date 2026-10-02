@@ -1,8 +1,8 @@
 "use client";
 
-import { editMuse, endCall, findMuse, insertAfter, newCallId, newMessage, startCall, type SoloMessage, type SoloMuse, type SoloState } from "@/lib/solo/store";
+import { editMuse, endCall, findMuse, insertAfter, newCallId, newMessage, readReaction, startCall, type SoloMessage, type SoloMuse, type SoloState } from "@/lib/solo/store";
 import { learnFrom } from "@/lib/solo/learn";
-import { prepareTurn, streamReply } from "@/lib/solo/turn";
+import { prepareTurn, streamReply, withAppMessage } from "@/lib/solo/turn";
 import { Listener, askForMic, canListen, listenLanguage, type ListenError } from "./listener";
 import { speaker } from "./speaker";
 import { isVoice, takeSpeakable } from "./voices";
@@ -306,7 +306,7 @@ export class CallSession {
   }
 
   private saveMuse(content: string, answering: string | undefined, interrupted = false): string | undefined {
-    const text = content.replace(/\n?\s*-{3,}\s*\n?/g, " ").trim();
+    const text = readReaction(content).rest.replace(/\n?\s*-{3,}\s*\n?/g, " ").trim();
     if (!text) return undefined;
     const msg: SoloMessage = { ...newMessage("muse", text), via: "voice", callId: this.callId, ...(interrupted ? { interrupted: true } : {}) };
     this.update((cur) =>
@@ -363,12 +363,7 @@ export class CallSession {
     const prepared = await prepareTurn(this.getState(), this.museId, { signal, register: "live", fallback: this.fallback, embedWithinMs: 250 });
     if (!prepared || signal.aborted || this.turn !== turn) return;
     if (greeting) {
-      const messages = prepared.body.messages as { role: string; content: string; at?: string }[];
-      prepared.body.messages = [...messages, {
-        role: "user",
-        content: "(The call has just connected and you have picked up. Answer it the way you would answer a call from them -- briefly -- then let them talk.)",
-        at: new Date().toISOString(),
-      }];
+      withAppMessage(prepared, "(The call has just connected and you have picked up. Answer it the way you would answer a call from them -- briefly -- then let them talk.)");
     }
 
     let buffer = "";

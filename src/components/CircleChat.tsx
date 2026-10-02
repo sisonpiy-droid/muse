@@ -10,7 +10,7 @@ import { REGISTERS, hasFeelings, splitBurst } from "@/lib/presence/persona";
 import type { Update } from "@/app/solo/page";
 import {
   QUOTE_CHARS, circleOf, deleteFrom, deleteMessage, editCircle, editMessage, editMuse, feelingsOf,
-  insertAfter, membersOf, memoriesForTurn, newMessage, plansForTurn, promptPersona, quoteOf, rewindTo, windowOf,
+  insertAfter, lastShowAt, membersOf, memoriesForTurn, newMessage, paced, plansForTurn, promptPersona, quoteOf, rewindTo, windowOf,
   type SoloCircle, type SoloMessage, type SoloMuse, type SoloState,
 } from "@/lib/solo/store";
 import { learnFrom } from "@/lib/solo/learn";
@@ -63,9 +63,23 @@ export function CircleChat({
   /* Owed a reply when the room ends on something the user said. */
   const loop = useReplyLoop(circle.id, turn, () => (latest.current.conversations[circle.id] ?? []).at(-1)?.from === "user");
 
+  /* Texts still being "typed" are saved but not shown until their time. */
+  const [clock, setClock] = useState(() => Date.now());
+  const shown = log.filter((m) => !m.showAt || Date.parse(m.showAt) <= clock);
+  const typingNext = shown.length < log.length;
+  const nextUp = typingNext ? log.find((m) => m.showAt && Date.parse(m.showAt) > clock) : undefined;
+  useEffect(() => {
+    const due = log.map((m) => (m.showAt ? Date.parse(m.showAt) : 0)).filter((t) => t > clock);
+    if (!due.length) return;
+    const t = setTimeout(() => setClock(Date.now()), Math.max(30, Math.min(...due) - Date.now() + 20));
+    return () => clearTimeout(t);
+    // Reschedules when a message arrives or the clock moves; that is all that changes when.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [log.length, clock]);
+
   useEffect(() => {
     foot.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [log.length, speaking]);
+  }, [shown.length, speaking]);
 
   const nameOf = (id: string) => members.find((m) => m.id === id)?.name ?? "Someone";
   const whoSaid = (m: SoloMessage) => (m.from === "user" ? "You" : nameOf(m.speakerId ?? ""));
@@ -188,7 +202,8 @@ export function CircleChat({
             try { evt = JSON.parse(line.slice(5).trim()); } catch { continue; }
             if (evt.type === "delta" && evt.text) {
               acc += evt.text;
-              setSpeaking({ name: m.name, text: acc });
+              /* Who is typing, not what: their texts appear one by one once in. */
+              setSpeaking({ name: m.name, text: "" });
             } else if (evt.type === "error") {
               broke = true;
               setError(evt.message ?? "Something went wrong.");
@@ -201,7 +216,11 @@ export function CircleChat({
         /* Half a line is not a line. The room moves on without it. */
         const said = broke ? "" : acc.trim();
         if (said) {
-          const parts = splitBurst(said, REGISTERS.texts.burst).map((c) => newMessage("muse", c, { speakerId: m.id }));
+          /* Paced, and after whatever the last speaker is still "typing". */
+          const parts = paced(
+            splitBurst(said, REGISTERS.texts.burst).map((c) => newMessage("muse", c, { speakerId: m.id })),
+            Math.max(Date.now(), lastShowAt(running) + 600)
+          );
           running = [...running, ...parts];
           /* After the line they were answering, not at the end: anything the
              user sent meanwhile stays last and gets its own turn. */
@@ -286,7 +305,7 @@ export function CircleChat({
           </div>
         )}
 
-        {log.map((m) => {
+        {shown.map((m) => {
           const q = quoteOf(log, m);
           const replyHere = () => { setReplyTo(m); setPicked(null); box.current?.focus(); };
           return (
@@ -309,13 +328,11 @@ export function CircleChat({
           );
         })}
 
-        {speaking && (
-          <div className="turn turn-muse">
-            <span className="who">{speaking.name}</span>
-            {speaking.text}
-          </div>
+        {(speaking || nextUp || loop.busy) && (
+          <p className="typing">
+            {nextUp ? nameOf(nextUp.speakerId ?? "") : speaking ? speaking.name : "someone"} is typing<i>.</i><i>.</i><i>.</i>
+          </p>
         )}
-        {loop.busy && !speaking && <p className="typing">someone is typing<i>.</i><i>.</i><i>.</i></p>}
         {error && <p className="error" role="alert">{error}</p>}
 
         <div ref={foot} />

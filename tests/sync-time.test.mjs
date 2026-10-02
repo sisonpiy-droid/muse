@@ -14,7 +14,8 @@ globalThis.localStorage = {
 };
 
 const { KEY, addMemories, memoriesForTurn, newMessage, plansForTurn } = await import("../src/lib/solo/store.ts");
-const { Persister, mergeList, mergeStates } = await import("../src/lib/solo/sync.ts");
+const { Persister, combineRaw, mergeList, mergeStates } = await import("../src/lib/solo/sync.ts");
+const { localBackend } = await import("../src/lib/solo/backend.ts");
 const { previousMoment, resolveWhen, stampPauses, timeBlock } = await import("../src/lib/presence/time.ts");
 const { circleBlock, personaSystem } = await import("../src/lib/presence/persona.ts");
 const { parseMemories } = await import("../src/lib/ai/gemini.ts");
@@ -27,64 +28,124 @@ const RHEA = "made-rhea";
 
 /* ------------------------------------------------------------ persistence */
 
-check("a stale second copy saving last no longer erases the newer conversation", () => {
+const local = () => Promise.resolve(localBackend);
+const tab = async () => { const p = new Persister(); const s = await p.open(local); return [p, s]; };
+
+check("a stale second copy saving last no longer erases the newer conversation", async () => {
   disk.clear();
   const start = blank();
   start.conversations[RHEA] = [msg("m0")];
   localStorage.setItem(KEY, JSON.stringify(start));
 
-  const phone = new Persister();      // the copy in use
-  const stale = new Persister();      // a tab left open in the background
-  let a = phone.open();
-  let b = stale.open();
+  let [phone, a] = await tab();      // the copy in use
+  let [stale, b] = await tab();      // a tab left open in the background
 
   for (let i = 1; i <= 30; i++) {
     a = { ...a, conversations: { ...a.conversations, [RHEA]: [...a.conversations[RHEA], msg(`m${i}`)] } };
-    a = phone.save(a).state;
+    a = (await phone.save(a)).state;
   }
   /* The stale copy changes something unrelated and saves its whole state. */
   b = { ...b, vibes: { [RHEA]: { mood: "teasing", topic: "any", register: "texts" } } };
-  stale.save(b);
+  await stale.save(b);
 
-  const reopened = new Persister().open();
+  const [, reopened] = await tab();
   assert.equal(reopened.conversations[RHEA].length, 31, "all 31 messages survive");
   assert.equal(reopened.conversations[RHEA].at(-1).id, "m30");
   assert.equal(reopened.vibes[RHEA].mood, "teasing", "and the stale copy's own change is kept");
 });
 
-check("a tab with nothing unsaved adopts what another wrote, without writing back", () => {
+check("a tab with nothing unsaved adopts what another wrote, without writing back", async () => {
   disk.clear();
   localStorage.setItem(KEY, JSON.stringify(blank()));
-  const one = new Persister(); const two = new Persister();
-  let s1 = one.open(); const s2 = two.open();
+  let [one, s1] = await tab(); const [two, s2] = await tab();
   s1 = { ...s1, conversations: { [RHEA]: [msg("x")] } };
-  one.save(s1);
+  await one.save(s1);
   const writes = events.length;
-  const next = two.refresh(s2);
+  const next = await two.refresh(s2);
   assert.equal(next.conversations[RHEA].length, 1);
   assert.equal(next, two.persisted, "marked as already on disk, so the save effect skips it");
   assert.equal(events.length, writes, "no write: two tabs never ping-pong");
 });
 
-check("unsaved changes are merged with another tab's on refresh", () => {
+check("unsaved changes are merged with another tab's on refresh", async () => {
   disk.clear();
   localStorage.setItem(KEY, JSON.stringify(blank()));
-  const one = new Persister(); const two = new Persister();
-  let s1 = one.open(); let s2 = two.open();
+  let [one, s1] = await tab(); let [two, s2] = await tab();
   s1 = { ...s1, conversations: { [RHEA]: [msg("from-one")] } };
-  one.save(s1);
+  await one.save(s1);
   s2 = { ...s2, userName: "Sammy" };
-  const merged = two.refresh(s2);
+  const merged = await two.refresh(s2);
   assert.equal(merged.conversations[RHEA][0].id, "from-one");
   assert.equal(merged.userName, "Sammy");
 });
 
-check("the revision is stored first, so it can be read without parsing", () => {
+check("the revision is stored first, so it can be read without parsing", async () => {
   disk.clear();
+  const [p] = await tab();
+  await p.save(blank());
+  assert.match(disk.get(KEY), /^{"rev":1,/);
+});
+
+/* An in-memory backend with IndexedDB's semantics: a write is conditional
+   on the revision, atomically. */
+function memoryBackend() {
+  const store = { raw: null, rev: 0 };
+  return {
+    name: "idb", store,
+    async read() { return { raw: store.raw, rev: store.rev }; },
+    async revision() { return store.raw === null ? null : store.rev; },
+    async write(raw, rev, expected) { if (store.rev !== expected) return "conflict"; store.raw = raw; store.rev = rev; return "ok"; },
+  };
+}
+
+check("on the new storage, two tabs racing both keep their changes", async () => {
+  const be = memoryBackend();
+  const one = new Persister(); const two = new Persister();
+  let s1 = await one.open(() => Promise.resolve(be));
+  let s2 = await two.open(() => Promise.resolve(be));
+  s1 = { ...s1, conversations: { [RHEA]: [msg("one")] } };
+  s2 = { ...s2, conversations: { [RHEA]: [msg("two")] } };
+  await one.save(s1);
+  const r = await two.save(s2);
+  assert.ok(r.result.ok, "the second write merged and went through");
+  const [, back] = [null, (await new Persister().open(() => Promise.resolve(be)))];
+  assert.deepEqual(back.conversations[RHEA].map((m) => m.id).sort(), ["one", "two"]);
+});
+
+check("saves are queued: a burst of changes lands in order, the newest last", async () => {
+  const be = memoryBackend();
   const p = new Persister();
-  p.open();
-  p.save(blank());
-  assert.match(disk.get(KEY), /^\{"rev":1,/);
+  let s = await p.open(() => Promise.resolve(be));
+  const writes = [];
+  for (let i = 0; i < 5; i++) { s = { ...s, userName: `v${i}` }; writes.push(p.save(s)); }
+  await Promise.all(writes);
+  const back = await new Persister().open(() => Promise.resolve(be));
+  assert.equal(back.userName, "v4");
+  assert.equal(be.store.rev, 5);
+});
+
+check("unreadable storage is never written over", async () => {
+  const be = memoryBackend();
+  be.store.raw = "{not json"; be.store.rev = 3;
+  const p = new Persister();
+  const s = await p.open(() => Promise.resolve(be));
+  assert.ok(s.corrupt);
+  const r = await p.save({ ...s, userName: "x" });
+  assert.equal(r.result.ok, false);
+  assert.equal(be.store.raw, "{not json");
+});
+
+check("two stored copies combine: an empty leftover never wipes the real data", () => {
+  const real = blank(); real.conversations[RHEA] = [msg("a"), msg("b")]; real.memories = [{ id: "m1", museId: RHEA, content: "x", type: "PREFERENCE", importance: 3, confidence: 1, createdAt: "2026-10-01T00:00:00.000Z" }];
+  const empty = { userName: null, muses: [], conversations: {}, memories: [], rev: 99 };
+  const out = JSON.parse(combineRaw(JSON.stringify(empty), JSON.stringify({ ...real, rev: 7 }), 100));
+  assert.equal(out.conversations[RHEA].length, 2);
+  assert.equal(out.memories.length, 1);
+  assert.equal(out.userName, "Sam");
+  assert.equal(out.rev, 100);
+  const extra = { ...blank(), conversations: { [RHEA]: [msg("c")] } };
+  const both = JSON.parse(combineRaw(JSON.stringify(extra), JSON.stringify(real), 8));
+  assert.deepEqual(both.conversations[RHEA].map((m) => m.id).sort(), ["a", "b", "c"], "a newer stray copy adds its messages");
 });
 
 check("merge: both sides append, deletions stand, an edit beats a delete", () => {

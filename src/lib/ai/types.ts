@@ -12,6 +12,8 @@ export type Role = "user" | "assistant";
 export interface ChatMessage {
   role: Role;
   content: string;
+  /** Photos sent with the message, base64. Only providers that can see use them. */
+  images?: { mime: string; data: string }[];
 }
 
 export interface GenerateOptions {

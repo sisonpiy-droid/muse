@@ -3,8 +3,10 @@
 import { DEFAULT_VIBE, hasFeelings, type Vibe } from "@/lib/presence/persona";
 import {
   QUOTE_CHARS, feelingsOf, findMuse, knownTo, memoriesForTurn, plansForTurn, promptPersona, quoteOf,
-  windowOf, worthRecalling, type SoloMuse, type SoloState,
+  windowOf, worthRecalling, type SoloMessage, type SoloMuse, type SoloState,
 } from "./store";
+import { photoBase64 } from "./photos";
+import { storyLine, storyOf } from "./story";
 import { embedTexts } from "./learn";
 
 /* One reply's request to /api/solo/chat, and reading its stream.
@@ -83,14 +85,15 @@ export async function prepareTurn(
       },
     },
     // Bounded by size rather than count -- see windowOf.
-    messages: windowOf(thread).map((m) => {
+    messages: withReactions(await withPhotos(windowOf(thread))).map(({ m, image, note }) => {
       const q = quoteOf(thread, m);
       return {
         role: m.from === "user" ? ("user" as const) : ("assistant" as const),
         /* Same reasoning: one pasted message over the route's limit sat in
            the window and killed every turn after it, permanently. */
-        content: m.content.slice(0, MAX_MESSAGE),
+        content: `${note}${m.content}`.slice(0, MAX_MESSAGE),
         at: m.at,
+        ...(image ? { image } : {}),
         ...(q
           ? { quote: { role: q.from === "user" ? "user" : "assistant", content: q.content.slice(0, QUOTE_CHARS) } }
           : {}),
@@ -121,9 +124,55 @@ export async function prepareTurn(
     plans: plansForTurn(s, museId).map((p) => ({ what: p.what.slice(0, 420), at: p.at })),
     userName: s.userName,
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    /* How often you actually talk, here. Background for the model. */
+    story: storyLine(storyOf(s, museId, Date.now(), Intl.DateTimeFormat().resolvedOptions().timeZone), Date.now()),
   };
   return { person, vibe, body };
 }
+
+/* The most recent few photos go with the reply, as pictures; older ones stay
+   words. Loaded from IndexedDB only for the messages that need them. */
+async function withPhotos(window: SoloMessage[]): Promise<{ m: SoloMessage; image?: { mime: string; data: string } }[]> {
+  const recent = new Set(window.filter((m) => m.from === "user" && m.image).slice(-3).map((m) => m.id));
+  return Promise.all(window.map(async (m) => {
+    if (!recent.has(m.id) || !m.image) return { m };
+    const image = await photoBase64(m.image.id).catch(() => null);
+    return image ? { m, image } : { m };
+  }));
+}
+
+/* Reactions, as the model reads them. Theirs to one of the Muse's texts rides
+   on their next message ("(reacted ❤️ to your "…")"), so it lands where the
+   conversation is; the Muse's own reaction to one of theirs is noted on that
+   message, so it knows it already answered with an emoji. Parentheses, not
+   brackets: brackets at the start of a line are the app's timestamps. */
+function withReactions<T extends { m: SoloMessage }>(rows: T[]): (T & { note: string })[] {
+  let pending: string[] = [];
+  return rows.map((row) => {
+    const { m } = row;
+    if (m.from === "muse") {
+      if (m.reactions?.user) pending.push(`(reacted ${m.reactions.user} to your "${m.content.slice(0, 60)}")`);
+      return { ...row, note: "" };
+    }
+    const mine = m.reactions?.muse ? `(you reacted ${m.reactions.muse} to this)\n` : "";
+    const note = (pending.length ? `${pending.join("\n")}\n` : "") + mine;
+    pending = [];
+    return { ...row, note };
+  });
+}
+
+/* One message from the app itself, after the conversation: "the call just
+   connected", "they asked how it is going". The window is already at the
+   route's limit in a long thread, so it gives up its oldest message to make
+   room -- appending to a full window was a 400 on every call greeting and
+   every story note in any conversation longer than sixty messages. */
+export function withAppMessage(prepared: PreparedTurn, content: string): void {
+  const messages = prepared.body.messages as { role: string; content: string; at?: string }[];
+  prepared.body.messages = [...messages.slice(-(ROUTE_MAX_MESSAGES - 1)), { role: "user", content, at: new Date().toISOString() }];
+}
+
+/** What /api/solo/chat accepts in one request. */
+const ROUTE_MAX_MESSAGES = 60;
 
 export type ReplyOutcome =
   | { ok: true; text: string }

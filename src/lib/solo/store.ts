@@ -63,6 +63,15 @@ export interface SoloMessage {
   callId?: string;
   /** A spoken reply cut off by the user talking over it: content is what was actually heard. */
   interrupted?: boolean;
+  /* A photo they sent. The file is in IndexedDB under `id`, never here; the
+     message content is the caption, or PHOTO_ONLY. */
+  image?: { id: string; w: number; h: number };
+  /* When this text appears. A burst arrives from the model all at once but is
+     saved with each text a little after the last, the way someone types them
+     -- so leaving or reloading halfway loses nothing, it just shows the rest. */
+  showAt?: string;
+  /** A one-emoji reaction to this message, from either side. */
+  reactions?: { user?: string; muse?: string };
   /* The Muse texted first: this came from the server's outreach, collected
      into the thread like any other message. `responded` once they replied. */
   proactive?: { interactionId: string; responded?: boolean };
@@ -210,6 +219,8 @@ export interface SoloState {
   calls?: SoloCall[];
   /** Texting first. Off unless switched on. */
   outreach?: OutreachState;
+  /** "How it's going", in their words, from the story screen. Kept until asked again. */
+  stories?: Record<string, { text: string; at: string }>;
   /* Changes to a starter, kept as an overlay rather than a copy so the
      originals stay the source of truth. Built characters are edited in place
      and never appear here. */
@@ -293,8 +304,19 @@ function migrate(m: SoloMuse): SoloMuse {
 }
 
 export function loadState(): SoloState {
+  let raw: string | null;
   try {
-    const raw = localStorage.getItem(KEY);
+    raw = localStorage.getItem(KEY);
+  } catch (err) {
+    console.error("solo state could not be read", err);
+    return { ...empty(), corrupt: true };
+  }
+  return parseState(raw);
+}
+
+/** A stored state, from its serialised form, wherever it was kept. */
+export function parseState(raw: string | null | undefined): SoloState {
+  try {
     if (!raw) return empty();
     const parsed = JSON.parse(raw) as Partial<SoloState>;
     return {
@@ -306,6 +328,7 @@ export function loadState(): SoloState {
       circles: Array.isArray(parsed.circles) ? parsed.circles : [],
       calls: Array.isArray(parsed.calls) ? parsed.calls : [],
       outreach: parsed.outreach ?? {},
+      stories: parsed.stories ?? {},
       edits: parsed.edits ?? {},
       feelings: parsed.feelings ?? {},
       forgotten: parsed.forgotten ?? {},
@@ -347,6 +370,13 @@ export type SaveResult =
  * promise is that it remembers you, that is the worst failure in the product.
  *
  * It now reports, and the caller is expected to say something. */
+/** rev first, so the revision can be read off the front without parsing megabytes. */
+export function serialiseState(state: SoloState): string {
+  const { corrupt: _corrupt, ...rest } = state;
+  void _corrupt;
+  return JSON.stringify({ rev: state.rev ?? 0, ...rest });
+}
+
 export function saveState(state: SoloState): SaveResult {
   /* Refuse to overwrite data we failed to read. The user is told, and can take
      the file out of the browser's storage by hand if they want it back. */
@@ -354,8 +384,7 @@ export function saveState(state: SoloState): SaveResult {
 
   let serialised: string;
   try {
-    /* rev first, so sync.ts can read it off the front without parsing megabytes. */
-    serialised = JSON.stringify({ rev: state.rev ?? 0, ...state });
+    serialised = serialiseState(state);
   } catch (err) {
     console.error("solo save failed to serialise", err);
     return { ok: false, reason: "unavailable", bytes: 0 };
@@ -1238,4 +1267,58 @@ export function endCall(
 
 export function callsOf(state: SoloState, museId: string): SoloCall[] {
   return (state.calls ?? []).filter((c) => c.museId === museId);
+}
+
+/* ------------------------------------------------------------ pacing */
+
+/* How long the next text in a burst takes to "type": longer for longer texts,
+   never instant, never a wait. Stable per message, so a re-render does not move it. */
+export function typingMs(m: { id: string; content: string }): number {
+  let h = 0;
+  for (let i = 0; i < m.id.length; i++) h = (h * 31 + m.id.charCodeAt(i)) | 0;
+  const jitter = Math.abs(h) % 300;
+  return Math.min(2400, Math.max(700, 500 + m.content.length * 18)) + jitter;
+}
+
+/** A burst, paced: the first text now (or after `after`), each next one after a typing pause. */
+export function paced(parts: SoloMessage[], start = Date.now()): SoloMessage[] {
+  let t = start;
+  return parts.map((m, i) => {
+    if (i > 0) t += typingMs(m);
+    return { ...m, showAt: new Date(t).toISOString() };
+  });
+}
+
+/** When the last text in a thread appears; texts still to come push a new burst back. */
+export function lastShowAt(log: SoloMessage[]): number {
+  return log.reduce((max, m) => (m.showAt ? Math.max(max, Date.parse(m.showAt)) : max), 0);
+}
+
+/* -------------------------------------------------------------- reactions */
+
+export const REACTIONS = ["❤️", "😂", "😮", "😢", "🔥", "👍"];
+
+/** Sets (or, the same emoji again, removes) one side's reaction to a message. */
+export function react(state: SoloState, threadId: string, messageId: string, who: "user" | "muse", emoji: string | null): SoloState {
+  const log = state.conversations[threadId] ?? [];
+  return {
+    ...state,
+    conversations: {
+      ...state.conversations,
+      [threadId]: log.map((m) => {
+        if (m.id !== messageId) return m;
+        const next = { ...(m.reactions ?? {}) };
+        if (!emoji || next[who] === emoji) delete next[who];
+        else next[who] = emoji;
+        return { ...m, reactions: Object.keys(next).length ? next : undefined };
+      }),
+    },
+  };
+}
+
+/* A reply that opens with "[react: 😂]" is the Muse reacting to the message it
+   answers. Returns the emoji and whatever text came after it. */
+export function readReaction(text: string): { emoji: string | null; rest: string } {
+  const m = /^\s*\[react:\s*([^\]\s]{1,8})\s*\]\s*/i.exec(text);
+  return m ? { emoji: m[1], rest: text.slice(m[0].length).trim() } : { emoji: null, rest: text };
 }

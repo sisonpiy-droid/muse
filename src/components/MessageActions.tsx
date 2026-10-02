@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 
+import { REACTIONS } from "@/lib/solo/store";
+
 /* Edit and delete, on any message in any thread.
  *
  * Editing a Muse's own line is allowed on purpose. A companion that says one
@@ -22,6 +24,8 @@ export function MessageActions({
   onDelete,
   onDeleteFrom,
   onDone,
+  onReact,
+  reacted,
 }: {
   content: string;
   onReply: () => void;
@@ -30,6 +34,10 @@ export function MessageActions({
   onDeleteFrom: () => void;
   /** Called once an action is taken, so the thread can close the message. */
   onDone?: () => void;
+  /** Reacting to the message with one emoji. Absent: no reactions here. */
+  onReact?: (emoji: string) => void;
+  /** The user's current reaction, to show it chosen. */
+  reacted?: string;
 }) {
   const done = () => onDone?.();
   const [editing, setEditing] = useState(false);
@@ -70,6 +78,14 @@ export function MessageActions({
 
   return (
     <span className="msg-actions">
+      {onReact && (
+        <span className="react-row" role="group" aria-label="React">
+          {REACTIONS.map((e) => (
+            <button key={e} type="button" className="react-pick" aria-pressed={reacted === e} aria-label={`React ${e}`}
+              onClick={() => { onReact(e); done(); }}>{e}</button>
+          ))}
+        </span>
+      )}
       <button onClick={() => { onReply(); done(); }} aria-label="Reply to this message">reply</button>
       <button onClick={() => { setText(content); setEditing(true); }} aria-label="Edit message">edit</button>
       <button onClick={() => { onDelete(); done(); }} aria-label="Delete message">delete</button>

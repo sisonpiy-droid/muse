@@ -12,12 +12,15 @@ import { previousMoment, stampPauses, timeBlock } from "@/lib/presence/time";
  * separate. Providers do not: two user turns back to back are rejected by some
  * and misread by others. Joined on a newline, so the model still sees them as
  * separate lines. Dropping a refusal can leave two replies adjacent too. */
-function mergeRuns<T extends { role: "user" | "assistant"; content: string }>(msgs: T[]): T[] {
+function mergeRuns<T extends { role: "user" | "assistant"; content: string; images?: { mime: string; data: string }[] }>(msgs: T[]): T[] {
   const out: T[] = [];
   for (const m of msgs) {
     const last = out[out.length - 1];
-    if (last && last.role === m.role) last.content += `\n${m.content}`;
-    else out.push({ ...m });
+    if (last && last.role === m.role) {
+      last.content += `\n${m.content}`;
+      /* A photo sent in a burst stays with the burst. */
+      if (m.images?.length) last.images = [...(last.images ?? []), ...m.images];
+    } else out.push({ ...m });
   }
   return out;
 }
@@ -76,6 +79,11 @@ const bodySchema = z.object({
           .optional(),
         /** When it was sent, ISO. Optional only so an older client still works. */
         at: z.string().max(40).optional(),
+        /* A photo they sent, for the most recent few only. Shrunk in the
+           browser first; the cap is a backstop, not the expected size. */
+        image: z
+          .object({ mime: z.enum(["image/jpeg", "image/png", "image/webp"]), data: z.string().max(1_600_000) })
+          .optional(),
       })
     )
     .min(1)
@@ -128,6 +136,8 @@ const bodySchema = z.object({
   plans: z.array(z.object({ what: z.string().max(420), at: z.string().max(40) })).max(8).default([]),
   userName: z.string().trim().max(80).nullish(),
   timezone: z.string().max(64).nullish(),
+  /** How often you talk here, as one line. See lib/solo/story.ts. */
+  story: z.string().max(300).nullish(),
 });
 
 /* Input bounds matter more here than in the signed-in app: there is no account
@@ -147,7 +157,7 @@ export async function POST(req: Request) {
   if (!parsed.success) {
     return Response.json({ error: "Check the request and try again." }, { status: 400 });
   }
-  const { muse, persona, knows, mood, topic, register, feelings, messages, memories, plans, userName, timezone } =
+  const { muse, persona, knows, mood, topic, register, feelings, messages, memories, plans, userName, timezone, story } =
     parsed.data;
   const tz = timezone ?? undefined;
   /* The server's clock, not the phone's: a phone set five minutes wrong should
@@ -165,11 +175,20 @@ export async function POST(req: Request) {
   const cleaned = messages.filter(
     (m) => !(m.role === "assistant" && looksLikeRefusal(m.content))
   );
+  /* Only the most recent few photos are sent as pictures; older ones stay in
+     the transcript as words. Bounds the request, and an old photo is not what
+     anyone is talking about now. */
+  let photos = 0;
+  for (let i = cleaned.length - 1; i >= 0; i--) {
+    if (cleaned[i].image && ++photos > 3) cleaned[i] = { ...cleaned[i], image: undefined };
+  }
+  const hasPhoto = photos > 0;
   const messagesForModel = mergeRuns(
     stampPauses(
       (cleaned.length ? cleaned : messages).map((m) => ({
         role: m.role,
         at: m.at,
+        ...(m.image && m.role === "user" ? { images: [m.image] } : {}),
         content: withQuote(
           m.content,
           m.quote && { who: m.quote.role === "assistant" ? "you" : "their own earlier message", text: m.quote.content }
@@ -177,7 +196,7 @@ export async function POST(req: Request) {
       })),
       tz,
       now
-    ).map(({ role, content }) => ({ role, content }))
+    ).map(({ role, content, images }) => ({ role, content, ...(images ? { images } : {}) }))
   );
 
   const total = messages.reduce((n, m) => n + m.content.length, 0)
@@ -203,6 +222,28 @@ ${knows
             .map((k) => `- ${k.name}, ${userName || "their"} ${k.relationship}`)
             .join("\n")}
 You may mention them, ask after them, or have opinions about them. Do not invent what they have been doing lately -- you would only know that if you had been told.`
+        : "") +
+      (hasPhoto
+        ? `
+
+PHOTOS
+${userName || "They"} can send you photos, and you can see them. React the way you would to a friend's photo -- to what matters in it, in your own voice -- never with a description of the picture. If you cannot make something out, say so the way a person would.`
+        : "") +
+      (story
+        ? `
+
+YOU TWO, HERE
+${story}. Background only: let it colour what you say if it fits (noticing they have been here every day, or that it has been a while), never recite it. It is about this app, not about how long you have known each other in your own story.`
+        : "") +
+      /* Not on a call: everything there is spoken, and an emoji is not. */
+      (register !== "live"
+        ? `
+
+REACTIONS
+You can react to their latest message with one emoji, the way people do in a chat app, by putting [react: 😂] (any single emoji) at the very start of your reply.
+- When their message just closes a moment -- "haha", "lol", "ok", "okay fine", "goodnight", "ttyl", a single emoji -- usually react instead of writing anything: the reaction alone is your whole reply. Write words too only if you genuinely have something to add.
+- Otherwise, react now and then when something lands (a joke, good news, something sweet), alongside your reply. Most of your replies have no reaction.
+- Lines in their messages like (reacted ❤️ to your "...") mean they reacted to something you said; you may notice it, you need not mention it.`
         : "")
     : buildMuseSystemPrompt({
     name: muse.name,
@@ -292,6 +333,9 @@ ${timeBlock({ you: userName || "them", timeZone: tz, ...clock })}`;
           /* A live call is a sentence or two spoken aloud; long reasoning there
              is only silence on the line. */
           thinking: register === "live" ? "minimal" : undefined,
+          /* And pass the first sentence on as soon as it is safely not a
+             refusal, so the call can start speaking it. */
+          releaseAfter: register === "live" ? 30 : undefined,
         })) {
           if (evt.type === "delta") send({ type: "delta", text: evt.text });
           else if (evt.type === "refused") {

@@ -100,6 +100,12 @@ export async function* streamGuarded(opts: {
   name: string;
   /** Passed through to the provider; see GenerateOptions.thinking. */
   thinking?: "minimal" | "low";
+  /* Start passing text through once this much has arrived, ends a sentence,
+     and does not read as a refusal -- instead of holding the whole reply. For
+     a voice call, where the first sentence can be spoken while the rest is
+     written. A failure after that point is an error, not a retry: some of the
+     reply has already gone. */
+  releaseAfter?: number;
   /* Progressively less verbatim material, tried in order once the full prompt
      has failed. A persona built from someone's real messages can carry content
      the provider will not accept at any threshold, and the only lever left is
@@ -130,10 +136,22 @@ export async function* streamGuarded(opts: {
       const parts: string[] = [];
       let detail = "";
       let failed: Failure | null = null;
+      let released = false;
 
       try {
-        for await (const delta of provider.streamResponse({ system, messages: opts.messages, thinking: opts.thinking })) parts.push(delta);
+        for await (const delta of provider.streamResponse({ system, messages: opts.messages, thinking: opts.thinking })) {
+          parts.push(delta);
+          if (released) { yield { type: "delta", text: delta }; continue; }
+          if (opts.releaseAfter) {
+            const sofar = parts.join("");
+            if (sofar.length >= opts.releaseAfter && /[.!?…]\s|\n/.test(sofar) && !looksLikeRefusal(sofar.slice(0, REFUSAL_SNIFF_CHARS))) {
+              released = true;
+              for (const p of parts) yield { type: "delta", text: p };
+            }
+          }
+        }
       } catch (err) {
+        if (released) throw err;
         /* A stream that produces nothing, is refused, or is stopped by a filter
            is a failed attempt, not an error: nothing has been sent, so it can be
            tried again. Anything else -- a timeout, a bad key -- is real. */
@@ -144,6 +162,7 @@ export async function* streamGuarded(opts: {
       }
 
       const text = parts.join("");
+      if (released) { yield { type: "done" }; return; }
       if (!failed && !text.trim()) failed = "empty";
       if (!failed && looksLikeRefusal(text.slice(0, REFUSAL_SNIFF_CHARS))) failed = "refusal";
 

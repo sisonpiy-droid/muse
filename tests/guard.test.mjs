@@ -234,6 +234,61 @@ check("a reply that finishes normally is left alone", async () => {
   assert.equal(got.join(""), "haan bol");
 });
 
+/* Early release, for voice calls: the first safe sentence goes through before
+   the rest is written. */
+function chunked(chunks, failAfter = false) {
+  return {
+    name: "fake",
+    async *streamResponse() {
+      for (const c of chunks) yield c;
+      if (failAfter) throw new ProviderError("stopped", "stopped partway (SAFETY)");
+    },
+  };
+}
+const collect = async (provider, opts = {}) => {
+  const events = [];
+  let error;
+  try { for await (const e of streamGuarded({ ...base, system: "s", provider, ...opts })) events.push(e); }
+  catch (e) { error = e; }
+  return { events, error };
+};
+
+check("release: the first sentence passes through before the reply is finished", async () => {
+  let gate;
+  const wait = new Promise((r) => { gate = r; });
+  const provider = {
+    name: "fake",
+    async *streamResponse() {
+      yield "Arre haan, bilkul theek hai. ";
+      await wait;
+      yield "Aur bata?";
+    },
+  };
+  const it = streamGuarded({ ...base, system: "s", provider, releaseAfter: 20 })[Symbol.asyncIterator]();
+  const first = await it.next();
+  assert.equal(first.value.type, "delta", "released before the second chunk exists");
+  gate();
+  const rest = [];
+  for (let n = await it.next(); !n.done; n = await it.next()) rest.push(n.value);
+  assert.deepEqual(rest.map((e) => e.type), ["delta", "done"]);
+});
+
+check("release: a refusal is never released, it is retried like any other", async () => {
+  const { events } = await collect(chunked([REFUSAL + " ", "Sorry."]), { releaseAfter: 20 });
+  assert.ok(!events.some((e) => e.type === "delta" && e.text.includes("cannot")));
+});
+
+check("release: a failure after release is an error, not a quiet retry", async () => {
+  const { events, error } = await collect(chunked(["Haan bol, kya hua aaj? ", "aur"], true), { releaseAfter: 20 });
+  assert.ok(events.some((e) => e.type === "delta"));
+  assert.equal(error?.code, "stopped");
+});
+
+check("without release, nothing passes until the whole reply is checked", async () => {
+  const { events } = await collect(chunked(["Haan bol, kya hua aaj? ", "aur"]));
+  assert.deepEqual(events.map((e) => e.type), ["delta", "delta", "done"]);
+});
+
 let pass = 0, fail = 0;
 for (const [n, f] of results) {
   try { await f(); console.log(`  PASS  ${n}`); pass++; }

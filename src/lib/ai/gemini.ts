@@ -58,7 +58,10 @@ function toGeminiBody(opts: GenerateOptions) {
   const body: Record<string, unknown> = {
     contents: opts.messages.map((m) => ({
       role: m.role === "assistant" ? "model" : "user",
-      parts: [{ text: m.content }],
+      parts: [
+        { text: m.content },
+        ...(m.images ?? []).map((img) => ({ inlineData: { mimeType: img.mime, data: img.data } })),
+      ],
     })),
     generationConfig: {
       temperature: opts.temperature ?? 1,

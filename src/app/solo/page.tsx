@@ -16,6 +16,8 @@ import { MessageActions } from "@/components/MessageActions";
 import { QuoteBubble, ReplyBar, jumpTo } from "@/components/Quote";
 import { TraitEditor } from "@/components/TraitEditor";
 import { Turn } from "@/components/Turn";
+import { Photo } from "@/components/Photo";
+import { Story } from "@/components/Story";
 import { useReplyLoop } from "@/components/useReplyLoop";
 import { MADE_TAB, TABS } from "@/lib/personas";
 import {
@@ -26,14 +28,16 @@ import { safeFilename, transcriptMarkdown } from "@/lib/export";
 import {
   allMuses, attachEmbeddings, circleOf, deleteCircle, deleteConversation,
   deleteFrom, deleteMemory, deleteMessage, deleteMuse, download, editMemory, editMessage,
-  editMuse, feelingsOf, findMuse, forgetAll, inTab, insertAfter, isEdited, KEY as STORE_KEY,
-  membersOf, memoriesOf, needsEmbedding, newMessage, parseBackup, quoteOf,
+  editMuse, feelingsOf, findMuse, forgetAll, inTab, insertAfter, isEdited,
+  membersOf, memoriesOf, needsEmbedding, newMessage, paced, parseBackup, quoteOf, react, readReaction,
   resetMuse, rewindTo,
   setFeelings,
   type SoloCircle, type SoloMessage, type SoloMuse, type SoloState,
 } from "@/lib/solo/store";
-import { Persister } from "@/lib/solo/sync";
+import { Persister, mergeStates, onOtherTabWrite } from "@/lib/solo/sync";
 import { embedTexts, learnFrom } from "@/lib/solo/learn";
+import { PHOTO_ONLY, savePhoto, shrink } from "@/lib/solo/photos";
+import { canStoreImages, deleteImages } from "@/lib/solo/backend";
 import { MAX_MESSAGE, prepareTurn, streamReply } from "@/lib/solo/turn";
 import { canListen } from "@/lib/voice/listener";
 import { settingsOf } from "@/lib/proactive/client";
@@ -71,6 +75,7 @@ type View =
   | { kind: "call"; museId: string }
   | { kind: "edit"; museId: string }
   | { kind: "memories"; museId: string }
+  | { kind: "story"; museId: string }
   /* `tab` is where the new person goes when they were made from inside one. */
   | { kind: "import"; tab?: string }
   | { kind: "invent"; tab?: string }
@@ -147,15 +152,18 @@ export default function SoloPage() {
   /* A reload keeps the screen it was on: the entry survives it, and so do the
      ones behind it, so back still works afterwards. */
   useEffect(() => {
-    persist.current = new Persister();
-    setState(persist.current.open());
+    const p = new Persister();
+    persist.current = p;
+    /* IndexedDB opens asynchronously; nothing renders until it has been read,
+       so the first paint is never an empty state that flips a moment later. */
     const entry = asEntry(window.history.state);
-    if (entry) {
-      const v = settled(entry.view);
-      if (v !== entry.view) window.history.replaceState({ ...entry, view: v } satisfies Entry, "");
-      setView(v);
-    }
-    else window.history.replaceState({ muse: 1, view: { kind: "home" }, depth: 0 } satisfies Entry, "");
+    const restored = entry ? settled(entry.view) : null;
+    if (entry && restored && restored !== entry.view) window.history.replaceState({ ...entry, view: restored } satisfies Entry, "");
+    if (!entry) window.history.replaceState({ muse: 1, view: { kind: "home" }, depth: 0 } satisfies Entry, "");
+    void p.open().then((loaded) => {
+      setState(loaded);
+      if (restored) setView(restored);
+    });
   }, []);
 
   /* Saving is a consequence of the state changing, not something every call site
@@ -168,15 +176,16 @@ export default function SoloPage() {
   useEffect(() => {
     const p = persist.current;
     if (!state || !p || state === p.persisted) return;
-    const { result: saved, state: written } = p.save(state);
-    /* Another copy had written in the meantime and the two were merged: show
-       the merged state, which is now what is on disk. */
-    if (written !== state) setState(written);
-    const issue = saved.ok ? (saved.nearlyFull ? "nearly" : null) : saved.reason;
-    /* Only when it actually changes. This runs on every state change, which is
-       every keystroke-driven write, and setting the same value each time would
-       schedule a render per save for no reason. */
-    setSaveIssue((cur) => (cur === issue ? cur : issue));
+    void p.save(state).then(({ result: saved, state: written }) => {
+      /* Another copy had written in the meantime and the two were merged: show
+         the merged state, which is now what is on disk -- with anything that
+         changed here while the write was in flight put back on top. */
+      if (written !== state) setState((cur) => (!cur || cur === state ? written : mergeStates(state, written, cur)));
+      const issue = saved.ok ? (saved.nearlyFull ? "nearly" : null) : saved.reason;
+      /* Only when it actually changes: setting the same value each time would
+         schedule a render per save for no reason. */
+      setSaveIssue((cur) => (cur === issue ? cur : issue));
+    });
   }, [state]);
 
   const ready = state !== null;
@@ -192,22 +201,22 @@ export default function SoloPage() {
     const pull = () => {
       const cur = latestState.current;
       if (!cur) return;
-      const next = p.refresh(cur);
-      if (next) setState(next);
+      void p.refresh(cur).then((next) => {
+        if (next) setState((c) => (!c || c === cur ? next : mergeStates(cur, next, c)));
+      });
     };
     const flush = () => {
       const cur = latestState.current;
-      if (cur && cur !== p.persisted) p.save(cur);
+      if (cur && cur !== p.persisted) void p.save(cur);
     };
-    const onStorage = (e: StorageEvent) => { if (e.key === STORE_KEY) pull(); };
+    const offOther = onOtherTabWrite(pull);
     const onVisibility = () => (document.visibilityState === "visible" ? pull() : flush());
     const onShow = (e: PageTransitionEvent) => { if (e.persisted) pull(); };
-    window.addEventListener("storage", onStorage);
     document.addEventListener("visibilitychange", onVisibility);
     window.addEventListener("pagehide", flush);
     window.addEventListener("pageshow", onShow);
     return () => {
-      window.removeEventListener("storage", onStorage);
+      offOther();
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("pagehide", flush);
       window.removeEventListener("pageshow", onShow);
@@ -408,6 +417,21 @@ export default function SoloPage() {
     );
   }
 
+  if (view.kind === "story") {
+    const muse = findMuse(state, view.museId);
+    if (!muse) { setView({ kind: "home" }); return null; }
+    return shell(
+      <Story
+        key={muse.id}
+        muse={muse}
+        state={state}
+        update={update}
+        onBack={back}
+        onMemories={() => swap({ kind: "memories", museId: muse.id })}
+      />
+    );
+  }
+
   if (view.kind === "call") {
     const muse = findMuse(state, view.museId);
     if (!muse) { setView({ kind: "home" }); return null; }
@@ -432,6 +456,7 @@ export default function SoloPage() {
         onBack={back}
         onEdit={() => go({ kind: "edit", museId: muse.id })}
         onMemories={() => go({ kind: "memories", museId: muse.id })}
+        onStory={() => go({ kind: "story", museId: muse.id })}
         onCall={() => {
           /* Inside the tap, before anything is awaited: mobile browsers only
              allow sound that a gesture started. */
@@ -844,7 +869,7 @@ function MuseCard({
 /* ------------------------------------------------------------------ chat */
 
 function SoloChat({
-  muse, state, update, onBack, onEdit, onMemories, onCall,
+  muse, state, update, onBack, onEdit, onMemories, onCall, onStory,
 }: {
   muse: SoloMuse;
   state: SoloState;
@@ -853,10 +878,16 @@ function SoloChat({
   onEdit: () => void;
   onMemories: () => void;
   onCall: () => void;
+  onStory: () => void;
 }) {
   const log = state.conversations[muse.id] ?? [];
   /* The message whose actions are open. One at a time, like any chat app. */
   const [picked, setPicked] = useState<string | null>(null);
+  /* A photo chosen but not sent yet, already shrunk. */
+  const [photo, setPhoto] = useState<{ blob: Blob; w: number; h: number; url: string } | null>(null);
+  const [canPhoto, setCanPhoto] = useState(false);
+  const fileInput = useRef<HTMLInputElement>(null);
+  useEffect(() => { void canStoreImages().then(setCanPhoto); }, []);
   const [canCall, setCanCall] = useState(true);
   // Read after mount: the server render has no window to ask.
   // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -883,7 +914,11 @@ function SoloChat({
   /* Owed a reply: the thread ends with something the user said. Checked on
      opening the chat and on coming back to the app, so a reply interrupted by
      leaving, a reload or a dead connection is picked up rather than lost. */
-  const loop = useReplyLoop(muse.id, reply, () => (latest.current.conversations[muse.id] ?? []).at(-1)?.from === "user");
+  const loop = useReplyLoop(muse.id, reply, () => {
+    const end = (latest.current.conversations[muse.id] ?? []).at(-1);
+    /* A reaction is an answer: nothing is owed to a message she reacted to. */
+    return end?.from === "user" && !end.reactions?.muse;
+  });
 
   const vibe: Vibe = state.vibes?.[muse.id] ?? DEFAULT_VIBE;
   const setVibe = (next: Vibe) =>
@@ -894,9 +929,23 @@ function SoloChat({
      applies to the next message rather than the next reload. */
   const feelings = feelingsOf(state, muse.id);
 
+  /* Texts still being "typed": saved, not shown yet. The clock only moves when
+     the next one is due, so nothing re-renders while nothing is changing. */
+  const [clock, setClock] = useState(() => Date.now());
+  const shown = log.filter((m) => !m.showAt || Date.parse(m.showAt) <= clock);
+  const typingNext = shown.length < log.length;
+  useEffect(() => {
+    const due = log.map((m) => (m.showAt ? Date.parse(m.showAt) : 0)).filter((t) => t > clock);
+    if (!due.length) return;
+    const t = setTimeout(() => setClock(Date.now()), Math.max(30, Math.min(...due) - Date.now() + 20));
+    return () => clearTimeout(t);
+    // Reschedules when a message arrives or the clock moves; that is all that changes when.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [log.length, clock]);
+
   useEffect(() => {
     foot.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [log.length, streaming]);
+  }, [shown.length, streaming]);
 
   const memoriesFor = state.memories.filter((m) => m.museId === muse.id);
 
@@ -923,10 +972,20 @@ function SoloChat({
 
   const nameOf = (m: SoloMessage) => (m.from === "user" ? "You" : muse.name);
 
-  function sendDraft() {
+  async function sendDraft() {
     const content = draft.trim();
-    if (!content) return;
-    const msg = newMessage("user", content, { replyTo: replyTo?.id });
+    const pic = photo;
+    if (!content && !pic) return;
+    const base = newMessage("user", content || PHOTO_ONLY, { replyTo: replyTo?.id });
+    let msg: SoloMessage = base;
+    if (pic) {
+      setPhoto(null);
+      const id = `img-${base.id}`;
+      /* The file first, then the message that points at it. */
+      if (!(await savePhoto(id, pic.blob))) { setError("Couldn't keep that photo on this device. Try again."); return; }
+      msg = { ...base, image: { id, w: pic.w, h: pic.h } };
+      URL.revokeObjectURL(pic.url);
+    }
     update((cur) => ({
       ...cur,
       conversations: { ...cur.conversations, [muse.id]: [...(cur.conversations[muse.id] ?? []), msg] },
@@ -956,7 +1015,10 @@ function SoloChat({
     const { person, vibe: vibeNow } = prepared;
 
     try {
-      const outcome = await streamReply(prepared.body, signal, (soFar) => setStreaming(soFar));
+      /* A burst of texts appears text by text once it is in, so it is not also
+         streamed in as one block first. A letter or a voice note still is. */
+      const regNow = REGISTERS[vibeNow.register as keyof typeof REGISTERS] ?? REGISTERS.texts;
+      const outcome = await streamReply(prepared.body, signal, (soFar) => { if (!regNow.burst) setStreaming(soFar); });
       /* A reply that ended in an error is not a reply, however much of it
          arrived first. Saving the fragment is how half-sentences got into the
          thread. */
@@ -968,7 +1030,12 @@ function SoloChat({
       if (signal.aborted) return;
       const acc = outcome.text;
 
-      const text = acc.trim();
+      /* "[react: 😂]" first: she reacted to what she is answering. That alone
+         is a whole reply when nothing more needs saying. */
+      const { emoji, rest } = readReaction(acc.trim());
+      if (emoji) update((cur) => react(cur, muse.id, last.id, "muse", emoji));
+      const text = rest;
+      if (!text && emoji) return;
       /* Nothing came back. Saying so, with a way to ask again, beats a thread
          that simply stops. */
       if (!text) {
@@ -985,8 +1052,11 @@ function SoloChat({
          contradict the instruction the model was just given. */
       const reg = REGISTERS[vibeNow.register as keyof typeof REGISTERS] ?? REGISTERS.texts;
       const burst = person.persona ? splitBurst(text, reg.burst) : [text];
-      const answer = burst.map((content) => newMessage("muse", content));
+      const answer = paced(burst.map((content) => newMessage("muse", content)));
       update((cur) => insertAfter(cur, muse.id, last.id, answer));
+      /* Stay "typing" until the last of them is out. */
+      const lastAt = Date.parse(answer.at(-1)!.showAt!);
+      while (Date.now() < lastAt && !signal.aborted) await new Promise((r) => setTimeout(r, Math.min(400, lastAt - Date.now())));
 
       /* Extraction runs after the reply is on screen and never blocks it, the
          same shape as the server app's aftercare. */
@@ -1094,6 +1164,7 @@ function SoloChat({
           label={`More for ${muse.name}`}
           items={[
             { label: `Edit ${muse.name}`, onSelect: onEdit },
+            { label: `You & ${muse.name}`, onSelect: onStory },
             { label: `What ${muse.name} remembers`, onSelect: onMemories },
             {
               label: settingsOf(state).proactiveEnabled && settingsOf(state).allowedMuseIds.includes(muse.id)
@@ -1153,11 +1224,11 @@ function SoloChat({
           </div>
         )}
 
-        {log.map((m, i) => {
+        {shown.map((m, i) => {
           const q = quoteOf(log, m);
           const replyHere = () => { setReplyTo(m); setPicked(null); box.current?.focus(); };
           /* A call shows where it started, in the same thread as everything else. */
-          const callStarts = m.callId && log.findIndex((x) => x.callId === m.callId) === i;
+          const callStarts = m.callId && shown.findIndex((x) => x.callId === m.callId) === i;
           const call = callStarts ? (state.calls ?? []).find((c) => c.id === m.callId) : undefined;
           return (
             <Fragment key={m.id}>
@@ -1170,24 +1241,29 @@ function SoloChat({
               {m.replyTo && (
                 <QuoteBubble who={q ? nameOf(q) : ""} text={q?.content} onJump={q ? () => jumpTo(q.id) : undefined} />
               )}
-              {m.content}
+              {m.image && <Photo id={m.image.id} w={m.image.w} h={m.image.h} />}
+              {m.image && m.content === PHOTO_ONLY ? null : m.content}
               {m.edited && <span className="stamp"> · edited</span>}
               {m.interrupted && <span className="stamp"> · cut off</span>}
               <MessageActions
                 content={m.content}
                 onReply={replyHere}
                 onEdit={(text) => editLine(m, text)}
-                onDelete={() => update(deleteMessage(state, muse.id, m.id))}
+                onDelete={() => { if (m.image) void deleteImages([m.image.id]); update(deleteMessage(state, muse.id, m.id)); }}
                 onDeleteFrom={() => update(deleteFrom(state, muse.id, m.id))}
                 onDone={() => setPicked(null)}
+                {...(m.from === "muse" ? { onReact: (e: string) => update((cur) => react(cur, muse.id, m.id, "user", e)), reacted: m.reactions?.user } : {})}
               />
+              {m.reactions && (
+                <span className="reacts" aria-label="Reactions">{m.reactions.muse}{m.reactions.user}</span>
+              )}
             </Turn>
             </Fragment>
           );
         })}
 
         {streaming && <div className="turn turn-muse">{streaming}</div>}
-        {loop.busy && !streaming && <p className="typing">{muse.name} is typing<i>.</i><i>.</i><i>.</i></p>}
+        {(loop.busy || typingNext) && !streaming && <p className="typing">{muse.name} is typing<i>.</i><i>.</i><i>.</i></p>}
 
         {error && (
           <div style={{ marginTop: "1rem" }}>
@@ -1279,6 +1355,39 @@ function SoloChat({
         {replyTo && (
           <ReplyBar who={replyTo.from === "user" ? "yourself" : muse.name} text={replyTo.content} onCancel={() => setReplyTo(null)} />
         )}
+        {photo && (
+          <div className="photo-draft">
+            {/* A photo still on this device (an object URL): nothing for next/image to optimise. */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={photo.url} alt="Photo to send" />
+            <button type="button" className="link-btn" aria-label="Remove photo" onClick={() => { URL.revokeObjectURL(photo.url); setPhoto(null); }}>×</button>
+          </div>
+        )}
+        {canPhoto && (
+          <>
+            <button type="button" className="attach" aria-label="Send a photo" onClick={() => fileInput.current?.click()}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <rect x="3" y="5" width="18" height="14" rx="3" /><circle cx="12" cy="12" r="3.2" /><path d="M8 5l1.5-2h5L16 5" />
+              </svg>
+            </button>
+            <input
+              ref={fileInput}
+              type="file"
+              accept="image/*"
+              className="sr-only"
+              onChange={async (e) => {
+                const file = e.target.files?.[0];
+                e.target.value = "";
+                if (!file) return;
+                const small = await shrink(file);
+                if (!small) { setError("Couldn't open that photo. Try a different one."); return; }
+                if (photo) URL.revokeObjectURL(photo.url);
+                setPhoto({ ...small, url: URL.createObjectURL(small.blob) });
+                box.current?.focus();
+              }}
+            />
+          </>
+        )}
         <label className="sr-only" htmlFor="solo-composer">Write to {muse.name}</label>
         <textarea
           id="solo-composer"
@@ -1294,13 +1403,13 @@ function SoloChat({
             if (el) { el.style.height = "auto"; el.style.height = `${Math.min(el.scrollHeight, 128)}px`; }
           }}
           onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendDraft(); }
+            if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void sendDraft(); }
             if (e.key === "Escape" && replyTo) setReplyTo(null);
           }}
         />
         {/* Never disabled while they are typing back: a second text is how
             people talk, and it gets answered with the first. */}
-        <button className="send" onClick={sendDraft} disabled={!draft.trim()}>Send</button>
+        <button className="send" onClick={() => void sendDraft()} disabled={!draft.trim() && !photo}>Send</button>
       </div>
     </main>
   );

@@ -1,6 +1,7 @@
 "use client";
 
-import { KEY, loadState, saveState, type SaveResult, type SoloState } from "./store";
+import { KEY, STORAGE_BUDGET, parseState, serialiseState, type SaveResult, type SoloState } from "./store";
+import { chooseBackend, localBackend, storageUse, type Backend } from "./backend";
 
 /* Keeping one browser's copy of everything consistent when more than one copy
  * of the app is running.
@@ -107,67 +108,155 @@ export function mergeStates(base: SoloState, theirs: SoloState, ours: SoloState)
   };
 }
 
-/** The revision on disk, read from the front of the string without parsing the rest. */
-function storedRev(): number | null {
-  try {
-    const raw = localStorage.getItem(KEY);
-    if (raw === null) return null;
-    return Number(/^\{"rev":(\d+)/.exec(raw)?.[1] ?? 0);
-  } catch {
-    return null;
-  }
-}
+/* Saving, against whichever backend this browser has (IndexedDB, or
+ * localStorage where that will not open).
+ *
+ * Asynchronous now, so saves are queued: a burst of state changes writes the
+ * newest one once the write in progress lands, never several out of order. A
+ * write is conditional on the revision this tab last saw; if another copy got
+ * there first, the two are merged and the merge is written instead. */
+export type Saved = { result: SaveResult; state: SoloState };
 
 export class Persister {
+  private backend: Backend = localBackend;
   /** What this tab last read from or wrote to disk: the merge base. */
   private base: SoloState | null = null;
   private rev = 0;
   /** The in-memory object that matches disk, so an unchanged state is never rewritten. */
   persisted: SoloState | null = null;
+  private queue: Promise<unknown> = Promise.resolve();
 
-  open(): SoloState {
-    const s = loadState();
+  constructor(backend?: Backend) {
+    if (backend) this.backend = backend;
+  }
+
+  get storage(): "idb" | "local" {
+    return this.backend.name;
+  }
+
+  async open(choose: () => Promise<Backend> = () => chooseBackend(combineRaw)): Promise<SoloState> {
+    try {
+      this.backend = await choose();
+    } catch {
+      this.backend = localBackend;
+    }
+    let s: SoloState;
+    try {
+      const { raw, rev } = await this.backend.read();
+      s = parseState(raw);
+      if (!s.corrupt) s.rev = rev || s.rev || 0;
+    } catch (err) {
+      console.error("solo state could not be read", err);
+      s = parseState("{");
+    }
     this.base = s;
     this.rev = s.rev ?? 0;
     this.persisted = s;
     return s;
   }
 
-  /* Write `state`. If another copy of the app wrote since this one last
-     touched disk, merge with what it wrote rather than replace it. Returns the
-     state that was written, which is a new object only when a merge happened. */
-  save(state: SoloState): { result: SaveResult; state: SoloState } {
+  /* Write `state`, merging with anything another copy wrote first. Resolves
+     with what was written -- a new object only when a merge happened. */
+  save(state: SoloState): Promise<Saved> {
+    const run = this.queue.then(() => this.write(state));
+    this.queue = run.catch(() => {});
+    return run;
+  }
+
+  private async write(state: SoloState): Promise<Saved> {
     if (state.corrupt) return { result: { ok: false, reason: "corrupt", bytes: 0 }, state };
     let next = state;
-    const onDisk = storedRev();
-    if (onDisk !== null && onDisk !== this.rev && this.base) {
-      const theirs = loadState();
-      if (!theirs.corrupt) next = mergeStates(this.base, theirs, state);
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const rev = this.rev + 1;
+      let raw: string;
+      try {
+        raw = serialiseState({ ...next, rev });
+      } catch {
+        return { result: { ok: false, reason: "unavailable", bytes: 0 }, state: next };
+      }
+      try {
+        const outcome = await this.backend.write(raw, rev, this.rev);
+        if (outcome === "ok") {
+          this.base = next;
+          this.rev = rev;
+          this.persisted = next;
+          announce(rev);
+          return { result: { ok: true, bytes: raw.length, nearlyFull: await nearlyFull(this.backend, raw.length) }, state: next };
+        }
+      } catch (err) {
+        const name = err instanceof Error ? err.name : (err as { name?: string })?.name ?? "";
+        const quota = /quota/i.test(name) || name === "NS_ERROR_DOM_QUOTA_REACHED";
+        console.error("solo save failed", name);
+        return { result: { ok: false, reason: quota ? "quota" : "unavailable", bytes: raw.length }, state: next };
+      }
+      /* Someone else wrote first: take theirs, put ours on top, try again. */
+      const theirs = await this.backend.read().catch(() => null);
+      const parsed = theirs ? parseState(theirs.raw) : null;
+      if (!theirs || !parsed || parsed.corrupt) return { result: { ok: false, reason: "unavailable", bytes: 0 }, state: next };
+      next = this.base ? mergeStates(this.base, parsed, next) : next;
+      this.base = parsed;
+      this.rev = theirs.rev;
     }
-    const rev = Math.max(onDisk ?? 0, this.rev) + 1;
-    const result = saveState({ ...next, rev });
-    if (result.ok) {
-      this.base = next;
-      this.rev = rev;
-      this.persisted = next;
-    }
-    return { result, state: next };
+    return { result: { ok: false, reason: "unavailable", bytes: 0 }, state: next };
   }
 
   /* Another copy wrote. Fold its changes into `current` without writing --
      or, when this tab has nothing unsaved, simply adopt what is on disk, so
      two tabs never take turns rewriting the same thing at each other. Null
      when there is nothing new. */
-  refresh(current: SoloState): SoloState | null {
-    const onDisk = storedRev();
+  async refresh(current: SoloState): Promise<SoloState | null> {
+    const onDisk = await this.backend.revision();
     if (onDisk === null || onDisk === this.rev || !this.base) return null;
-    const theirs = loadState();
+    const { raw, rev } = await this.backend.read();
+    const theirs = parseState(raw);
     if (theirs.corrupt) return null;
     const unsaved = current !== this.persisted;
     const next = unsaved ? mergeStates(this.base, theirs, current) : theirs;
     this.base = theirs;
-    this.rev = onDisk;
+    this.rev = rev;
     if (!unsaved) this.persisted = theirs;
     return next;
   }
+}
+
+/* Two stored copies with no common history, as one: everything either holds.
+   With an empty base, every item counts as added on its side, so the result is
+   the union -- a leftover empty copy contributes nothing and removes nothing. */
+export function combineRaw(a: string, b: string, rev: number): string {
+  const one = parseState(a);
+  const two = parseState(b);
+  if (one.corrupt) return b;
+  if (two.corrupt) return a;
+  return serialiseState({ ...mergeStates(parseState(null), one, two), rev });
+}
+
+/* Telling other tabs a write happened. localStorage did this on its own (the
+   storage event); IndexedDB does not, so it is said out loud. */
+const CHANNEL = "muse.solo";
+let channel: BroadcastChannel | null = null;
+function announce(rev: number) {
+  try {
+    channel ??= new BroadcastChannel(CHANNEL);
+    channel.postMessage({ rev });
+  } catch { /* single tab, or no BroadcastChannel: nothing to tell */ }
+}
+
+export function onOtherTabWrite(f: () => void): () => void {
+  try {
+    const c = new BroadcastChannel(CHANNEL);
+    c.onmessage = () => f();
+    const onStorage = (e: StorageEvent) => { if (e.key === KEY) f(); };
+    window.addEventListener("storage", onStorage);
+    return () => { c.close(); window.removeEventListener("storage", onStorage); };
+  } catch {
+    const onStorage = (e: StorageEvent) => { if (e.key === KEY) f(); };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }
+}
+
+async function nearlyFull(backend: Backend, bytes: number): Promise<boolean> {
+  if (backend.name === "local") return bytes > STORAGE_BUDGET;
+  const used = await storageUse();
+  return used !== null && used > 0.9;
 }
