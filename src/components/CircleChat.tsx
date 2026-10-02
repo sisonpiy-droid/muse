@@ -281,7 +281,7 @@ export function CircleChat({
       <header className="chat-head">
         <button className="link-btn" onClick={onBack} aria-label="Back" style={{ textDecoration: "none" }}>←</button>
         <div className="stack-avatars">
-          {members.slice(0, 3).map((m) => <Avatar key={m.id} name={m.name} />)}
+          {members.slice(0, 3).map((m) => <Avatar key={m.id} name={m.name} image={m.avatar?.id} />)}
         </div>
         <div className="chat-who">
           <h1>{circle.name}</h1>
@@ -387,7 +387,7 @@ export function CircleChat({
               {members.map((m) => (
                 <div key={m.id} className="member-traits">
                   <div className="row" style={{ gap: "0.5rem", alignItems: "center" }}>
-                    <Avatar name={m.name} />
+                    <Avatar name={m.name} image={m.avatar?.id} />
                     <b>{m.name}</b>
                   </div>
                   <TraitEditor

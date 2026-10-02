@@ -160,7 +160,7 @@ export function Memories({
       </header>
 
       <div className="row" style={{ gap: "0.75rem", marginTop: "1.5rem", alignItems: "center" }}>
-        <Avatar name={muse.name} />
+        <Avatar name={muse.name} image={muse.avatar?.id} />
         <div style={{ minWidth: 0 }}>
           <h1 className="display" style={{ fontSize: "1.6rem", margin: 0 }}>
             What {muse.name} knows

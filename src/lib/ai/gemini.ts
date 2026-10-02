@@ -351,24 +351,18 @@ export const geminiProvider: AIProvider = {
      to the caller: whatever the description says, the result is an ordinary
      snapshot with nobody in it. */
   async picture(description: string, signal?: AbortSignal): Promise<{ mime: string; data: string }> {
-    const prompt = `A casual, unposed photo that someone just took on their phone and sent to a close friend in a chat: ${description}
+    return makeImage(`A casual, unposed photo that someone just took on their phone and sent to a close friend in a chat: ${description}
 
-Shot on a phone camera: natural, available light, slightly imperfect framing, ordinary and real -- not professional, not stylised, not an advert. Nobody in the frame: no people, no faces, no bodies, at most the edge of a hand. No text overlays, captions, watermarks or borders.`;
-    const res = await post(`models/${encodeURIComponent(imageModel())}:generateContent`, {
-      contents: [{ role: "user", parts: [{ text: prompt }] }],
-      safetySettings: SAFETY_SETTINGS,
-      generationConfig: { responseModalities: ["IMAGE"], imageConfig: { aspectRatio: "3:4" } },
-    }, signal);
-    const data = await res.json();
-    if (!res.ok) throw classify(res.status, (data as { error?: { message?: string } })?.error?.message || "no detail");
-    const d = data as {
-      candidates?: { content?: { parts?: { inlineData?: { mimeType?: string; data?: string } }[] }; finishReason?: string }[];
-      promptFeedback?: { blockReason?: string };
-    };
-    if (d.promptFeedback?.blockReason) throw new ProviderError("blocked", `The picture was blocked (${d.promptFeedback.blockReason}).`);
-    const img = d.candidates?.[0]?.content?.parts?.find((p) => p.inlineData?.data)?.inlineData;
-    if (!img?.data) throw new ProviderError("empty", `No picture came back (finishReason: ${d.candidates?.[0]?.finishReason ?? "unknown"}).`);
-    return { mime: img.mimeType || "image/png", data: img.data };
+Shot on a phone camera: natural, available light, slightly imperfect framing, ordinary and real -- not professional, not stylised, not an advert. Nobody in the frame: no people, no faces, no bodies, at most the edge of a hand. No text overlays, captions, watermarks or borders.`, "3:4", signal);
+  },
+
+  /* A profile picture of someone made up: an ordinary adult, as they would
+     look in their own WhatsApp photo. Only ever asked for a character invented
+     here (see /api/solo/avatar); a real person is never drawn. */
+  async portrait(description: string, signal?: AbortSignal): Promise<{ mime: string; data: string }> {
+    return makeImage(`The profile picture an ordinary person would use on WhatsApp or Instagram, of this made-up character: ${description}
+
+A photo of one adult, at least in their twenties, head and shoulders, fully clothed, looking natural and friendly. Taken on a phone -- natural light, an everyday background, a little imperfect, not a studio or model shoot. Not a celebrity or any real, recognisable person. No text, captions, watermarks or borders.`, "1:1", signal);
   },
 
   /* Grounded in Google Search. What the model half-remembers about a famous
@@ -410,6 +404,26 @@ Shot on a phone camera: natural, available light, slightly imperfect framing, or
     return { text, sources };
   },
 };
+
+/* One generated image, for picture() and portrait(): the framing is theirs,
+   the request and the reading of it are the same. */
+async function makeImage(prompt: string, aspectRatio: string, signal?: AbortSignal): Promise<{ mime: string; data: string }> {
+  const res = await post(`models/${encodeURIComponent(imageModel())}:generateContent`, {
+    contents: [{ role: "user", parts: [{ text: prompt }] }],
+    safetySettings: SAFETY_SETTINGS,
+    generationConfig: { responseModalities: ["IMAGE"], imageConfig: { aspectRatio } },
+  }, signal);
+  const data = await res.json();
+  if (!res.ok) throw classify(res.status, (data as { error?: { message?: string } })?.error?.message || "no detail");
+  const d = data as {
+    candidates?: { content?: { parts?: { inlineData?: { mimeType?: string; data?: string } }[] }; finishReason?: string }[];
+    promptFeedback?: { blockReason?: string };
+  };
+  if (d.promptFeedback?.blockReason) throw new ProviderError("blocked", `The picture was blocked (${d.promptFeedback.blockReason}).`);
+  const img = d.candidates?.[0]?.content?.parts?.find((p) => p.inlineData?.data)?.inlineData;
+  if (!img?.data) throw new ProviderError("empty", `No picture came back (finishReason: ${d.candidates?.[0]?.finishReason ?? "unknown"}).`);
+  return { mime: img.mimeType || "image/png", data: img.data };
+}
 
 /* Shared by both providers: the prompt and the parsing are identical, only the
    model differs. Kept here rather than duplicated in anthropic.ts. */

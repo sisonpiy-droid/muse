@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import { Avatar } from "@/components/Avatar";
 import { VoicePicker } from "@/components/VoicePicker";
@@ -9,7 +9,10 @@ import {
   type Feelings,
 } from "@/lib/presence/persona";
 import { MADE_TAB, TABS } from "@/lib/personas";
-import { tabOf, type MusePatch, type SoloMuse } from "@/lib/solo/store";
+import { canStoreImages, putImage } from "@/lib/solo/backend";
+import { makeAvatar } from "@/lib/solo/media";
+import { shrink } from "@/lib/solo/photos";
+import { tabOf, type MuseAvatar, type MusePatch, type SoloMuse } from "@/lib/solo/store";
 
 /* Changing who someone is, and how they are.
  *
@@ -74,6 +77,33 @@ export function EditMuse({
   const [tab, setTab] = useState(was.tab);
   const [voice, setVoice] = useState(was.voice);
   const [feel, setFeel] = useState<Feelings>(feelings ?? DEFAULT_FEELINGS);
+  /* Their picture: kept in the browser as soon as it is chosen or made, but
+     only theirs once Save is pressed, like everything else here. */
+  const [avatar, setAvatar] = useState<MuseAvatar | null | undefined>(muse.avatar);
+  const [picturing, setPicturing] = useState<"upload" | "make" | null>(null);
+  const [pictureNote, setPictureNote] = useState<string | null>(null);
+  const picker = useRef<HTMLInputElement>(null);
+
+  async function keep(blob: Blob | null, made: boolean) {
+    if (!blob || !(await canStoreImages())) { setPictureNote("Couldn't keep that picture on this device."); return; }
+    const id = `avatar-${muse.id}-${Date.now().toString(36)}`;
+    if (!(await putImage(id, blob))) { setPictureNote("Couldn't keep that picture on this device."); return; }
+    setAvatar({ id, made });
+    setPictureNote(null);
+  }
+  async function upload(file: File | undefined) {
+    if (!file) return;
+    setPicturing("upload");
+    try { await keep((await shrink(file))?.blob ?? null, false); } finally { setPicturing(null); }
+  }
+  async function remake() {
+    setPicturing("make");
+    try {
+      const blob = await makeAvatar({ ...muse, name: name.trim() || muse.name, relationshipType: rel, description, traits });
+      if (blob) await keep(blob, true);
+      else setPictureNote("Couldn't make a picture just now. Try again?");
+    } finally { setPicturing(null); }
+  }
 
   /* Functional updates throughout. Three quick chip clicks all read the same
      stale array otherwise, and only the last one survives. */
@@ -97,6 +127,7 @@ export function EditMuse({
     texture !== was.texture ||
     tab !== was.tab ||
     voice !== was.voice ||
+    avatar !== muse.avatar ||
     feel.mood !== feelings.mood ||
     feel.warmth !== feelings.warmth ||
     feel.note !== feelings.note;
@@ -121,6 +152,8 @@ export function EditMuse({
         texture,
         /* "" puts it back to chosen-for-them: the next call picks again. */
         voiceId: voice,
+        /* null: taken away, and not drawn again on its own. */
+        ...(avatar !== muse.avatar ? { avatar: avatar ?? null } : {}),
         /* Someone the user built keeps whatever they were filed as ("Personal",
            "Public") while they sit in the user's own tab. */
         category: tab === MADE_TAB ? (was.tab === MADE_TAB ? muse.category : "Personal") : tab,
@@ -158,7 +191,7 @@ export function EditMuse({
       </header>
 
       <div className="row" style={{ gap: "0.75rem", marginTop: "1.5rem", alignItems: "center" }}>
-        <Avatar name={name || muse.name} />
+        <Avatar name={name || muse.name} image={avatar?.id} large />
         <div style={{ minWidth: 0 }}>
           <h1 className="display" style={{ fontSize: "1.6rem", margin: 0 }}>{name || muse.name}</h1>
           <p className="fine" style={{ margin: 0 }}>
@@ -168,6 +201,20 @@ export function EditMuse({
           </p>
         </div>
       </div>
+
+      <div className="row picture-row">
+        <button type="button" className="btn-ghost" disabled={!!picturing} onClick={() => picker.current?.click()}>
+          {picturing === "upload" ? "Adding…" : "Use a photo"}
+        </button>
+        <button type="button" className="btn-ghost" disabled={!!picturing} onClick={() => void remake()}>
+          {picturing === "make" ? "Making one…" : avatar ? "Make a new picture" : "Make a picture"}
+        </button>
+        {avatar && (
+          <button type="button" className="link-btn" disabled={!!picturing} onClick={() => setAvatar(null)}>Remove picture</button>
+        )}
+        <input ref={picker} type="file" accept="image/*" hidden onChange={(e) => { void upload(e.target.files?.[0]); e.target.value = ""; }} />
+      </div>
+      {pictureNote && <p className="fine" role="status">{pictureNote}</p>}
 
       {/* ----------------------------------------------------- who they are */}
       <h2 className="section-title">Who they are</h2>

@@ -1,6 +1,7 @@
 "use client";
 
 import { isVoice } from "@/lib/voice/voices";
+import { canStoreImages, putImage } from "./backend";
 import { shrink } from "./photos";
 import { editMuse, findMuse, type SoloMuse, type SoloState } from "./store";
 
@@ -109,4 +110,59 @@ export function wav(pcm: Uint8Array<ArrayBuffer>, rate: number): Blob {
   text(36, "data");
   header.setUint32(40, even, true);
   return new Blob([header.buffer, pcm.subarray(0, even)], { type: "audio/wav" });
+}
+
+/* ------------------------------------------------------- profile pictures */
+
+/* A character's picture, made once and kept like a photo. Which kind (a face,
+   or the flower-or-sunset kind) is the server's call: see /api/solo/avatar.
+   Asked for the first time their chat is opened, one character at a time. */
+const drawing = new Set<string>();
+
+export async function makeAvatar(person: SoloMuse, signal?: AbortSignal): Promise<Blob | null> {
+  const p = person.persona;
+  const about = [
+    person.relationshipType && `They are someone's ${person.relationshipType}.`,
+    person.description,
+    (p?.brief ?? person.brief ?? "").slice(0, 600),
+    (p?.traits ?? person.traits ?? []).length ? `Traits: ${(p?.traits ?? person.traits ?? []).join(", ")}.` : "",
+  ].filter(Boolean).join(" ").slice(0, 1200);
+  try {
+    const res = await fetch("/api/solo/avatar", {
+      method: "POST",
+      signal,
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: person.name.slice(0, 60), mode: p?.mode ?? "", arch: p?.arch ?? "other", minor: p?.minor, about }),
+    });
+    if (!res.ok) return null;
+    const { mime, data } = await res.json();
+    if (typeof data !== "string") return null;
+    const bytes = Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
+    const small = await shrink(new File([bytes], "avatar", { type: mime || "image/png" }));
+    return small?.blob ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Gives a character a picture if they have none and never had one taken away. */
+export async function ensureAvatar(state: SoloState, museId: string, update: Update): Promise<void> {
+  const person = findMuse(state, museId);
+  /* `null` is the user removing it: leave them without. */
+  if (!person || person.avatar !== undefined || drawing.has(museId)) return;
+  drawing.add(museId);
+  try {
+    /* Somewhere to keep it first: a picture that cannot be kept is paid for for nothing. */
+    if (!(await canStoreImages())) return;
+    const blob = await makeAvatar(person);
+    if (!blob) return;
+    const id = `avatar-${museId}-${Date.now().toString(36)}`;
+    if (!(await putImage(id, blob))) return;
+    update((cur) => {
+      const now = findMuse(cur, museId);
+      return now && now.avatar === undefined ? editMuse(cur, museId, { avatar: { id, made: true } }) : cur;
+    });
+  } finally {
+    drawing.delete(museId);
+  }
 }

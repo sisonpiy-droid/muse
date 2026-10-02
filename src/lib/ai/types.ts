@@ -128,6 +128,9 @@ export interface AIProvider {
   /** A casual phone photo of what is described, with nobody in it. Optional:
    *  without it, a Muse simply never sends photos. */
   picture?(description: string, signal?: AbortSignal): Promise<{ mime: string; data: string }>;
+
+  /** A profile picture of a made-up adult character. Optional, like picture(). */
+  portrait?(description: string, signal?: AbortSignal): Promise<{ mime: string; data: string }>;
 }
 
 export interface SpeechStream {

@@ -37,8 +37,8 @@ import {
   setFeelings, typingMs,
   type MediaAllowed, type SoloCircle, type SoloMessage, type SoloMuse, type SoloState,
 } from "@/lib/solo/store";
-import { makePicture, recordVoiceNote, voiceFor } from "@/lib/solo/media";
-import { addPoint, advanceLife, markStarted, planDue, readPoint, unlock } from "@/lib/solo/life";
+import { ensureAvatar, makePicture, recordVoiceNote, voiceFor } from "@/lib/solo/media";
+import { NUDGE_STALE_MS, addPoint, advanceLife, markStarted, nudgeAt, planDue, readPoint, unlock } from "@/lib/solo/life";
 import { Persister, mergeStates, onOtherTabWrite } from "@/lib/solo/sync";
 import { embedTexts, learnFrom } from "@/lib/solo/learn";
 import { PHOTO_ONLY, savePhoto, shrink } from "@/lib/solo/photos";
@@ -603,7 +603,7 @@ function SoloHome({
             {tiles.map((t) => (
               <button key={t.id} className="tab-tile" onClick={() => onTab(t.id)}>
                 <div className="stack-avatars" aria-hidden>
-                  {t.people.slice(0, 3).map((p) => <Avatar key={p.id} name={p.name} />)}
+                  {t.people.slice(0, 3).map((p) => <Avatar key={p.id} name={p.name} image={p.avatar?.id} />)}
                 </div>
                 <div className="tab-tile-text">
                   <b>{t.id}</b>
@@ -800,7 +800,7 @@ function CircleCard({
     <div className="card-wrap">
       <button className="muse-card" onClick={() => onOpen(circle.id)}>
         <div className="stack-avatars">
-          {members.slice(0, 3).map((m) => <Avatar key={m.id} name={m.name} />)}
+          {members.slice(0, 3).map((m) => <Avatar key={m.id} name={m.name} image={m.avatar?.id} />)}
         </div>
         <div style={{ minWidth: 0, flex: 1 }}>
           <h3>{circle.name}</h3>
@@ -859,7 +859,7 @@ function MuseCard({
   return (
     <div className="card-wrap">
     <button className="muse-card" onClick={() => onOpen(muse.id)}>
-      <Avatar name={muse.name} />
+      <Avatar name={muse.name} image={muse.avatar?.id} />
       <div style={{ minWidth: 0, flex: 1 }}>
         <div className="row" style={{ gap: "0.5rem", justifyContent: "space-between" }}>
           <h3>{muse.name}</h3>
@@ -991,6 +991,8 @@ function SoloChat({
   /* Her life moves on about once a day; opening the chat is when it is checked. */
   useEffect(() => {
     void advanceLife(latest.current, muse.id, update);
+    /* And the first time, a picture of them. */
+    void ensureAvatar(latest.current, muse.id, update);
     // Once per conversation opened; it reads the latest state through the ref.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [muse.id]);
@@ -1193,23 +1195,59 @@ function SoloChat({
     return out;
   }
 
-  async function startPlan(what: string) {
+  /* A turn the app starts rather than the user: a plan beginning, a nudge
+     after being left on read. She texts; nothing of theirs is answered. */
+  async function appTurn(note: string, opts: { nudge?: boolean; max?: number } = {}) {
     setStarting(true);
     try {
       const signal = new AbortController().signal;
       const prepared = await prepareTurn(latest.current, muse.id, { fallback: muse, canStore: canPhoto });
       if (!prepared) return;
-      withAppMessage(prepared, `(It is time for what you two planned: ${what} You start it now: text ${state.userName ?? "them"} the way you would when it is time, and get it going.)`);
+      withAppMessage(prepared, note);
       const out = await streamReply(prepared.body, signal, () => {});
       if (!out.ok) return;
       const text = readReaction(out.text.trim()).rest;
-      const parts = splitBurst(text, true);
+      const parts = splitBurst(text, true).slice(0, opts.max ?? 4);
       const anchor = (latest.current.conversations[muse.id] ?? []).at(-1)?.id;
-      if (parts.length) await deliver(parts, { photo: false, voice: false, song: false }, anchor ?? "", prepared.person, signal);
-    } catch { /* the plan is still on; they can start it themselves */ } finally {
+      if (!parts.length) return;
+      const sent = await deliver(parts, { photo: false, voice: false, song: false }, anchor ?? "", prepared.person, signal);
+      if (opts.nudge && sent.length) {
+        const ids = new Set(sent.map((m) => m.id));
+        update((cur) => ({
+          ...cur,
+          conversations: { ...cur.conversations, [muse.id]: (cur.conversations[muse.id] ?? []).map((m) => (ids.has(m.id) ? { ...m, nudge: true } : m)) },
+        }));
+      }
+    } catch { /* nothing was said; the conversation is as it was */ } finally {
       setStarting(false);
     }
   }
+
+  const startPlan = (what: string) =>
+    appTurn(`(It is time for what you two planned: ${what} You start it now: text ${state.userName ?? "them"} the way you would when it is time, and get it going.)`);
+
+  /* Left on read: she asked something and they went quiet. One more text, a
+     few minutes on, while the chat is open -- never while they are typing,
+     and never for a question asked long ago. */
+  const drafting = useRef(false);
+  useLayoutEffect(() => { drafting.current = draft.trim().length > 0; });
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const nudgeDue = nudgeAt(log, tz);
+  useEffect(() => {
+    if (nudgeDue === null || drafting.current) return;
+    const fire = () => {
+      const now = Date.now();
+      const thread = latest.current.conversations[muse.id] ?? [];
+      if (nudgeAt(thread, tz) !== nudgeDue || now - nudgeDue > NUDGE_STALE_MS) return;
+      if (document.visibilityState !== "visible" || drafting.current || loop.busy || starting) return;
+      const quiet = Math.round((now - Date.parse(thread.at(-1)!.showAt ?? thread.at(-1)!.at)) / 60_000);
+      void appTurn(`(${state.userName ?? "They"} has not answered your last message for about ${quiet} minutes -- maybe busy, maybe distracted, maybe just reading. Send ONE short follow-up text, the way you would: "hello??", a nudge, a joke about being left on read, or one more thought on what you asked. Light. Never a guilt trip, never sulking, never asking whether they are angry.)`, { nudge: true, max: 2 });
+    };
+    const t = setTimeout(fire, Math.max(0, nudgeDue - Date.now()));
+    return () => clearTimeout(t);
+    // Re-armed when the time it is due changes, or typing stops or starts.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nudgeDue, draft.trim().length > 0]);
 
   /* A plan made together, when its time comes with the chat open: she starts
      it. Checked every minute, and never over a reply that is owed or on its
@@ -1294,7 +1332,7 @@ function SoloChat({
     <main className="shell" style={{ display: "flex", flexDirection: "column", minHeight: "100dvh" }}>
       <header className="chat-head">
         <button className="link-btn" onClick={onBack} aria-label="Back" style={{ textDecoration: "none" }}>←</button>
-        <Avatar name={muse.name} />
+        <Avatar name={muse.name} image={muse.avatar?.id} />
         <div className="chat-who">
           <h1>{muse.name}</h1>
           <div className="rel">
@@ -1662,7 +1700,7 @@ function NewCircle({
             disabled={full && !picked.includes(m.id)}
             style={picked.includes(m.id) ? { borderColor: "var(--accent)" } : undefined}
           >
-            <Avatar name={m.name} />
+            <Avatar name={m.name} image={m.avatar?.id} />
             <div style={{ minWidth: 0, flex: 1 }}>
               <h3>{m.name}{picked.includes(m.id) ? " ✓" : ""}</h3>
               <span className="rel">{m.relationshipType}</span>

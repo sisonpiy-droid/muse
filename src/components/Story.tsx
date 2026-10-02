@@ -93,7 +93,7 @@ export function Story({
       </header>
 
       <div className="story-head">
-        <Avatar name={muse.name} />
+        <Avatar name={muse.name} image={muse.avatar?.id} />
         <div>
           <h1 className="display">You &amp; {muse.name}</h1>
           <p className="fine" style={{ margin: 0 }}>{muse.relationshipType}</p>

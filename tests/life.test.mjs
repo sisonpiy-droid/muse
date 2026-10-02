@@ -182,6 +182,41 @@ check("once a reply only went through on the end of the chat, later turns send o
   assert.equal(s.conversations[RHEA].length, 12, "the thread itself is untouched");
 });
 
+/* ------------------------------------------------------------- the nudge */
+
+check("left on read after her question, she nudges once, a few minutes on -- not after a goodbye, not at night", () => {
+  const t0 = Date.parse("2026-10-02T09:00:00Z"); // 14:30 in India
+  const msg = (id, from, content, at, extra = {}) => ({ id, from, content, at: new Date(at).toISOString(), ...extra });
+  const asked = [msg("u1", "user", "office me hu", t0), msg("m1", "muse", "accha", t0 + 5000), msg("m2", "muse", "lunch kiya?", t0 + 6000)];
+  const at = life.nudgeAt(asked, "Asia/Kolkata");
+  assert.ok(at >= t0 + 6000 + 3 * 60_000 && at < t0 + 6000 + 6 * 60_000, "three to six minutes after her last text");
+  assert.equal(life.nudgeAt(asked.slice(0, 2), "Asia/Kolkata"), null, "no question, no nudge");
+  assert.equal(life.nudgeAt([...asked, msg("m3", "muse", "hello??", t0 + 9e5, { nudge: true })], "Asia/Kolkata"), null, "once only");
+  assert.equal(life.nudgeAt([...asked, msg("u2", "user", "haan", t0 + 9e5)], "Asia/Kolkata"), null, "they answered");
+  assert.equal(life.nudgeAt([msg("u1", "user", "chal goodnight", t0), msg("m1", "muse", "so gaya?", t0 + 5000)], "Asia/Kolkata"), null, "they said they were going");
+  const late = Date.parse("2026-10-02T20:00:00Z"); // 01:30 in India
+  assert.equal(life.nudgeAt([msg("u1", "user", "hmm", late), msg("m1", "muse", "kya hua?", late + 5000)], "Asia/Kolkata"), null, "not in the night");
+  assert.equal(life.nudgeAt([msg("m1", "muse", "kaisa hai?", t0, { proactive: { interactionId: "i" } })], "Asia/Kolkata"), null, "not after texting first");
+});
+
+/* ------------------------------------------------------- profile pictures */
+
+check("only an invented adult is ever drawn with a face", () => {
+  assert.equal(persona.portraitAllowed({ mode: "character", arch: "friend" }), true);
+  assert.equal(persona.portraitAllowed({ mode: "character", arch: "partner", minor: true }), false);
+  assert.equal(persona.portraitAllowed({ mode: "character", arch: "child" }), false);
+  for (const mode of ["living", "memorial", "figure", "fictional", ""]) {
+    assert.equal(persona.portraitAllowed({ mode, arch: "friend" }), false, mode);
+  }
+});
+
+check("a picture taken away stays away; an edit can give a starter one", () => {
+  let s = store.editMuse(blank(), RHEA, { avatar: { id: "avatar-1", made: true } });
+  assert.deepEqual(store.findMuse(s, RHEA).avatar, { id: "avatar-1", made: true });
+  s = store.editMuse(s, RHEA, { avatar: null });
+  assert.equal(store.findMuse(s, RHEA).avatar, null, "null, not undefined: never drawn again on its own");
+});
+
 let pass = 0, fail = 0;
 for (const [n, f] of results) {
   try { await f(); console.log(`  PASS  ${n}`); pass++; }

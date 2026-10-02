@@ -1133,3 +1133,9 @@ button.tag:disabled { opacity: 0.45; cursor: not-allowed; }
 .story-score span { font-size: 0.75rem; color: var(--muted); }
 .story-score p { flex-basis: 100%; margin: 0; }
 .stamp.point { color: var(--accent); }
+
+/* A picture over the initial, filling the circle. */
+.avatar { position: relative; overflow: hidden; }
+.avatar-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+
+.picture-row { gap: 0.6rem; flex-wrap: wrap; margin-top: 0.9rem; align-items: center; }

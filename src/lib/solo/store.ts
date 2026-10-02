@@ -83,6 +83,8 @@ export interface SoloMessage {
   song?: { title: string; artist: string };
   /** A quiz point this reply awarded: to the user, or to the Muse. */
   point?: "user" | "muse";
+  /** A follow-up she sent because they went quiet after her question. */
+  nudge?: boolean;
 }
 
 /* Her own life, going on between conversations: a few storylines, each moving
@@ -222,6 +224,8 @@ export interface SoloMuse
      fit them and saved here. Never hard-coded: the provider's ids live in one
      catalogue, and this is only a reference into it. */
   voiceId?: string;
+  /** Their picture, if they have one. See MuseAvatar. */
+  avatar?: MuseAvatar | null;
 }
 
 export interface SoloState {
@@ -1224,7 +1228,13 @@ export interface MusePatch {
   texture?: string;
   /** The voice they speak in on a call. */
   voiceId?: string;
+  /** Their picture; null takes it away. */
+  avatar?: MuseAvatar | null;
 }
+
+/* A character's picture, kept in IndexedDB beside the photos. `made`: drawn
+   for them by the app, rather than chosen by the user. */
+export interface MuseAvatar { id: string; made?: boolean }
 
 /** Fields that were explicitly set, so an untouched field is left alone and a
  *  deliberately-emptied one is honoured. */

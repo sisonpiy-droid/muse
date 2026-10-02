@@ -1,7 +1,7 @@
 "use client";
 
 import { MOMENTS } from "@/lib/presence/persona";
-import { findMuse, promptPersona, type Life, type LifeArc, type SoloMemory, type SoloMuse, type SoloState } from "./store";
+import { findMuse, promptPersona, type Life, type LifeArc, type SoloMemory, type SoloMessage, type SoloMuse, type SoloState } from "./store";
 import { storyOf } from "./story";
 
 /* What makes a character someone with their own life, and a relationship that
@@ -243,4 +243,36 @@ export function togetherNow(s: SoloState, museId: string, now = Date.now()): { i
 export function markStarted(s: SoloState, memoryId: string, now = Date.now()): SoloState {
   if (s.started?.[memoryId]) return s;
   return { ...s, started: { ...(s.started ?? {}), [memoryId]: new Date(now).toISOString() } };
+}
+
+/* ---------------------------------------------------------- the nudge */
+
+/* Left on read. When she asked something and they have gone quiet, she sends
+   one more -- "hello?? kahan gaya" -- a few minutes on, the way people do.
+   Once per question, never when they said they were going, never at night,
+   and never for a conversation that went quiet long ago. */
+const LEAVING = /\b(good ?night|gn|bye|ttyl|baad me|baadme|so ja|sone ja|sleep|brb|busy)\b/i;
+const NUDGE_AFTER_MS = 3 * 60_000;
+const NUDGE_SPREAD_MS = 3 * 60_000;
+/** Past this, the moment has gone: opening the chat later never sets one off. */
+export const NUDGE_STALE_MS = 2 * 60_000;
+
+/** When she would nudge, as a time, or null when she would not. */
+export function nudgeAt(thread: SoloMessage[], timeZone?: string): number | null {
+  const last = thread.at(-1);
+  if (!last || last.from !== "muse" || last.proactive || last.callId) return null;
+  let i = thread.length - 1;
+  const run: SoloMessage[] = [];
+  while (i >= 0 && thread[i].from === "muse") run.unshift(thread[i--]);
+  const theirs = i >= 0 ? thread[i] : null;
+  if (!theirs || run.some((m) => m.nudge) || theirs.callId) return null;
+  if (!run.some((m) => m.content.includes("?"))) return null;
+  if (LEAVING.test(theirs.content)) return null;
+  const shownAt = Date.parse(last.showAt ?? last.at);
+  if (!Number.isFinite(shownAt)) return null;
+  let h = 0;
+  for (let k = 0; k < last.id.length; k++) h = (h * 31 + last.id.charCodeAt(k)) | 0;
+  const at = shownAt + NUDGE_AFTER_MS + (Math.abs(h) % NUDGE_SPREAD_MS);
+  const hour = Number(new Intl.DateTimeFormat("en-GB", { hour: "numeric", hourCycle: "h23", timeZone }).format(new Date(at)));
+  return hour >= 1 && hour < 8 ? null : at;
 }

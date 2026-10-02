@@ -906,6 +906,12 @@ A game you two can play, and the one where the score is kept: you take turns ask
   One tag per question, only when it has just been settled. If you say the score, count that point in.`;
 }
 
+/* Whose face may be drawn for a profile picture: someone made up here, an
+   adult. Never a real person, a story's character, or a child. */
+export function portraitAllowed(p: { mode: string; arch?: string; minor?: boolean }): boolean {
+  return p.mode === "character" && p.minor !== true && p.arch !== "child";
+}
+
 /* -------------------------------------------------------------- her life */
 
 /* Her life, going on whether or not anyone is texting her. The storylines are

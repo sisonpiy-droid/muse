@@ -89,7 +89,7 @@ export function CallScreen({
 
       <div className="call-who">
         <div className="call-ring" aria-hidden>
-          <Avatar name={muse.name} />
+          <Avatar name={muse.name} image={muse.avatar?.id} />
         </div>
         <h1>{muse.name}</h1>
         <p className="call-state" role="status" aria-live="polite">{status}</p>
