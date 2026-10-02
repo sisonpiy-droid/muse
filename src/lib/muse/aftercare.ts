@@ -110,7 +110,8 @@ export async function extractAndStoreMemories(opts: {
       data: fresh.map((m, i) => ({
         userId, museId,
         content: m.content,
-        type: m.type,
+        /* The database has no SHARED kind; it is closest to RELATIONSHIP. */
+        type: m.type === "SHARED" ? "RELATIONSHIP" : m.type,
         importance: m.importance,
         confidence: m.confidence,
         embedding: embeddings[i] ?? [],

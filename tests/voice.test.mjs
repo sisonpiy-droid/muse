@@ -78,7 +78,9 @@ check("a call asks the model what a text turn asks, apart from the register", as
   const call = await prepareTurn(s, RHEA, { register: "live" });
   assert.equal(call.body.register, "live");
   assert.notEqual(text.body.register, "live");
-  assert.deepEqual({ ...call.body, register: null }, { ...text.body, register: null }, "same persona, memories, plans, history, feelings");
+  /* `can` (voice notes, photos) is texting only, so a call has none. */
+  assert.equal(call.body.can, null);
+  assert.deepEqual({ ...call.body, register: null, can: null }, { ...text.body, register: null, can: null }, "same persona, memories, plans, history, feelings");
   assert.ok(call.body.memories.includes("User works from home."));
 });
 

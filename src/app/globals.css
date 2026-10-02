@@ -1081,3 +1081,46 @@ button.tag:disabled { opacity: 0.45; cursor: not-allowed; }
 .story-line li::before { content: ""; position: absolute; left: calc(-0.9rem - 4px); top: 0.45rem; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
 .story-line li span { display: block; font-size: 0.72rem; color: var(--faint); letter-spacing: 0.03em; }
 @media (max-width: 360px) { .story-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* A voice note from them: play, a track that fills as it plays, the length. */
+.vnote { display: flex; flex-direction: column; gap: 0.3rem; min-width: min(14rem, 58vw); font-family: var(--sans); }
+.vnote-row { display: flex; align-items: center; gap: 0.6rem; }
+.vnote-play {
+  flex: none;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: var(--r-full);
+  border: 0;
+  background: var(--accent);
+  color: var(--bg);
+  font-size: 0.8rem;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+.vnote-play:disabled { opacity: 0.5; cursor: default; }
+.vnote-track { flex: 1; height: 4px; border-radius: var(--r-full); background: var(--edge-lit); overflow: hidden; }
+.vnote-track i { display: block; height: 100%; background: var(--accent); transform-origin: left; transition: transform 250ms linear; }
+.vnote-time { font-size: 0.75rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.vnote audio { display: none; }
+.vnote-words { align-self: flex-start; background: none; border: 0; padding: 0; color: var(--faint); font-size: 0.72rem; cursor: pointer; }
+.vnote-text { margin: 0; font-family: var(--serif); font-size: 0.95rem; color: var(--muted); }
+
+/* A song they sent: what it is, and where to play it. */
+.song { display: flex; align-items: center; gap: 0.65rem; font-family: var(--sans); min-width: min(14rem, 58vw); }
+.song-icon {
+  flex: none;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  color: var(--accent);
+  display: grid;
+  place-items: center;
+  font-size: 1.1rem;
+}
+.song-name { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.song-name b { font-weight: 600; font-size: 0.92rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.song-name span { font-size: 0.78rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.song-links { display: flex; flex-direction: column; gap: 0.15rem; font-size: 0.72rem; }
+.song-links a { color: var(--accent); text-decoration: none; }

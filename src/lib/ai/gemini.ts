@@ -25,6 +25,9 @@ const timeoutMs = () => Number(process.env.UPSTREAM_TIMEOUT_MS || 60000);
    all (one chunk after ~9s for 11s of speech); 3.8-flash-lite-tts starts in
    ~1.2s and finishes faster than it plays. */
 const speechModel = () => process.env.SPEECH_MODEL || "gemini-3.8-flash-lite-tts";
+/* Photos a Muse sends. Measured on the same phone-photo prompt: flash-lite-image
+   ~7.5s, flash-image ~12s, and at chat size the two are hard to tell apart. */
+const imageModel = () => process.env.IMAGE_MODEL || "gemini-3.1-flash-lite-image";
 
 /* The key travels as a header, never in the query string. A key in a URL is
    written to access logs, kept by proxies, and quoted back inside error text. */
@@ -344,6 +347,30 @@ export const geminiProvider: AIProvider = {
     throw new ProviderError("empty", "No audio came back.");
   },
 
+  /* One picture, as a casual phone photo. The framing is fixed here, not left
+     to the caller: whatever the description says, the result is an ordinary
+     snapshot with nobody in it. */
+  async picture(description: string, signal?: AbortSignal): Promise<{ mime: string; data: string }> {
+    const prompt = `A casual, unposed photo that someone just took on their phone and sent to a close friend in a chat: ${description}
+
+Shot on a phone camera: natural, available light, slightly imperfect framing, ordinary and real -- not professional, not stylised, not an advert. Nobody in the frame: no people, no faces, no bodies, at most the edge of a hand. No text overlays, captions, watermarks or borders.`;
+    const res = await post(`models/${encodeURIComponent(imageModel())}:generateContent`, {
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      safetySettings: SAFETY_SETTINGS,
+      generationConfig: { responseModalities: ["IMAGE"], imageConfig: { aspectRatio: "3:4" } },
+    }, signal);
+    const data = await res.json();
+    if (!res.ok) throw classify(res.status, (data as { error?: { message?: string } })?.error?.message || "no detail");
+    const d = data as {
+      candidates?: { content?: { parts?: { inlineData?: { mimeType?: string; data?: string } }[] }; finishReason?: string }[];
+      promptFeedback?: { blockReason?: string };
+    };
+    if (d.promptFeedback?.blockReason) throw new ProviderError("blocked", `The picture was blocked (${d.promptFeedback.blockReason}).`);
+    const img = d.candidates?.[0]?.content?.parts?.find((p) => p.inlineData?.data)?.inlineData;
+    if (!img?.data) throw new ProviderError("empty", `No picture came back (finishReason: ${d.candidates?.[0]?.finishReason ?? "unknown"}).`);
+    return { mime: img.mimeType || "image/png", data: img.data };
+  },
+
   /* Grounded in Google Search. What the model half-remembers about a famous
      person is the thing most likely to come out generic or out of date; a
      search is what they are actually like now, from interviews and coverage,
@@ -416,7 +443,7 @@ export async function extractMemoriesVia(
 ${timing}${known}
 
 Return ONLY a JSON array. No prose, no code fence. Each item:
-{"content": string, "type": "PERMANENT"|"PREFERENCE"|"GOAL"|"RELATIONSHIP"|"EVENT", "importance": 1-5, "confidence": 0-1, "replaces": number[], "when": string|null }
+{"content": string, "type": "PERMANENT"|"PREFERENCE"|"GOAL"|"RELATIONSHIP"|"EVENT"|"SHARED", "importance": 1-5, "confidence": 0-1, "replaces": number[], "when": string|null }
 
 Plans, appointments and dated events -- a meeting, an exam, a trip, a deadline,
 something that happened on a particular day -- are EVENTs. For an EVENT whose
@@ -453,8 +480,18 @@ marked (latest), but use the earlier ones to resolve what they refer to -- write
 say what it is. Write each memory as a
 plain third-person sentence about the user, e.g. "User's dog is called Bruno."
 
-Do not invent anything. Do not record the Muse's own statements as facts about
-the user. If nothing qualifies, return [].
+SHARED is the one kind that is not a fact about the user: it is something
+between the two of them that has become theirs. A nickname one calls the other,
+a running joke, a bit they keep doing, a phrase they have both started using, a
+thing they tease each other about. Record one only when it clearly landed -- the
+user laughed, played along, used it back, or it came up again -- not every joke
+the Muse tried. Write what it is and where it came from, so it can be used
+again: "Running joke: the Muse calls User 'chotu' since User fell asleep on a
+call at 9pm." or "Shared bit: User and the Muse rate every meal out of 10 and
+argue about the score." Use importance 4 for one that has clearly stuck.
+
+Do not invent anything. Apart from SHARED, do not record the Muse's own
+statements as facts about the user. If nothing qualifies, return [].
 
 Intimate or sexual parts of a conversation are recorded, if at all, in general
 terms -- "User and the Muse are affectionate with each other" -- never as a
@@ -496,7 +533,7 @@ export function parseMemories(raw: string): ExtractedMemory[] {
   }
   if (!Array.isArray(parsed)) return [];
 
-  const types = new Set(["PERMANENT", "PREFERENCE", "GOAL", "RELATIONSHIP", "EVENT"]);
+  const types = new Set(["PERMANENT", "PREFERENCE", "GOAL", "RELATIONSHIP", "EVENT", "SHARED"]);
   const clamp = (n: unknown, lo: number, hi: number, dflt: number) => {
     const v = Number(n);
     return Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : dflt;

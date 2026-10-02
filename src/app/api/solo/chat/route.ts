@@ -3,7 +3,9 @@ import { z } from "zod";
 import { streamGuarded, userFacingError } from "@/lib/ai";
 import { looksLikeRefusal } from "@/lib/ai/refusal";
 import { buildMuseSystemPrompt } from "@/lib/muse/prompt";
-import { coveredBlock, coveredGround, personaSystem, withQuote, type Feelings } from "@/lib/presence/persona";
+import {
+  coveredBlock, coveredGround, personaSystem, sendBlock, sharedBlock, withQuote, wornBlock, type Feelings,
+} from "@/lib/presence/persona";
 import { previousMoment, stampPauses, timeBlock } from "@/lib/presence/time";
 
 /* Several texts in a row are one turn.
@@ -138,6 +140,19 @@ const bodySchema = z.object({
   timezone: z.string().max(64).nullish(),
   /** How often you talk here, as one line. See lib/solo/story.ts. */
   story: z.string().max(300).nullish(),
+  /** Nicknames and running jokes between the two of them. */
+  shared: z.array(z.string().max(400)).max(6).default([]),
+  /** Their own repeated openers, phrases and emoji, counted by the client. */
+  worn: z
+    .object({
+      openers: z.array(z.string().max(60)).max(6).default([]),
+      phrases: z.array(z.string().max(80)).max(8).default([]),
+      emoji: z.array(z.string().max(40)).max(4).default([]),
+      of: z.number().int().min(0).max(1000).default(0),
+    })
+    .nullish(),
+  /** What they can send besides texts this turn. Absent: texts only. */
+  can: z.object({ photo: z.boolean(), voice: z.boolean(), song: z.boolean() }).nullish(),
 });
 
 /* Input bounds matter more here than in the signed-in app: there is no account
@@ -157,7 +172,7 @@ export async function POST(req: Request) {
   if (!parsed.success) {
     return Response.json({ error: "Check the request and try again." }, { status: 400 });
   }
-  const { muse, persona, knows, mood, topic, register, feelings, messages, memories, plans, userName, timezone, story } =
+  const { muse, persona, knows, mood, topic, register, feelings, messages, memories, plans, userName, timezone, story, shared, worn, can } =
     parsed.data;
   const tz = timezone ?? undefined;
   /* The server's clock, not the phone's: a phone set five minutes wrong should
@@ -214,6 +229,8 @@ export async function POST(req: Request) {
       /* Computed from the character's own past turns, not asked of the model.
          A model cannot see its own loop -- each turn reads fine alone. */
       coveredBlock(coveredGround(messagesForModel), userName || "they") +
+      wornBlock(worn) +
+      sharedBlock(shared, userName || "them") +
       (knows?.length
         ? `
 
@@ -244,7 +261,9 @@ You can react to their latest message with one emoji, the way people do in a cha
 - When their message just closes a moment -- "haha", "lol", "ok", "okay fine", "goodnight", "ttyl", a single emoji -- usually react instead of writing anything: the reaction alone is your whole reply. Write words too only if you genuinely have something to add.
 - Otherwise, react now and then when something lands (a joke, good news, something sweet), alongside your reply. Most of your replies have no reaction.
 - Lines in their messages like (reacted ❤️ to your "...") mean they reacted to something you said; you may notice it, you need not mention it.`
-        : "")
+        : "") +
+      /* Voice notes, photos, songs and games: texting only, never on a call. */
+      (register !== "live" ? sendBlock(can, userName || "they") : "")
     : buildMuseSystemPrompt({
     name: muse.name,
     description: muse.description,

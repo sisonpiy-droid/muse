@@ -1,11 +1,12 @@
 "use client";
 
-import { editMuse, endCall, findMuse, insertAfter, newCallId, newMessage, readReaction, startCall, type SoloMessage, type SoloMuse, type SoloState } from "@/lib/solo/store";
+import { endCall, findMuse, insertAfter, newCallId, newMessage, readReaction, startCall, type SoloMessage, type SoloMuse, type SoloState } from "@/lib/solo/store";
 import { learnFrom } from "@/lib/solo/learn";
+import { voiceFor } from "@/lib/solo/media";
 import { prepareTurn, streamReply, withAppMessage } from "@/lib/solo/turn";
 import { Listener, askForMic, canListen, listenLanguage, type ListenError } from "./listener";
 import { speaker } from "./speaker";
-import { isVoice, takeSpeakable } from "./voices";
+import { takeSpeakable } from "./voices";
 
 /* One voice call.
  *
@@ -213,28 +214,11 @@ export class CallSession {
     } catch { /* not supported, or the page is hidden */ }
   }
 
+  /* Shared with voice notes, so a call and a voice note sound the same. If
+     none can be chosen the speak route falls back to a default voice. */
   private async ensureVoice(): Promise<void> {
-    const m = this.muse();
-    if (isVoice(m.voiceId)) { this.voice = m.voiceId; return; }
-    try {
-      const p = m.persona;
-      const res = await fetch("/api/solo/voice", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          name: m.name.slice(0, 60),
-          relationship: m.relationshipType.slice(0, 120),
-          description: m.description.slice(0, 400),
-          brief: (p?.brief ?? m.brief ?? "").slice(0, 6000),
-          samples: (p?.samples ?? m.samples ?? "").slice(0, 4000),
-        }),
-      });
-      const { voiceId } = await res.json();
-      if (isVoice(voiceId)) {
-        this.voice = voiceId;
-        this.update((cur) => editMuse(cur, this.museId, { voiceId }));
-      }
-    } catch { /* the speak route falls back to a default voice */ }
+    const v = await voiceFor(this.muse(), this.museId, this.update);
+    if (v) this.voice = v;
   }
 
   /* ------------------------------------------------------------- hearing */

@@ -1,9 +1,9 @@
 "use client";
 
-import { DEFAULT_VIBE, hasFeelings, type Vibe } from "@/lib/presence/persona";
+import { DEFAULT_VIBE, REGISTERS, hasFeelings, wornPhrases, type Vibe } from "@/lib/presence/persona";
 import {
-  QUOTE_CHARS, feelingsOf, findMuse, knownTo, memoriesForTurn, plansForTurn, promptPersona, quoteOf,
-  windowOf, worthRecalling, type SoloMessage, type SoloMuse, type SoloState,
+  QUOTE_CHARS, feelingsOf, findMuse, isMediaCaption, knownTo, mediaAllowed, memoriesForTurn, plansForTurn,
+  promptPersona, quoteOf, sharedForTurn, windowOf, worthRecalling, type SoloMessage, type SoloMuse, type SoloState,
 } from "./store";
 import { photoBase64 } from "./photos";
 import { storyLine, storyOf } from "./story";
@@ -57,6 +57,8 @@ export async function prepareTurn(
        goes ahead on word overlap, because silence on the line costs more than
        a slightly worse memory match. */
     embedWithinMs?: number;
+    /** Whether this device can keep photos and voice notes. */
+    canStore?: boolean;
   } = {}
 ): Promise<PreparedTurn | null> {
   const person = findMuse(s, museId) ?? opts.fallback;
@@ -110,7 +112,7 @@ export async function prepareTurn(
         role: m.from === "user" ? ("user" as const) : ("assistant" as const),
         /* Same reasoning: one pasted message over the route's limit sat in
            the window and killed every turn after it, permanently. */
-        content: `${note}${m.content}`.slice(0, MAX_MESSAGE),
+        content: `${note}${m.voiceNote ? "(voice note) " : ""}${m.content}`.slice(0, MAX_MESSAGE),
         at: m.at,
         ...(image ? { image } : {}),
         ...(q
@@ -145,6 +147,18 @@ export async function prepareTurn(
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     /* How often you actually talk, here. Background for the model. */
     story: storyLine(storyOf(s, museId, Date.now(), Intl.DateTimeFormat().resolvedOptions().timeZone), Date.now()),
+    /* Nicknames and running jokes: theirs, used now and then. */
+    shared: sharedForTurn(s, museId).map((m) => m.slice(0, 400)),
+    /* Their own tics across the last fifty texts, most of which are no longer
+       in the window -- counted here, where the whole thread is. */
+    worn: wornPhrases(
+      thread.filter((m) => m.from === "muse" && !m.voiceNote && !isMediaCaption(m.content)).slice(-50).map((m) => m.content)
+    ),
+    /* What they can send besides texts this turn. Only in a texting register:
+       a letter or a call is one piece, spoken or written, not a chat. */
+    can: person.persona && (REGISTERS[vibe.register as keyof typeof REGISTERS] ?? REGISTERS.texts).burst
+      ? mediaAllowed(s, museId, { canStore: opts.canStore })
+      : null,
   };
   return { person, vibe, body };
 }

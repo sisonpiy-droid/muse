@@ -75,6 +75,12 @@ export interface SoloMessage {
   /* The Muse texted first: this came from the server's outreach, collected
      into the thread like any other message. `responded` once they replied. */
   proactive?: { interactionId: string; responded?: boolean };
+  /* A voice note from the Muse. The audio is in IndexedDB under `id`, beside
+     the photos; the content is what was said, so the window, memory and export
+     read it as an ordinary message. */
+  voiceNote?: { id: string; seconds: number };
+  /* A song the Muse sent. The content says so in words, for the model. */
+  song?: { title: string; artist: string };
 }
 
 /* Outreach, as the app knows it. The server holds the finished messages and
@@ -535,7 +541,9 @@ export function memoriesForTurn(
 ): string[] {
   const now = opts.now ?? Date.now();
   /* Plans near enough to matter go through plansForTurn, with their status. */
-  const mine = state.memories.filter((m) => m.museId === museId && !isPlan(m, now));
+  /* Inside jokes go separately, through sharedForTurn: they are not facts to
+     rank against the subject, and they would crowd out the ones that are. */
+  const mine = state.memories.filter((m) => m.museId === museId && !isPlan(m, now) && m.type !== "SHARED");
   if (!mine.length) return [];
   const byContent = new Map(mine.map((m) => [m.content, m]));
   const label = (m: SoloMemory | undefined, c: string) =>
@@ -647,6 +655,24 @@ export const MEMORY_CHARS = 400;
    what a person would plausibly hold: the most important, and within that the
    most recent. */
 export const MEMORIES_PER_MUSE = 300;
+
+/* What is between the two of them: nicknames, running jokes, bits.
+ *
+ * Not ranked by the subject, because the point of an inside joke is that it
+ * turns up when nobody was talking about it. The newest few always, and a
+ * couple of older ones that change from day to day, so an old joke comes back
+ * now and then instead of the same three forever. */
+export function sharedForTurn(state: SoloState, museId: string, now = Date.now(), n = 5): string[] {
+  const all = state.memories
+    .filter((m) => m.museId === museId && m.type === "SHARED")
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  if (all.length <= n) return all.map((m) => m.content);
+  const fresh = all.slice(0, 3);
+  const older = all.slice(3);
+  const day = Math.floor(now / 86_400_000);
+  const picked = Array.from({ length: Math.min(n - fresh.length, older.length) }, (_, i) => older[(day * 7 + i * 13) % older.length]);
+  return [...new Set([...fresh, ...picked])].map((m) => m.content);
+}
 
 export function addMemories(
   state: SoloState,
@@ -1321,4 +1347,136 @@ export function react(state: SoloState, threadId: string, messageId: string, who
 export function readReaction(text: string): { emoji: string | null; rest: string } {
   const m = /^\s*\[react:\s*([^\]\s]{1,8})\s*\]\s*/i.exec(text);
   return m ? { emoji: m[1], rest: text.slice(m[0].length).trim() } : { emoji: null, rest: text };
+}
+
+/* ------------------------------------------------------------------ media */
+
+/* Besides texts, the Muse can send a voice note, a photo of what is in front of
+ * them, or a song. Each is one message of a burst, opened with a tag:
+ *
+ *   [voice] arre sun na, aaj kya hua...
+ *   [photo: half-eaten maggi in a steel bowl on my hostel bed]
+ *   [song: Kun Faya Kun - A.R. Rahman]
+ *
+ * Which of them are on offer is decided before the turn (mediaAllowed) and
+ * the prompt only mentions those. A tag that turns up anyway is not trusted:
+ * the photo is dropped, the voice note is sent as the text it would have said. */
+export type MediaPart =
+  | { kind: "text"; text: string }
+  | { kind: "voice"; text: string }
+  /* `caption`: anything written after the tag in the same message, sent as a
+     text of its own after it. */
+  | { kind: "photo"; description: string; caption: string }
+  | { kind: "song"; title: string; artist: string; caption: string };
+
+export function readMedia(part: string): MediaPart {
+  const voice = /^\s*\[voice(?: note)?\]\s*/i.exec(part);
+  if (voice) {
+    const text = part.slice(voice[0].length).trim();
+    return text ? { kind: "voice", text } : { kind: "text", text: part };
+  }
+  const photo = /^\s*\[photo:\s*([^\]]{3,400})\]\s*/i.exec(part);
+  if (photo) return { kind: "photo", description: photo[1].trim(), caption: part.slice(photo[0].length).trim() };
+  const song = /^\s*\[song:\s*([^\]]{1,160})\]\s*/i.exec(part);
+  if (song) {
+    /* "Title - Artist", or failing that "Title by Artist" -- split at the last
+       "by", so "Stand by Me by Ben E. King" keeps its title. */
+    const raw = song[1].trim();
+    const dash = /\s+[-–—]\s+/.exec(raw);
+    const by = raw.toLowerCase().lastIndexOf(" by ");
+    const [title, artist] = dash
+      ? [raw.slice(0, dash.index), raw.slice(dash.index + dash[0].length)]
+      : by > 0 ? [raw.slice(0, by), raw.slice(by + 4)] : [raw, ""];
+    if (title.trim()) {
+      return { kind: "song", title: title.trim().slice(0, 100), artist: artist.trim().slice(0, 80), caption: part.slice(song[0].length).trim() };
+    }
+  }
+  return { kind: "text", text: part };
+}
+
+/** How a photo or song the Muse sent reads in the transcript, for the model and for memory. */
+export const sentPhoto = (description: string) => `(sent a photo: ${description})`;
+export const sentSong = (s: { title: string; artist: string }) =>
+  `(sent a song: ${s.title}${s.artist ? ` by ${s.artist}` : ""})`;
+/** True for the words standing in for a photo or song, which the thread does not show. */
+export const isMediaCaption = (content: string) => /^\(sent a (photo|song)[:)]/.test(content);
+
+/* How often each one is on offer, per conversation. They are seasoning: a
+   photo every few hours is someone sharing their day, every message is a bot.
+   A photo also costs real money to make. */
+const MEDIA_GAP_MS = { photo: 8 * 3_600_000, voice: 3 * 3_600_000, song: 24 * 3_600_000 };
+
+export interface MediaAllowed { photo: boolean; voice: boolean; song: boolean }
+
+/* Asked for outright: "photo bhej", "send a voice note", "koi gaana suggest kar". */
+const ASKED = {
+  photo: /\b(photo|photos|pic|pics|picture|snap|selfie|tasveer|foto)\b/i,
+  voice: /\b(voice ?notes?|vn|voice|audio|awaaz|aawaz|bol ke bhej)\b/i,
+  song: /\b(song|songs|gaana|gaane|gana|music|playlist)\b/i,
+};
+/** Unasked, they are on offer about one turn in three. */
+const OFFERED = 0.35;
+/** Asked for, still not straight after the last one. */
+const ASKED_GAP_MS = 20 * 60_000;
+
+export function mediaAllowed(
+  state: SoloState,
+  museId: string,
+  /* `roll`, 0 to 1, is whether this turn is one where they are on offer; by
+     default it comes from the message being answered, so asking again gets the
+     same answer rather than a re-roll. */
+  opts: { now?: number; canStore?: boolean; roll?: number } = {}
+): MediaAllowed {
+  const now = opts.now ?? Date.now();
+  const person = findMuse(state, museId);
+  const mode = person?.persona?.mode;
+  const log = state.conversations[museId] ?? [];
+  const lastOf = (has: (m: SoloMessage) => boolean) => {
+    for (let i = log.length - 1; i >= 0; i--) if (log[i].from === "muse" && has(log[i])) return Date.parse(log[i].at);
+    return -Infinity;
+  };
+  /* What they said since the last reply. */
+  const theirs: string[] = [];
+  for (let i = log.length - 1; i >= 0 && log[i].from === "user"; i--) theirs.push(log[i].content);
+  const said = theirs.join("\n");
+  const roll = opts.roll ?? rollFor(log.at(-1)?.id ?? "");
+  const allowed = (kind: keyof typeof MEDIA_GAP_MS, has: (m: SoloMessage) => boolean) => {
+    const since = now - lastOf(has);
+    return ASKED[kind].test(said) ? since >= ASKED_GAP_MS : roll < OFFERED && since >= MEDIA_GAP_MS[kind];
+  };
+  const canStore = opts.canStore !== false;
+  return {
+    /* Not for a public figure, whose private life is off limits, and not for
+       someone who has died: a photo of "my lunch today" from them is not a
+       comfort, it is a lie with a picture attached. */
+    photo: canStore && mode !== "figure" && mode !== "memorial" && allowed("photo", (m) => !!m.image),
+    voice: canStore && allowed("voice", (m) => !!m.voiceNote),
+    song: allowed("song", (m) => !!m.song),
+  };
+}
+
+function rollFor(id: string): number {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) | 0;
+  return (Math.abs(h) % 1000) / 1000;
+}
+
+/* A tag on a line of its own inside a message, rather than at the start of
+   one. Happens when the model forgets the --- between texts and writes them on
+   separate lines instead -- and a tag left inside a text would show up as
+   "[photo: ...]" in the bubble. Each tag line becomes its own message. */
+export function splitMediaLines(parts: string[]): string[] {
+  const tag = /^\s*\[(voice(?: note)?\]|photo:|song:)/i;
+  const out: string[] = [];
+  for (const part of parts) {
+    let acc: string[] = [];
+    for (const line of part.split("\n")) {
+      if (!tag.test(line)) { acc.push(line); continue; }
+      if (acc.join("\n").trim()) out.push(acc.join("\n").trim());
+      out.push(line.trim());
+      acc = [];
+    }
+    if (acc.join("\n").trim()) out.push(acc.join("\n").trim());
+  }
+  return out;
 }

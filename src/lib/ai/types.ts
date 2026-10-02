@@ -65,7 +65,11 @@ export class ProviderError extends Error {
 /** One extracted memory, before it is persisted. Mirrors the Memory model. */
 export interface ExtractedMemory {
   content: string;
-  type: "PERMANENT" | "PREFERENCE" | "GOAL" | "RELATIONSHIP" | "EVENT";
+  /* SHARED is between the two of them rather than about the user: a running
+     joke, a nickname, a bit they keep coming back to. Solo keeps it as its own
+     kind; the account app, whose database has no such kind, files it under
+     RELATIONSHIP. */
+  type: "PERMANENT" | "PREFERENCE" | "GOAL" | "RELATIONSHIP" | "EVENT" | "SHARED";
   importance: number; // 1-5
   confidence: number; // 0-1
   /* Indexes into the `known` list this fact makes untrue.
@@ -118,6 +122,10 @@ export interface AIProvider {
   /** Text spoken in a prebuilt voice, streamed as raw 16-bit mono PCM.
    *  Optional: without it, calls are unavailable rather than broken. */
   speak?(text: string, voice: string, signal?: AbortSignal): Promise<SpeechStream>;
+
+  /** A casual phone photo of what is described, with nobody in it. Optional:
+   *  without it, a Muse simply never sends photos. */
+  picture?(description: string, signal?: AbortSignal): Promise<{ mime: string; data: string }>;
 }
 
 export interface SpeechStream {

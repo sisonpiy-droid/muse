@@ -78,6 +78,155 @@ check("an app message in a full window gives up the oldest, staying within the r
   assert.equal(prepared.body.messages.at(-1).content, "(the call just connected)");
 });
 
+/* ------------------------------------------------------------------ media */
+
+const { readMedia, mediaAllowed, sharedForTurn, memoriesForTurn, isMediaCaption, sentPhoto, sentSong, splitMediaLines } = await import("../src/lib/solo/store.ts");
+const { wornPhrases, wornBlock, sendBlock, sharedBlock } = await import("../src/lib/presence/persona.ts");
+const { wav } = await import("../src/lib/solo/media.ts");
+
+check("media tags are read at the start of a message, with anything after kept as a caption", () => {
+  assert.deepEqual(readMedia("[voice] arre sun na, aaj kya hua"), { kind: "voice", text: "arre sun na, aaj kya hua" });
+  assert.deepEqual(readMedia("[photo: maggi in a steel bowl on my bed]"), { kind: "photo", description: "maggi in a steel bowl on my bed", caption: "" });
+  assert.deepEqual(readMedia("[photo: my desk] dekh kitna kaam hai"), { kind: "photo", description: "my desk", caption: "dekh kitna kaam hai" });
+  assert.deepEqual(readMedia("[song: Kun Faya Kun - A.R. Rahman]"), { kind: "song", title: "Kun Faya Kun", artist: "A.R. Rahman", caption: "" });
+  assert.deepEqual(readMedia("[song: Stand by Me by Ben E. King]"), { kind: "song", title: "Stand by Me", artist: "Ben E. King", caption: "" });
+  assert.deepEqual(readMedia("bas aise hi [photo: x y z]"), { kind: "text", text: "bas aise hi [photo: x y z]" });
+  assert.deepEqual(readMedia("[voice]"), { kind: "text", text: "[voice]" });
+});
+
+check("what she sent reads as words for the model, and the thread hides those words", () => {
+  assert.equal(sentPhoto("my chai"), "(sent a photo: my chai)");
+  assert.equal(sentSong({ title: "Kesariya", artist: "Arijit Singh" }), "(sent a song: Kesariya by Arijit Singh)");
+  assert.ok(isMediaCaption(sentPhoto("x")) && isMediaCaption(sentSong({ title: "a", artist: "" })));
+  assert.ok(!isMediaCaption("i sent a photo yesterday"));
+});
+
+check("each kind of media rests for a while after it was sent, and photos never for a public figure or someone who died", () => {
+  const now = Date.parse("2026-10-02T12:00:00Z");
+  const muse = (mode) => ({ id: "m", name: "X", description: "d", relationshipType: "friend", persona: { mode } });
+  const at = (h) => new Date(now - h * 3_600_000).toISOString();
+  const s = (mode, log) => ({ ...blank(), muses: [muse(mode)], conversations: { m: log } });
+  const on = { now, roll: 0 };
+  assert.deepEqual(mediaAllowed(s("living", []), "m", on), { photo: true, voice: true, song: true });
+  const recent = [
+    { id: "a", from: "muse", content: "(sent a photo: x)", at: at(2), image: { id: "i", w: 1, h: 1 } },
+    { id: "b", from: "muse", content: "hi", at: at(1), voiceNote: { id: "v", seconds: 3 } },
+    { id: "c", from: "muse", content: "(sent a song: s)", at: at(20), song: { title: "s", artist: "" } },
+  ];
+  assert.deepEqual(mediaAllowed(s("living", recent), "m", on), { photo: false, voice: false, song: false });
+  assert.deepEqual(mediaAllowed(s("living", recent), "m", { ...on, now: now + 9 * 3_600_000 }), { photo: true, voice: true, song: true });
+  assert.equal(mediaAllowed(s("figure", []), "m", on).photo, false);
+  assert.equal(mediaAllowed(s("memorial", []), "m", on).photo, false);
+  assert.deepEqual(mediaAllowed(s("living", []), "m", { ...on, canStore: false }), { photo: false, voice: false, song: true });
+});
+
+check("unasked, media is on offer only some turns; asked for, it is on offer unless one was just sent", () => {
+  const now = Date.parse("2026-10-02T12:00:00Z");
+  const s = (log) => ({ ...blank(), muses: [{ id: "m", name: "X", description: "d", relationshipType: "friend", persona: { mode: "living" } }], conversations: { m: log } });
+  const said = (content) => ({ id: "u", from: "user", content, at: new Date(now).toISOString() });
+  assert.deepEqual(mediaAllowed(s([said("kya kar rahi")]), "m", { now, roll: 0.9 }), { photo: false, voice: false, song: false });
+  assert.deepEqual(mediaAllowed(s([said("lunch ka photo bhej na")]), "m", { now, roll: 0.9 }), { photo: true, voice: false, song: false });
+  assert.equal(mediaAllowed(s([said("ek voice note bhej")]), "m", { now, roll: 0.9 }).voice, true);
+  assert.equal(mediaAllowed(s([said("koi gaana suggest kar")]), "m", { now, roll: 0.9 }).song, true);
+  const justSent = [{ id: "a", from: "muse", content: "(sent a photo: x)", at: new Date(now - 5 * 60_000).toISOString(), image: { id: "i", w: 1, h: 1 } }, said("ek aur photo")];
+  assert.equal(mediaAllowed(s(justSent), "m", { now, roll: 0 }).photo, false);
+  /* The roll comes from the message, so asking again is not a re-roll. */
+  const log = [said("hmm")];
+  assert.deepEqual(mediaAllowed(s(log), "m", { now }), mediaAllowed(s(log), "m", { now }));
+});
+
+check("a tag on its own line inside a text becomes its own message", () => {
+  assert.deepEqual(
+    splitMediaLines(["arre haan\n[photo: my chai]\nye dekh", "[voice] sun na"]),
+    ["arre haan", "[photo: my chai]", "ye dekh", "[voice] sun na"],
+  );
+  assert.deepEqual(splitMediaLines(["line one\nline two"]), ["line one\nline two"]);
+});
+
+check("the prompt offers only what is allowed this turn, and games always", () => {
+  const all = sendBlock({ photo: true, voice: true, song: true }, "Piyush");
+  assert.match(all, /\[voice\]/);
+  assert.match(all, /\[photo:/);
+  assert.match(all, /\[song:/);
+  const some = sendBlock({ photo: false, voice: true, song: false }, "Piyush");
+  assert.ok(!/\[photo:/.test(some) && !/\[song:/.test(some) && /\[voice\]/.test(some));
+  const none = sendBlock({ photo: false, voice: false, song: false }, "Piyush");
+  assert.ok(!/THINGS YOU CAN SEND/.test(none) && /GAMES/.test(none));
+  assert.equal(sendBlock(null, "Piyush"), "");
+});
+
+check("a voice note is a playable WAV of the PCM it was made from", async () => {
+  const pcm = new Uint8Array(48000 * 2);
+  const blob = wav(pcm, 24000);
+  assert.equal(blob.type, "audio/wav");
+  assert.equal(blob.size, 44 + pcm.length);
+  const head = new DataView(await blob.slice(0, 44).arrayBuffer());
+  assert.equal(String.fromCharCode(head.getUint8(0), head.getUint8(1), head.getUint8(2), head.getUint8(3)), "RIFF");
+  assert.equal(head.getUint32(24, true), 24000);
+  assert.equal(head.getUint32(40, true), pcm.length);
+});
+
+/* ------------------------------------------------------- between you two */
+
+const mem = (id, content, type, day = 1) => ({ id, museId: RHEA, content, type, importance: 3, confidence: 1, createdAt: new Date(Date.UTC(2026, 8, day)).toISOString() });
+
+check("inside jokes go to the prompt on their own, not ranked against the subject with the facts", () => {
+  const s = { ...blank(), memories: [
+    mem("f1", "User works at a bank.", "PERMANENT"),
+    mem("j1", "Running joke: the Muse calls User 'chotu'.", "SHARED"),
+  ] };
+  assert.deepEqual(memoriesForTurn(s, RHEA, "anything"), ["User works at a bank."]);
+  assert.deepEqual(sharedForTurn(s, RHEA), ["Running joke: the Muse calls User 'chotu'."]);
+});
+
+check("with many inside jokes: the newest always, and older ones that change from day to day", () => {
+  const s = { ...blank(), memories: Array.from({ length: 12 }, (_, i) => mem(`j${i}`, `joke ${i}`, "SHARED", i + 1)) };
+  const today = sharedForTurn(s, RHEA, Date.parse("2026-10-02T12:00:00Z"));
+  const later = sharedForTurn(s, RHEA, Date.parse("2026-10-03T12:00:00Z"));
+  assert.equal(today.length, 5);
+  assert.deepEqual(today.slice(0, 3), ["joke 11", "joke 10", "joke 9"]);
+  assert.notDeepEqual(today.slice(3), later.slice(3));
+  assert.equal(sharedBlock([], "Piyush"), "");
+  assert.match(sharedBlock(today, "Piyush"), /JUST BETWEEN YOU TWO[\s\S]*joke 11/);
+});
+
+/* ----------------------------------------------------------------- tics */
+
+check("an opener or phrase used over and over across days is caught; ordinary variety is not", () => {
+  const looped = Array.from({ length: 30 }, (_, i) =>
+    i % 3 === 0 ? `haan bol kya hua ${i}` : i % 3 === 1 ? `pagal hai kya tu yaar ${i}` : `office me aaj ${["meeting", "lunch", "boss", "deadline", "chai"][i % 5]} 😂`);
+  const w = wornPhrases(looped);
+  assert.ok(w.openers.includes("haan bol"), JSON.stringify(w));
+  assert.ok([...w.openers, ...w.phrases].some((p) => p.includes("pagal hai")), JSON.stringify(w));
+  assert.ok(!w.phrases.some((p) => p.includes("bol kya")), "a phrase an opener already covers is not listed twice");
+  assert.ok(w.emoji.some((e) => e.startsWith("😂")), JSON.stringify(w));
+  assert.match(wornBlock(w), /YOUR TICS LATELY[\s\S]*"haan bol"/);
+
+  const varied = ["kal movie dekhi", "chai bana rahi hu", "office se nikli abhi", "mummy ka phone aaya tha", "bahut neend aa rahi",
+    "tu kab free hai", "maine wo book khatam ki", "baarish ho rahi yaha", "kal gym gayi thi finally", "aaj khana bahar se",
+    "boss ne phir meeting rakhi", "weekend pe kya plan", "naya cafe khula hai", "phone ki battery mar gayi"];
+  const none = wornPhrases(varied);
+  assert.deepEqual([none.openers, none.phrases, none.emoji], [[], [], []]);
+  assert.equal(wornBlock(none), "");
+  assert.equal(wornPhrases(looped.slice(0, 5)).openers.length, 0, "too few texts to call anything a habit");
+});
+
+check("the turn carries inside jokes, tics and what can be sent; a voice note is marked as one", async () => {
+  const thread = [
+    { id: "u1", from: "user", content: "hi", at: "2026-10-01T10:00:00Z" },
+    { id: "m1", from: "muse", content: "arre sun", at: "2026-10-01T10:00:05Z", voiceNote: { id: "vn-m1", seconds: 4 } },
+    { id: "u2", from: "user", content: "haha", at: "2026-10-01T10:01:00Z" },
+  ];
+  const s = { ...blank(), conversations: { [RHEA]: thread }, memories: [mem("j", "Running joke: chotu.", "SHARED")] };
+  const { body } = await prepareTurn(s, RHEA, { canStore: true });
+  assert.deepEqual(body.shared, ["Running joke: chotu."]);
+  assert.equal(body.worn.of, 0, "a voice note is not counted as a text");
+  assert.equal(body.messages[1].content, "(voice note) arre sun");
+  assert.ok(body.can && typeof body.can.photo === "boolean");
+  const live = await prepareTurn(s, RHEA, { register: "live" });
+  assert.equal(live.body.can, null, "never on a call");
+});
+
 /* ------------------------------------------------------------------- story */
 
 const day = (d, h = 12) => new Date(Date.UTC(2026, 9, d, h)).toISOString();

@@ -5,6 +5,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Avatar } from "@/components/Avatar";
 import { QuoteBubble, ReplyBar, jumpTo } from "@/components/Quote";
 import { TraitEditor } from "@/components/TraitEditor";
+import { useFollow } from "@/components/useFollow";
 import { useReplyLoop } from "@/components/useReplyLoop";
 import { REGISTERS, hasFeelings, splitBurst } from "@/lib/presence/persona";
 import type { Update } from "@/app/solo/page";
@@ -77,9 +78,7 @@ export function CircleChat({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [log.length, clock]);
 
-  useEffect(() => {
-    foot.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [shown.length, speaking]);
+  useFollow(shown.length * 2 + (speaking || typingNext || loop.busy ? 1 : 0), speaking?.text, shown.at(-1)?.from === "user");
 
   const nameOf = (id: string) => members.find((m) => m.id === id)?.name ?? "Someone";
   const whoSaid = (m: SoloMessage) => (m.from === "user" ? "You" : nameOf(m.speakerId ?? ""));

@@ -17,7 +17,10 @@ import { QuoteBubble, ReplyBar, jumpTo } from "@/components/Quote";
 import { TraitEditor } from "@/components/TraitEditor";
 import { Turn } from "@/components/Turn";
 import { Photo } from "@/components/Photo";
+import { SongCard } from "@/components/SongCard";
 import { Story } from "@/components/Story";
+import { VoiceNote } from "@/components/VoiceNote";
+import { useFollow } from "@/components/useFollow";
 import { useReplyLoop } from "@/components/useReplyLoop";
 import { MADE_TAB, TABS } from "@/lib/personas";
 import {
@@ -28,12 +31,13 @@ import { safeFilename, transcriptMarkdown } from "@/lib/export";
 import {
   allMuses, attachEmbeddings, circleOf, deleteCircle, deleteConversation,
   deleteFrom, deleteMemory, deleteMessage, deleteMuse, download, editMemory, editMessage,
-  editMuse, feelingsOf, findMuse, forgetAll, inTab, insertAfter, isEdited,
-  membersOf, memoriesOf, needsEmbedding, newMessage, paced, parseBackup, quoteOf, react, readReaction,
-  resetMuse, rewindTo,
-  setFeelings,
-  type SoloCircle, type SoloMessage, type SoloMuse, type SoloState,
+  editMuse, feelingsOf, findMuse, forgetAll, inTab, insertAfter, isEdited, isMediaCaption,
+  membersOf, memoriesOf, needsEmbedding, newMessage, paced, parseBackup, quoteOf, react, readMedia, readReaction,
+  resetMuse, rewindTo, sentPhoto, sentSong, splitMediaLines,
+  setFeelings, typingMs,
+  type MediaAllowed, type SoloCircle, type SoloMessage, type SoloMuse, type SoloState,
 } from "@/lib/solo/store";
+import { makePicture, recordVoiceNote, voiceFor } from "@/lib/solo/media";
 import { Persister, mergeStates, onOtherTabWrite } from "@/lib/solo/sync";
 import { embedTexts, learnFrom } from "@/lib/solo/learn";
 import { PHOTO_ONLY, savePhoto, shrink } from "@/lib/solo/photos";
@@ -824,6 +828,16 @@ function CircleCard({
   );
 }
 
+/* Timing inside a reply, which runs long after any render. Kept out here so the
+   component's purity check does not mistake it for something done while
+   rendering. */
+const clockNow = () => Date.now();
+
+/** Resolves once the last text of a burst is due on screen, or on abort. */
+async function untilShown(at: number, signal: AbortSignal): Promise<void> {
+  while (Date.now() < at && !signal.aborted) await new Promise((r) => setTimeout(r, Math.min(400, at - Date.now())));
+}
+
 function countOf(n: number, one: string, many: string): string {
   return n === 0 ? "none yet" : `${n} ${n === 1 ? one : many}`;
 }
@@ -894,6 +908,8 @@ function SoloChat({
   useEffect(() => setCanCall(canListen()), []);
   const [draft, setDraft] = useState("");
   const [streaming, setStreaming] = useState("");
+  /* Making something to send that is not a text: shown instead of "typing". */
+  const [sending, setSending] = useState<"photo" | "voice" | null>(null);
   const [error, setError] = useState<string | null>(null);
   /* Some failures are worth another go and some are not. Offering "Try again"
      on a prompt-level block just runs the user into the same wall. */
@@ -943,9 +959,8 @@ function SoloChat({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [log.length, clock]);
 
-  useEffect(() => {
-    foot.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [shown.length, streaming]);
+  const typing = (loop.busy || typingNext) && !streaming;
+  useFollow(shown.length * 2 + (typing ? 1 : 0), streaming, shown.at(-1)?.from === "user");
 
   const memoriesFor = state.memories.filter((m) => m.museId === muse.id);
 
@@ -1012,7 +1027,7 @@ function SoloChat({
 
     /* The request is built in lib/solo/turn.ts, shared with voice calls, so
        a call is exactly this character with exactly these memories. */
-    const prepared = await prepareTurn(s, muse.id, { signal, fallback: muse });
+    const prepared = await prepareTurn(s, muse.id, { signal, fallback: muse, canStore: canPhoto });
     if (!prepared || signal.aborted) return;
     const { person, vibe: vibeNow } = prepared;
 
@@ -1054,11 +1069,18 @@ function SoloChat({
          contradict the instruction the model was just given. */
       const reg = REGISTERS[vibeNow.register as keyof typeof REGISTERS] ?? REGISTERS.texts;
       const burst = person.persona ? splitBurst(text, reg.burst) : [text];
-      const answer = paced(burst.map((content) => newMessage("muse", content)));
-      update((cur) => insertAfter(cur, muse.id, last.id, answer));
+      const can = (prepared.body.can as MediaAllowed | null) ?? { photo: false, voice: false, song: false };
+      const answer = await deliver(burst, can, last.id, person, signal);
+      if (!answer.length) {
+        if (!signal.aborted) {
+          setError(`${muse.name} didn't answer that time. Try again?`);
+          setCanRetry(true);
+        }
+        return;
+      }
       /* Stay "typing" until the last of them is out. */
       const lastAt = Date.parse(answer.at(-1)!.showAt!);
-      while (Date.now() < lastAt && !signal.aborted) await new Promise((r) => setTimeout(r, Math.min(400, lastAt - Date.now())));
+      await untilShown(lastAt, signal);
 
       /* Extraction runs after the reply is on screen and never blocks it, the
          same shape as the server app's aftercare. */
@@ -1067,7 +1089,81 @@ function SoloChat({
       if (!signal.aborted) setError("You're offline.");
     } finally {
       setStreaming("");
+      setSending(null);
     }
+  }
+
+  /* Puts a reply into the thread, one message at a time.
+   *
+   * Texts go in at once, paced to appear the way someone types them. A voice
+   * note or a photo has to be made first, which takes a few seconds, so the
+   * texts before it go in, "recording a voice note" shows while it is made, and
+   * it lands after them -- then whatever came after it. What cannot be made is
+   * left out, or for a voice note, sent as the words it would have said. */
+  async function deliver(
+    parts: string[],
+    can: MediaAllowed,
+    after: string,
+    person: SoloMuse,
+    signal: AbortSignal
+  ): Promise<SoloMessage[]> {
+    const left = { ...can };
+    const out: SoloMessage[] = [];
+    let pending: SoloMessage[] = [];
+    let anchor = after;
+    let nextAt = clockNow();
+    const flush = () => {
+      if (!pending.length || signal.aborted) return;
+      const start = out.length ? Math.max(clockNow(), nextAt + typingMs(pending[0])) : clockNow();
+      const msgs = paced(pending, start);
+      const at = anchor;
+      update((cur) => insertAfter(cur, muse.id, at, msgs));
+      anchor = msgs.at(-1)!.id;
+      nextAt = Date.parse(msgs.at(-1)!.showAt!);
+      out.push(...msgs);
+      pending = [];
+    };
+
+    /* One thing besides texts per reply: a photo and a voice note and a song in
+       one go is a performance, not someone texting. */
+    const spent = () => { left.photo = left.voice = left.song = false; };
+    for (const raw of splitMediaLines(parts)) {
+      if (signal.aborted) break;
+      const part = readMedia(raw);
+      if (part.kind === "text") {
+        pending.push(newMessage("muse", part.text));
+      } else if (part.kind === "song") {
+        if (left.song) {
+          spent();
+          pending.push({ ...newMessage("muse", sentSong(part)), song: { title: part.title, artist: part.artist } });
+        }
+        if (part.caption) pending.push(newMessage("muse", part.caption));
+      } else if (part.kind === "voice") {
+        if (!left.voice) { pending.push(newMessage("muse", part.text)); continue; }
+        spent();
+        flush();
+        setSending("voice");
+        const note = await recordVoiceNote(part.text, await voiceFor(person, muse.id, update), signal);
+        setSending(null);
+        const msg = newMessage("muse", part.text);
+        const id = `vn-${msg.id}`;
+        pending.push(note && (await savePhoto(id, note.blob)) ? { ...msg, voiceNote: { id, seconds: note.seconds } } : msg);
+      } else {
+        if (left.photo) {
+          spent();
+          flush();
+          setSending("photo");
+          const pic = await makePicture(part.description, signal);
+          setSending(null);
+          const msg = newMessage("muse", sentPhoto(part.description));
+          const id = `img-${msg.id}`;
+          if (pic && (await savePhoto(id, pic.blob))) pending.push({ ...msg, image: { id, w: pic.w, h: pic.h } });
+        }
+        if (part.caption) pending.push(newMessage("muse", part.caption));
+      }
+    }
+    flush();
+    return out;
   }
 
   /* Editing a message changes what the conversation was about.
@@ -1244,14 +1340,21 @@ function SoloChat({
                 <QuoteBubble who={q ? nameOf(q) : ""} text={q?.content} onJump={q ? () => jumpTo(q.id) : undefined} />
               )}
               {m.image && <Photo id={m.image.id} w={m.image.w} h={m.image.h} />}
-              {m.image && m.content === PHOTO_ONLY ? null : m.content}
+              {m.voiceNote ? <VoiceNote id={m.voiceNote.id} seconds={m.voiceNote.seconds} text={m.content} />
+                : m.song ? <SongCard title={m.song.title} artist={m.song.artist} />
+                : m.image && (m.content === PHOTO_ONLY || isMediaCaption(m.content)) ? null
+                : m.content}
               {m.edited && <span className="stamp"> · edited</span>}
               {m.interrupted && <span className="stamp"> · cut off</span>}
               <MessageActions
                 content={m.content}
                 onReply={replyHere}
                 onEdit={(text) => editLine(m, text)}
-                onDelete={() => { if (m.image) void deleteImages([m.image.id]); update(deleteMessage(state, muse.id, m.id)); }}
+                onDelete={() => {
+                  const files = [m.image?.id, m.voiceNote?.id].filter((x): x is string => !!x);
+                  if (files.length) void deleteImages(files);
+                  update(deleteMessage(state, muse.id, m.id));
+                }}
                 onDeleteFrom={() => update(deleteFrom(state, muse.id, m.id))}
                 onDone={() => setPicked(null)}
                 {...(m.from === "muse" ? { onReact: (e: string) => update((cur) => react(cur, muse.id, m.id, "user", e)), reacted: m.reactions?.user } : {})}
@@ -1265,7 +1368,12 @@ function SoloChat({
         })}
 
         {streaming && <div className="turn turn-muse">{streaming}</div>}
-        {(loop.busy || typingNext) && !streaming && <p className="typing">{muse.name} is typing<i>.</i><i>.</i><i>.</i></p>}
+        {typing && (
+          <p className="typing">
+            {muse.name} {sending && !typingNext ? (sending === "photo" ? "is sending a photo" : "is recording a voice note") : "is typing"}
+            <i>.</i><i>.</i><i>.</i>
+          </p>
+        )}
 
         {error && (
           <div style={{ marginTop: "1rem" }}>

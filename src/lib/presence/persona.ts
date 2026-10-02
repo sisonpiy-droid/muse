@@ -751,6 +751,139 @@ back, and find something else to say -- something that happened to you, an
 opinion they have not heard, the thing they are avoiding, anything.`;
 }
 
+/* Tics: the same opener, phrase or emoji, over and over, across days.
+ *
+ * coveredGround looks at subjects inside the window the model can see. This is
+ * the other half: wording, across the last fifty or so texts, most of which the
+ * model no longer has in front of it. "haan bol" to open every single day reads
+ * fine one conversation at a time and like a bot across a week, and nothing in
+ * any one turn can see it.
+ *
+ * Counted per message, not per occurrence, and only past a threshold: a phrase
+ * someone uses now and then is their voice, and this should only ever catch the
+ * thing that has stopped being a habit and become a loop. */
+export interface Worn {
+  openers: string[];
+  phrases: string[];
+  emoji: string[];
+  /** How many texts this was measured over. */
+  of: number;
+}
+
+const EMOJI = /\p{Extended_Pictographic}/gu;
+
+export function wornPhrases(texts: string[]): Worn {
+  const of = texts.length;
+  const none: Worn = { openers: [], phrases: [], emoji: [], of };
+  /* Too few to tell a habit from a coincidence. */
+  if (of < 12) return none;
+  const words = (t: string) =>
+    t.toLowerCase().replace(EMOJI, " ").replace(/[^\p{L}\p{N}\s']/gu, " ").split(/\s+/).filter(Boolean);
+  const count = (keys: Iterable<string>, into: Map<string, number>) => {
+    for (const k of new Set(keys)) into.set(k, (into.get(k) ?? 0) + 1);
+  };
+
+  const first2 = new Map<string, number>();
+  const first1 = new Map<string, number>();
+  const grams = new Map<string, number>();
+  const emoji = new Map<string, number>();
+  for (const t of texts) {
+    const w = words(t);
+    if (w.length >= 2) count([`${w[0]} ${w[1]}`], first2);
+    if (w.length) count([w[0]], first1);
+    const g: string[] = [];
+    for (let n = 2; n <= 4; n++) {
+      for (let i = 0; i + n <= w.length; i++) {
+        const slice = w.slice(i, i + n);
+        /* A run of filler ("to the", "hai na") is grammar, not a tic. */
+        if (slice.some((x) => x.length > 2 && !CHATTER.has(x))) g.push(slice.join(" "));
+      }
+    }
+    count(g, grams);
+    count(t.match(EMOJI) ?? [], emoji);
+  }
+
+  const openers = [...first2].filter(([, n]) => n >= 4).sort((a, b) => b[1] - a[1]).map(([k]) => k);
+  for (const [k, n] of [...first1].sort((a, b) => b[1] - a[1])) {
+    if (n >= Math.max(7, of * 0.2) && !openers.some((o) => o.startsWith(`${k} `))) openers.push(k);
+  }
+
+  /* Longest first, and nothing that only repeats part of one already listed. */
+  const phrases: string[] = [];
+  const ranked = [...grams]
+    .filter(([k, n]) => n >= (k.split(" ").length === 2 ? 5 : 4))
+    .sort((a, b) => b[0].split(" ").length - a[0].split(" ").length || b[1] - a[1]);
+  for (const [k] of ranked) {
+    if (phrases.length >= 10) break;
+    if (phrases.some((p) => p.includes(k))) continue;
+    phrases.push(k);
+  }
+  /* An opener already listed covers the phrase that starts with it. */
+  const spoken = phrases.filter((p) => !openers.some((o) => p === o || p.startsWith(`${o} `)));
+
+  return {
+    openers: openers.slice(0, 4),
+    phrases: spoken.slice(0, 6),
+    emoji: [...emoji].filter(([, n]) => n >= Math.max(8, of * 0.25)).sort((a, b) => b[1] - a[1]).slice(0, 3)
+      .map(([e, n]) => `${e} (in ${n} of them)`),
+    of,
+  };
+}
+
+export function wornBlock(w: Worn | null | undefined): string {
+  if (!w || (!w.openers.length && !w.phrases.length && !w.emoji.length)) return "";
+  const lines = [
+    w.openers.length ? `- You keep opening with: ${w.openers.map((o) => `"${o}"`).join(", ")}` : "",
+    w.phrases.length ? `- You keep saying: ${w.phrases.map((p) => `"${p}"`).join(", ")}` : "",
+    w.emoji.length ? `- You keep using: ${w.emoji.join(", ")}` : "",
+  ].filter(Boolean);
+  return `
+
+YOUR TICS LATELY
+Across your last ${w.of} texts:
+${lines.join("\n")}
+Leave all of these out of this reply. Each was a habit and has become a loop -- once in a while it is your voice, every day it is a recording. Open some other way, say it some other way.`;
+}
+
+/* Nicknames, running jokes, bits: what has become theirs. Separate from the
+   memories because those are facts to use where they fit, and these are best
+   when they turn up where nobody expected them. */
+export function sharedBlock(shared: string[] | null | undefined, you: string): string {
+  if (!shared?.length) return "";
+  return `
+
+JUST BETWEEN YOU TWO
+${shared.map((s) => `- ${s}`).join("\n")}
+These are yours and ${you}'s, and they are a lot of what makes this feel like your conversation rather than anyone's. Bring one back now and then, out of nowhere, the way friends do -- a nickname dropped in, a callback to the joke when something fits it. Never explain one, never more than one at a time, and not in every conversation: an inside joke used constantly stops being one.`;
+}
+
+/* What the Muse can send besides texts, this turn. Only what is on offer is
+   mentioned: a character told about photos it is not allowed to send would
+   send them anyway. Games need nothing from the app, so they are always here. */
+export function sendBlock(can: { photo?: boolean; voice?: boolean; song?: boolean } | null | undefined, you: string): string {
+  if (!can) return "";
+  const media = [
+    can.voice
+      ? `- [voice] followed by what you say: a voice note, in your own voice. For when typing would be flat or too slow -- telling a story, ranting, laughing at them, saying goodnight. Spoken words only, under 50 words, no emoji.`
+      : "",
+    can.photo
+      ? `- [photo: what is in it] a photo you just took on your phone of what is in front of you -- your food, your desk, the view, something funny you saw. Describe it plainly and specifically so it can be shown, e.g. [photo: half-eaten maggi in a steel bowl on my hostel bed, laptop open behind it]. Never a photo of yourself or of any person. If they ask for a selfie, get out of it the way you would.`
+      : "",
+    can.song
+      ? `- [song: Title - Artist] a real song that exists, when something reminds you of one. Say why in a text of your own next to it.`
+      : "",
+  ].filter(Boolean);
+  return `
+
+${media.length ? `THINGS YOU CAN SEND
+Besides texts you can send these, each as its own message between --- lines, with the tag exactly as shown at its very start:
+${media.join("\n")}
+They are seasoning. Most replies are only texts; at most one of these in a reply, and none of them more than once in a conversation. Send one when it is the natural thing, never to show that you can.
+
+` : ""}GAMES
+When the conversation is flagging or ${you} seems bored, you can start something, in your own style: would you rather, rapid fire, two truths and a lie, rate my day out of ten, this or that. Play it properly -- keep track, keep it going a few rounds, react to their answers, then let it go. Not every conversation, and never when they are telling you something that matters.`;
+}
+
 /* ------------------------------------------------------------- circles */
 
 export interface CircleMember {
