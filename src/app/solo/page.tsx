@@ -38,7 +38,7 @@ import { Persister, mergeStates, onOtherTabWrite } from "@/lib/solo/sync";
 import { embedTexts, learnFrom } from "@/lib/solo/learn";
 import { PHOTO_ONLY, savePhoto, shrink } from "@/lib/solo/photos";
 import { canStoreImages, deleteImages } from "@/lib/solo/backend";
-import { MAX_MESSAGE, prepareTurn, streamReply } from "@/lib/solo/turn";
+import { MAX_MESSAGE, prepareTurn, primeRecall, streamReply } from "@/lib/solo/turn";
 import { canListen } from "@/lib/voice/listener";
 import { settingsOf } from "@/lib/proactive/client";
 import { speaker } from "@/lib/voice/speaker";
@@ -994,6 +994,8 @@ function SoloChat({
     setReplyTo(null);
     setError(null);
     if (box.current) box.current.style.height = "auto";
+    /* Memory recall starts now, during the pause, rather than when the reply does. */
+    primeRecall([...log, msg]);
     loop.schedule();
   }
 

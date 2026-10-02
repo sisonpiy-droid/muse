@@ -28,7 +28,9 @@ import { useEffect, useLayoutEffect, useRef, useSyncExternalStore } from "react"
  */
 
 /** How long after a send before asking for a reply. */
-export const REPLY_PAUSE_MS = 1600;
+/* Long enough to start a second text, which then holds the reply while it is
+   typed; any longer and every single message just waits. */
+export const REPLY_PAUSE_MS = 1200;
 /** How long a reply waits once someone starts typing again. */
 export const TYPING_PAUSE_MS = 3500;
 /** Opening a conversation that is owed a reply: a moment to settle, then answer. */

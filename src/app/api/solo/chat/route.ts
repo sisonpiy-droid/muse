@@ -332,7 +332,14 @@ ${timeBlock({ you: userName || "them", timeZone: tz, ...clock })}`;
           name: persona?.them ?? muse.name,
           /* A live call is a sentence or two spoken aloud; long reasoning there
              is only silence on the line. */
-          thinking: register === "live" ? "minimal" : undefined,
+          /* How long the model thinks before it answers -- most of the wait.
+             Measured on a real persona prompt: default 6.9-8.7s to the first
+             word, "low" 2.9-5.9s with replies just as grounded and in
+             character, "minimal" 1.2-2.2s but it started inventing shared
+             memories and getting the user's gender wrong. So: low for texts,
+             minimal only on a call, where a spoken sentence or two is all
+             there is and silence on the line costs most. */
+          thinking: register === "live" ? "minimal" : "low",
           /* And pass the first sentence on as soon as it is safely not a
              refusal, so the call can start speaking it. */
           releaseAfter: register === "live" ? 30 : undefined,

@@ -154,7 +154,9 @@ export async function POST(req: Request) {
       const send = (obj: unknown) =>
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(obj)}\n\n`));
       try {
-        for await (const evt of streamGuarded({ system, messages, name: speaker.persona.them })) {
+        /* Low thinking, as in one-to-one texts: a room of three answering one
+           after another made the default wait three times over. */
+        for await (const evt of streamGuarded({ system, messages, name: speaker.persona.them, thinking: "low" })) {
           if (evt.type === "delta") send({ type: "delta", text: evt.text });
           else if (evt.type === "refused") {
             /* In a circle a refusal is quieter: that member simply says

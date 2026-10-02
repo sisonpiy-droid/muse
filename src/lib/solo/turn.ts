@@ -20,6 +20,25 @@ import { embedTexts } from "./learn";
 
 export const MAX_MESSAGE = 8000;
 
+/* Recall by meaning needs the conversation embedded, about half a second. It
+   used to start only once the reply did; now it starts the moment a message is
+   sent, during the pause before the reply, and the reply picks up the result. */
+const recalling = new Map<string, Promise<(number[] | null)[] | null>>();
+
+function recall(query: string): Promise<(number[] | null)[] | null> {
+  const ready = recalling.get(query);
+  recalling.delete(query);
+  return ready ?? embedTexts([query]);
+}
+
+/** Starts recall for the thread as it will be once this message is in it. */
+export function primeRecall(thread: { content: string }[]): void {
+  const query = thread.slice(-4).map((m) => m.content).join("\n");
+  if (!worthRecalling(query) || recalling.has(query)) return;
+  if (recalling.size > 8) recalling.clear();
+  recalling.set(query, embedTexts([query]));
+}
+
 export interface PreparedTurn {
   person: SoloMuse;
   vibe: Vibe;
@@ -56,7 +75,7 @@ export async function prepareTurn(
      Skipped entirely when the last few turns are "hmm" and "yeah": there is
      nothing to recall against, and a vector for filler still lands nearest to
      something. Also where most of the half-second goes. */
-  const embedding = worthRecalling(query) ? embedTexts([query]) : Promise.resolve(null);
+  const embedding = worthRecalling(query) ? recall(query) : Promise.resolve(null);
   const timed = opts.embedWithinMs
     ? Promise.race([embedding, new Promise<null>((r) => setTimeout(() => r(null), opts.embedWithinMs))])
     : embedding;
