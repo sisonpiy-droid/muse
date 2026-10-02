@@ -69,7 +69,9 @@ export function userFacingError(err: unknown): { message: string; retryable: boo
 
 export type GuardedEvent =
   | { type: "delta"; text: string }
-  | { type: "done" }
+  /* `history`: the reply only went through on that shorter history (an index
+     into `histories`), so the caller can stop sending the rest. */
+  | { type: "done"; history?: number }
   /* `reason` distinguishes four very different failures that used to look
      alike to the caller: the model declined in character-breaking words, it
      produced nothing, the prompt was refused before generation, or a filter
@@ -118,6 +120,14 @@ export async function* streamGuarded(opts: {
      into production. Taking the provider as an argument is the seam that lets
      it be driven through each failure on purpose. */
   provider?: AIProvider;
+  /* Shorter versions of the conversation, tried in order once every prompt
+     variant has been refused before generation. The fallbacks above only ever
+     trim the profile, but the history goes with every one of them: a
+     conversation holding one message or photo the provider will not accept
+     (PROHIBITED_CONTENT, which no setting changes) was refused on every rung,
+     every turn, forever -- with the profile blamed for it. Leaving the old part
+     out is the only way such a conversation carries on. */
+  histories?: ChatMessage[][];
 }): AsyncIterable<GuardedEvent> {
   const provider = opts.provider ?? getProvider();
   const variants = [opts.system, ...(opts.fallbacks ?? [])];
@@ -189,6 +199,45 @@ export async function* streamGuarded(opts: {
          and send less. A refusal or a stop is about what came out, and asking
          again with a nudge often changes that. */
       if (failed === "blocked" || failed === "empty") break;
+    }
+  }
+
+  /* Every prompt refused before generation: the trouble is in what the
+     conversation carries, so send less of it. Each shorter history gets the
+     full prompt, then the plainest, and the whole reply is held as before. */
+  if (lastReason === "blocked" && opts.histories?.length) {
+    const systems = [...new Set([variants[0], variants.at(-1)!])];
+    for (let h = 0; h < opts.histories.length; h++) {
+      for (const system of systems) {
+        const parts: string[] = [];
+        let failed: Failure | null = null;
+        let detail = "";
+        try {
+          for await (const delta of provider.streamResponse({ system, messages: opts.histories[h], thinking: opts.thinking })) {
+            parts.push(delta);
+          }
+        } catch (err) {
+          const code = err instanceof ProviderError ? err.code : null;
+          if (code !== "empty" && code !== "blocked" && code !== "stopped") throw err;
+          failed = code;
+          detail = err instanceof Error ? err.message : String(err);
+        }
+        const text = parts.join("");
+        if (!failed && !text.trim()) failed = "empty";
+        if (!failed && looksLikeRefusal(text.slice(0, REFUSAL_SNIFF_CHARS))) failed = "refusal";
+        if (!failed) {
+          console.error(`[refusal] ${opts.name} went through on shorter history ${h + 1}/${opts.histories.length}`);
+          for (const p of parts) yield { type: "delta", text: p };
+          yield { type: "done", history: h };
+          return;
+        }
+        lastReason = failed;
+        console.error(`[refusal] ${opts.name} shorter history ${h + 1}/${opts.histories.length} reason=${failed}${detail ? ` detail=${detail}` : ""}`);
+        /* Not blocked any more: the history is fine and something else is
+           wrong, which a still shorter one will not fix. */
+        if (failed !== "blocked") break;
+      }
+      if (lastReason !== "blocked") break;
     }
   }
 

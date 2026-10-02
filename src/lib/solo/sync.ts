@@ -106,6 +106,7 @@ export function mergeStates(base: SoloState, theirs: SoloState, ours: SoloState)
     unlocked: mergeRecord(base.unlocked, theirs.unlocked, ours.unlocked,
       (_b, t, o) => [...t, ...o.filter((x) => !t.some((y) => y.key === x.key))]),
     started: { ...(theirs.started ?? {}), ...(ours.started ?? {}) },
+    cutoffs: mergeRecord(base.cutoffs, theirs.cutoffs, ours.cutoffs),
     edits: mergeRecord(base.edits, theirs.edits, ours.edits),
     feelings: mergeRecord(base.feelings, theirs.feelings, ours.feelings),
     /* Tombstones only ever grow: something forgotten in either copy stays forgotten. */

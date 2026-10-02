@@ -164,6 +164,24 @@ check("in a group, each member brings the recent end of their own one-to-one cha
   assert.equal(persona.oneToOneBlock([], "Piyush"), "");
 });
 
+/* --------------------------------------------- a conversation that was refused */
+
+const { cutoffFrom } = await import("../src/lib/solo/turn.ts");
+
+check("once a reply only went through on the end of the chat, later turns send only that end", async () => {
+  const log = Array.from({ length: 12 }, (_, i) => ({ id: `c${i}`, from: i % 2 ? "muse" : "user", content: `line ${i}`, at: new Date(NOW + i * 1000).toISOString() }));
+  let s = { ...blank(), conversations: { [RHEA]: log } };
+  const prepared = await prepareTurn(s, RHEA);
+  assert.equal(prepared.sent.length, 12);
+  assert.deepEqual(cutoffFrom(prepared, { kept: 4, photos: true }), { from: "c8" });
+  assert.equal(cutoffFrom(prepared, { kept: 12, photos: true }), null, "nothing left out, nothing to change");
+  assert.ok(cutoffFrom(prepared, { kept: 12, photos: false }).photosAfter, "photos alone");
+  s = { ...s, cutoffs: { [RHEA]: { from: "c8" } } };
+  const next = await prepareTurn(s, RHEA);
+  assert.deepEqual(next.body.messages.map((m) => m.content), ["line 8", "line 9", "line 10", "line 11"]);
+  assert.equal(s.conversations[RHEA].length, 12, "the thread itself is untouched");
+});
+
 let pass = 0, fail = 0;
 for (const [n, f] of results) {
   try { await f(); console.log(`  PASS  ${n}`); pass++; }

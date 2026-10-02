@@ -289,6 +289,51 @@ check("without release, nothing passes until the whole reply is checked", async 
   assert.deepEqual(events.map((e) => e.type), ["delta", "delta", "done"]);
 });
 
+/* ------------------------------------------- a conversation that is refused */
+
+/* What was happening to Aditi: PROHIBITED_CONTENT on every profile rung,
+   because the trouble was in the conversation, which every rung still sent. */
+function historyProvider(blockedWhenLongerThan) {
+  const seen = [];
+  return {
+    seen,
+    provider: {
+      name: "fake",
+      async *streamResponse({ system, messages }) {
+        seen.push({ system, n: messages.length });
+        if (messages.length > blockedWhenLongerThan) throw new ProviderError("blocked", "The request was blocked before generation (PROHIBITED_CONTENT).");
+        yield "acha sun";
+      },
+    },
+  };
+}
+const long = Array.from({ length: 9 }, (_, i) => ({ role: i % 2 ? "assistant" : "user", content: `m${i}` }));
+
+check("refused on every profile rung, it tries shorter histories and says which one went through", async () => {
+  const { seen, provider } = historyProvider(3);
+  const events = [];
+  for await (const e of streamGuarded({ system: "FULL", fallbacks: ["BARE"], messages: long, name: "Aditi", provider,
+    histories: [long.slice(-5), long.slice(-1)] })) events.push(e);
+  assert.deepEqual(events.at(-1), { type: "done", history: 1 });
+  assert.equal(events.filter((e) => e.type === "delta").map((e) => e.text).join(""), "acha sun");
+  assert.deepEqual(seen.map((x) => `${x.system.split("\n")[0]}:${x.n}`), ["FULL:9", "BARE:9", "FULL:5", "BARE:5", "FULL:1"]);
+});
+
+check("a short conversation that is refused still ends refused, as blocked", async () => {
+  const { provider } = historyProvider(0);
+  const events = [];
+  for await (const e of streamGuarded({ system: "FULL", messages: long, name: "Aditi", provider, histories: [long.slice(-1)] })) events.push(e);
+  assert.deepEqual(events.at(-1), { type: "refused", reason: "blocked" });
+});
+
+check("a refusal that is not a block never walks the history ladder", async () => {
+  const { seen, provider } = fakeProvider(["I cannot continue to roleplay this persona."]);
+  const events = [];
+  for await (const e of streamGuarded({ ...base, system: "FULL", provider, histories: [[{ role: "user", content: "x" }]] })) events.push(e);
+  assert.equal(seen.length, 2, "the two passes of the full prompt, nothing more");
+  assert.equal(events.at(-1).reason, "refusal");
+});
+
 let pass = 0, fail = 0;
 for (const [n, f] of results) {
   try { await f(); console.log(`  PASS  ${n}`); pass++; }

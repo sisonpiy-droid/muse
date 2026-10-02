@@ -248,6 +248,11 @@ export interface SoloState {
   /* Plans made together that have been started, by the memory id of the plan,
      so a movie night begins once. */
   started?: Record<string, string>;
+  /* Where the model's view of a conversation starts, keyed by thread, when
+     the provider refused everything before it (PROHIBITED_CONTENT on an old
+     message or photo). `from`: the first message still sent. `photosAfter`:
+     photos before this go as words only. The thread itself is untouched. */
+  cutoffs?: Record<string, { from?: string; photosAfter?: string }>;
   /** "How it's going", in their words, from the story screen. Kept until asked again. */
   stories?: Record<string, { text: string; at: string }>;
   /* Changes to a starter, kept as an overlay rather than a copy so the
@@ -361,6 +366,7 @@ export function parseState(raw: string | null | undefined): SoloState {
       unlocked: parsed.unlocked ?? {},
       scores: parsed.scores ?? {},
       started: parsed.started ?? {},
+      cutoffs: parsed.cutoffs ?? {},
       stories: parsed.stories ?? {},
       edits: parsed.edits ?? {},
       feelings: parsed.feelings ?? {},

@@ -209,12 +209,12 @@ export async function POST(req: Request) {
     if (cleaned[i].image && ++photos > 3) cleaned[i] = { ...cleaned[i], image: undefined };
   }
   const hasPhoto = photos > 0;
-  const messagesForModel = mergeRuns(
+  const toModel = (list: typeof messages, withImages = true) => mergeRuns(
     stampPauses(
-      (cleaned.length ? cleaned : messages).map((m) => ({
+      list.map((m) => ({
         role: m.role,
         at: m.at,
-        ...(m.image && m.role === "user" ? { images: [m.image] } : {}),
+        ...(withImages && m.image && m.role === "user" ? { images: [m.image] } : {}),
         content: withQuote(
           m.content,
           m.quote && { who: m.quote.role === "assistant" ? "you" : "their own earlier message", text: m.quote.content }
@@ -224,6 +224,25 @@ export async function POST(req: Request) {
       now
     ).map(({ role, content, images }) => ({ role, content, ...(images ? { images } : {}) }))
   );
+  const sendable = cleaned.length ? cleaned : messages;
+  const messagesForModel = toModel(sendable);
+
+  /* Shorter histories, for when every prompt is refused before generation
+     (see streamGuarded): without the photos, then the last few messages, then
+     only what was just said. `kept` is how many of the request's messages each
+     still carries, so the app can stop sending the rest. */
+  const theirTurn = (() => { let n = 0; while (n < sendable.length && sendable[sendable.length - 1 - n].role === "user") n++; return n; })();
+  /* Counted against the request as sent, not against `sendable`, which has
+     past refusals taken out: the app knows its messages by that order. */
+  const sendIdx = cleaned.length
+    ? messages.flatMap((m, i) => (m.role === "assistant" && looksLikeRefusal(m.content) ? [] : [i]))
+    : messages.map((_, i) => i);
+  const keptOf = (k: number) => messages.length - sendIdx[sendIdx.length - k];
+  const shorter: { kept: number; photos: boolean; messages: ReturnType<typeof toModel> }[] = [
+    ...(hasPhoto ? [{ kept: messages.length, photos: false, messages: toModel(sendable, false) }] : []),
+    ...(sendable.length > 8 ? [{ kept: keptOf(8), photos: false, messages: toModel(sendable.slice(-8), false) }] : []),
+    ...(theirTurn && theirTurn < sendable.length ? [{ kept: keptOf(theirTurn), photos: false, messages: toModel(sendable.slice(-theirTurn), false) }] : []),
+  ].filter((h) => h.messages[0]?.role === "user");
 
   const total = messages.reduce((n, m) => n + m.content.length, 0)
     + memories.reduce((n, m) => n + m.length, 0);
@@ -381,8 +400,17 @@ ${timeBlock({ you: userName || "them", timeZone: tz, ...clock })}`;
           /* And pass the first sentence on as soon as it is safely not a
              refusal, so the call can start speaking it. */
           releaseAfter: register === "live" ? 30 : undefined,
+          histories: shorter.map((h) => h.messages),
         })) {
           if (evt.type === "delta") send({ type: "delta", text: evt.text });
+          else if (evt.type === "done" && evt.history !== undefined) {
+            /* It only went through with less of the conversation. Tell the app
+               how much, so it leaves the rest out from now on instead of every
+               turn walking down this ladder again. */
+            const h = shorter[evt.history];
+            send({ type: "trimmed", kept: h.kept, photos: h.photos });
+            send({ type: "done" });
+          }
           else if (evt.type === "refused") {
             const who = persona?.them ?? muse.name;
             /* The old wording here blamed the last message and told the user
@@ -399,8 +427,10 @@ ${timeBlock({ you: userName || "them", timeZone: tz, ...clock })}`;
             send({
               type: "error",
               message:
+                /* Refused even with the older conversation left out, so it is
+                   what was just said or the profile itself. */
                 evt.reason === "blocked"
-                  ? `Google's content filter is refusing ${who}'s saved profile, so nothing can be sent. It isn't what you wrote. Open edit and cut down the sample messages — that usually clears it.`
+                  ? `Google's content filter refused this, even with the earlier chat left out — so it's either what you just sent or ${who}'s saved profile. Try saying it differently (tap your message to edit it). If even "hi" is refused, edit ${who} and cut down the sample messages.`
                   : evt.reason === "stopped"
                     ? `Google's safety filter kept stopping ${who}'s reply partway through, so nothing half-finished was sent. Try again — it usually goes through.`
                     : `${who} didn't come to the phone. Try saying it differently.`,

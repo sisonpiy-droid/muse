@@ -44,6 +44,9 @@ export interface PreparedTurn {
   person: SoloMuse;
   vibe: Vibe;
   body: Record<string, unknown>;
+  /* The id of each message in body.messages, in order; null for one the app
+     added (withAppMessage). How a "trimmed" reply is turned into a cutoff. */
+  sent: (string | null)[];
 }
 
 /** Everything a reply needs, from the state as it is now. */
@@ -65,6 +68,12 @@ export async function prepareTurn(
   const person = findMuse(s, museId) ?? opts.fallback;
   if (!person) return null;
   const thread = s.conversations[museId] ?? [];
+  /* What the model is shown starts at the cutoff, if the provider refused
+     everything before it. Everything else -- tics, the story -- still reads
+     the whole thread. */
+  const cut = s.cutoffs?.[museId];
+  const from = cut?.from ? thread.findIndex((m) => m.id === cut.from) : -1;
+  const visible = from > 0 ? thread.slice(from) : thread;
   const stored: Vibe = s.vibes?.[museId] ?? DEFAULT_VIBE;
   const vibe: Vibe = opts.register ? { ...stored, register: opts.register } : stored;
   const feelingsNow = feelingsOf(s, museId);
@@ -72,7 +81,7 @@ export async function prepareTurn(
 
   // The last few turns, so retrieval follows the subject rather than a
   // two-word reply carrying no signal.
-  const query = thread.slice(-4).map((m) => m.content).join("\n");
+  const query = visible.slice(-4).map((m) => m.content).join("\n");
   /* One extra round trip before the reply, and it is what makes recall work on
      meaning rather than shared words. Falls back to overlap when it fails, so
      the cost of it going wrong is a worse memory, not a failed message.
@@ -86,6 +95,7 @@ export async function prepareTurn(
   const [queryVector] = (await timed) ?? [null];
   if (opts.signal?.aborted) return null;
   const memories = memoriesForTurn(s, museId, query, queryVector);
+  const sending = windowOf(visible);
 
   const body = {
     muse: {
@@ -108,7 +118,7 @@ export async function prepareTurn(
       },
     },
     // Bounded by size rather than count -- see windowOf.
-    messages: withReactions(await withPhotos(windowOf(thread))).map(({ m, image, note }) => {
+    messages: withReactions(await withPhotos(sending, cut?.photosAfter)).map(({ m, image, note }) => {
       const q = quoteOf(thread, m);
       return {
         role: m.from === "user" ? ("user" as const) : ("assistant" as const),
@@ -172,13 +182,15 @@ export async function prepareTurn(
       ? mediaAllowed(s, museId, { canStore: opts.canStore })
       : null,
   };
-  return { person, vibe, body };
+  return { person, vibe, body, sent: sending.map((m) => m.id) };
 }
 
 /* The most recent few photos go with the reply, as pictures; older ones stay
    words. Loaded from IndexedDB only for the messages that need them. */
-async function withPhotos(window: SoloMessage[]): Promise<{ m: SoloMessage; image?: { mime: string; data: string } }[]> {
-  const recent = new Set(window.filter((m) => m.from === "user" && m.image).slice(-3).map((m) => m.id));
+async function withPhotos(window: SoloMessage[], after?: string): Promise<{ m: SoloMessage; image?: { mime: string; data: string } }[]> {
+  const recent = new Set(window
+    .filter((m) => m.from === "user" && m.image && (!after || m.at > after))
+    .slice(-3).map((m) => m.id));
   return Promise.all(window.map(async (m) => {
     if (!recent.has(m.id) || !m.image) return { m };
     const image = await photoBase64(m.image.id).catch(() => null);
@@ -214,13 +226,16 @@ function withReactions<T extends { m: SoloMessage }>(rows: T[]): (T & { note: st
 export function withAppMessage(prepared: PreparedTurn, content: string): void {
   const messages = prepared.body.messages as { role: string; content: string; at?: string }[];
   prepared.body.messages = [...messages.slice(-(ROUTE_MAX_MESSAGES - 1)), { role: "user", content, at: new Date().toISOString() }];
+  prepared.sent = [...prepared.sent.slice(-(ROUTE_MAX_MESSAGES - 1)), null];
 }
 
 /** What /api/solo/chat accepts in one request. */
 const ROUTE_MAX_MESSAGES = 60;
 
 export type ReplyOutcome =
-  | { ok: true; text: string }
+  /* `trimmed`: it only went through on part of the conversation -- the last
+     `kept` messages sent, and without photos if `photos` is false. */
+  | { ok: true; text: string; trimmed?: { kept: number; photos: boolean } }
   | { ok: false; message: string; retryable: boolean; partial: string };
 
 /* Reads /api/solo/chat's SSE stream, calling onDelta with the text so far. A
@@ -247,6 +262,7 @@ export async function streamReply(
   let buffer = "";
   let acc = "";
   let failure: { message: string; retryable: boolean } | null = null;
+  let trimmed: { kept: number; photos: boolean } | undefined;
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -256,13 +272,28 @@ export async function streamReply(
     for (const frame of frames) {
       const line = frame.split(/\r?\n/).find((l) => l.startsWith("data:"));
       if (!line) continue;
-      let evt: { type?: string; text?: string; message?: string; retryable?: boolean };
+      let evt: { type?: string; text?: string; message?: string; retryable?: boolean; kept?: number; photos?: boolean };
       try { evt = JSON.parse(line.slice(5).trim()); } catch { continue; }
       if (evt.type === "delta" && evt.text) { acc += evt.text; onDelta(acc, evt.text); }
+      else if (evt.type === "trimmed" && typeof evt.kept === "number") trimmed = { kept: evt.kept, photos: evt.photos !== false };
       else if (evt.type === "error") {
         failure = { message: evt.message ?? "Something went wrong.", retryable: evt.retryable !== false };
       }
     }
   }
-  return failure ? { ok: false, ...failure, partial: acc } : { ok: true, text: acc };
+  return failure ? { ok: false, ...failure, partial: acc } : { ok: true, text: acc, ...(trimmed ? { trimmed } : {}) };
+}
+
+/** The cutoff a trimmed reply implies, for the state. Null when nothing changes. */
+export function cutoffFrom(
+  prepared: PreparedTurn,
+  trimmed: { kept: number; photos: boolean },
+  now = Date.now()
+): { from?: string; photosAfter?: string } | null {
+  const first = trimmed.kept < prepared.sent.length ? prepared.sent[prepared.sent.length - trimmed.kept] : undefined;
+  const out = {
+    ...(first ? { from: first } : {}),
+    ...(trimmed.photos ? {} : { photosAfter: new Date(now).toISOString() }),
+  };
+  return out.from || out.photosAfter ? out : null;
 }

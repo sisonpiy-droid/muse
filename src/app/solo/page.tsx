@@ -43,7 +43,7 @@ import { Persister, mergeStates, onOtherTabWrite } from "@/lib/solo/sync";
 import { embedTexts, learnFrom } from "@/lib/solo/learn";
 import { PHOTO_ONLY, savePhoto, shrink } from "@/lib/solo/photos";
 import { canStoreImages, deleteImages } from "@/lib/solo/backend";
-import { MAX_MESSAGE, prepareTurn, primeRecall, streamReply, withAppMessage } from "@/lib/solo/turn";
+import { MAX_MESSAGE, cutoffFrom, prepareTurn, primeRecall, streamReply, withAppMessage } from "@/lib/solo/turn";
 import { canListen } from "@/lib/voice/listener";
 import { settingsOf } from "@/lib/proactive/client";
 import { speaker } from "@/lib/voice/speaker";
@@ -1057,6 +1057,10 @@ function SoloChat({
       }
       if (signal.aborted) return;
       const acc = outcome.text;
+      /* It only went through without the older part of the conversation:
+         stop sending that part, so the next reply does not hit the same wall. */
+      const cut = outcome.trimmed && cutoffFrom(prepared, outcome.trimmed);
+      if (cut) update((cur) => ({ ...cur, cutoffs: { ...(cur.cutoffs ?? {}), [muse.id]: { ...(cur.cutoffs?.[muse.id] ?? {}), ...cut } } }));
 
       /* "[react: 😂]" first: she reacted to what she is answering. That alone
          is a whole reply when nothing more needs saying. */
