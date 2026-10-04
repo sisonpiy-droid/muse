@@ -68,8 +68,10 @@ It is now ${wallClock(Date.now(), timezone ?? undefined)} where they are. ${days
 THEIR STORYLINES SO FAR
 ${going}
 
-WHAT THEY HAVE TOLD ${you.toUpperCase()} SINCE
+THE CONVERSATION WITH ${you.toUpperCase()} SINCE
 ${said.length ? said.map((s) => `- ${s}`).join("\n") : "(nothing)"}
+
+If ${you} gave advice about one of these storylines ("just confront her", "apply anyway"), the character took it: that storyline's next step is what happened when they did -- good, bad or funny, but a real result.
 
 Move their life on:
 - Each storyline above gets one new step: what happened next, one or two plain sentences written as a note about them ("Riya still isn't talking to her; she left a passive-aggressive note on the fridge."). If a storyline has run its course, give it a last step and mark it done.
@@ -79,7 +81,7 @@ Move their life on:
 - They are the centre of it. ${you} is never in these storylines and nothing happens to ${you}.
 - Keep everything consistent with who they are and what has happened so far.${p.minor ? "\n- They are under eighteen: storylines fit someone that age, and none are romantic." : ""}
 
-Also say which of the steps listed above (by their [id]) the character has now told ${you}, judging only from what they have told ${you} since.
+Also say which of the steps listed above (by their [id]) the character has now told ${you}, judging only from her own lines since.
 
 Return ONLY JSON, no prose, no code fence:
 {"arcs": [{"id": string|null (null for a new storyline), "title": string (a few words), "beat": string, "done": boolean}], "told": [string]}`;

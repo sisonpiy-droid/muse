@@ -85,10 +85,12 @@ export async function advanceLife(s: SoloState, museId: string, update: Update):
   try {
     const life = s.lives?.[museId];
     const since = life ? Date.parse(life.advancedAt) : null;
+    /* Both sides: hers to tell what she has told, theirs for advice she takes. */
+    const you = s.userName ?? "They";
     const said = (s.conversations[museId] ?? [])
-      .filter((m) => m.from === "muse" && (since === null || Date.parse(m.at) > since))
+      .filter((m) => since === null || Date.parse(m.at) > since)
       .slice(-30)
-      .map((m) => m.content.slice(0, 400));
+      .map((m) => `${m.from === "muse" ? "Her" : you}: ${m.content}`.slice(0, 400));
     const res = await fetch("/api/solo/life", {
       method: "POST",
       headers: { "content-type": "application/json" },

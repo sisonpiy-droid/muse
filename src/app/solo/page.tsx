@@ -1368,6 +1368,14 @@ function SoloChat({
           items={[
             { label: `Edit ${muse.name}`, onSelect: onEdit },
             { label: `You & ${muse.name}`, onSelect: onStory },
+            /* A story played out together: "Up for anything", and she pitches three. */
+            ...(muse.persona ? [{
+              label: `Start a story with ${muse.name}`,
+              onSelect: () => {
+                setVibe({ ...vibe, mood: "yes" });
+                void appTurn(`(${state.userName ?? "They"} wants to play out a story with you, over text, the two of you in it. Pitch three quick premises, numbered, one line each and in your own voice -- a mix, like running away somewhere, something strange happening where you live, a reunion that goes sideways. Ask which one. Once they pick, or say their own, start it and play it fully, chapter by chapter, and remember every choice.)`);
+              },
+            }] : []),
             { label: `What ${muse.name} remembers`, onSelect: onMemories },
             {
               label: settingsOf(state).proactiveEnabled && settingsOf(state).allowedMuseIds.includes(muse.id)
