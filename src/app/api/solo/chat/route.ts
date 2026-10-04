@@ -87,6 +87,11 @@ const bodySchema = z.object({
         image: z
           .object({ mime: z.enum(["image/jpeg", "image/png", "image/webp"]), data: z.string().max(1_600_000) })
           .optional(),
+        /* Frames from a video they sent, small JPEGs, for the latest video only. */
+        frames: z
+          .array(z.object({ mime: z.enum(["image/jpeg", "image/png", "image/webp"]), data: z.string().max(400_000) }))
+          .max(4)
+          .optional(),
       })
     )
     .min(1)
@@ -208,13 +213,13 @@ export async function POST(req: Request) {
   for (let i = cleaned.length - 1; i >= 0; i--) {
     if (cleaned[i].image && ++photos > 3) cleaned[i] = { ...cleaned[i], image: undefined };
   }
-  const hasPhoto = photos > 0;
+  const hasPhoto = photos > 0 || cleaned.some((m) => m.frames?.length);
   const toModel = (list: typeof messages, withImages = true) => mergeRuns(
     stampPauses(
       list.map((m) => ({
         role: m.role,
         at: m.at,
-        ...(withImages && m.image && m.role === "user" ? { images: [m.image] } : {}),
+        ...(withImages && m.role === "user" && (m.image || m.frames?.length) ? { images: [...(m.image ? [m.image] : []), ...(m.frames ?? [])] } : {}),
         content: withQuote(
           m.content,
           m.quote && { who: m.quote.role === "assistant" ? "you" : "their own earlier message", text: m.quote.content }
@@ -277,7 +282,7 @@ You may mention them, ask after them, or have opinions about them. Do not invent
         ? `
 
 PHOTOS
-${userName || "They"} can send you photos, and you can see them. React the way you would to a friend's photo -- to what matters in it, in your own voice -- never with a description of the picture. If you cannot make something out, say so the way a person would.`
+${userName || "They"} can send you photos and videos, and you can see them -- a video as a few frames from through it. React the way you would to a friend's photo or clip -- to what matters in it, in your own voice -- never with a description of the picture, and never mention frames. If you cannot make something out, say so the way a person would.`
         : "") +
       (story
         ? `

@@ -17,6 +17,8 @@ import { QuoteBubble, ReplyBar, jumpTo } from "@/components/Quote";
 import { TraitEditor } from "@/components/TraitEditor";
 import { Turn } from "@/components/Turn";
 import { Photo } from "@/components/Photo";
+import { useAttach } from "@/components/Attach";
+import { Video } from "@/components/Video";
 import { SongCard } from "@/components/SongCard";
 import { Story } from "@/components/Story";
 import { VoiceNote } from "@/components/VoiceNote";
@@ -41,7 +43,8 @@ import { ensureAvatar, makePicture, recordVoiceNote, voiceFor } from "@/lib/solo
 import { NUDGE_STALE_MS, addPoint, advanceLife, markStarted, nudgeAt, planDue, readPoint, unlock } from "@/lib/solo/life";
 import { Persister, mergeStates, onOtherTabWrite } from "@/lib/solo/sync";
 import { embedTexts, learnFrom } from "@/lib/solo/learn";
-import { PHOTO_ONLY, savePhoto, shrink } from "@/lib/solo/photos";
+import { PHOTO_ONLY, savePhoto } from "@/lib/solo/photos";
+import { VIDEO_ONLY, filesOf, keepAttachment } from "@/lib/solo/attach";
 import { canStoreImages, deleteImages } from "@/lib/solo/backend";
 import { MAX_MESSAGE, cutoffFrom, prepareTurn, primeRecall, streamReply, withAppMessage } from "@/lib/solo/turn";
 import { canListen } from "@/lib/voice/listener";
@@ -898,10 +901,7 @@ function SoloChat({
   const log = state.conversations[muse.id] ?? [];
   /* The message whose actions are open. One at a time, like any chat app. */
   const [picked, setPicked] = useState<string | null>(null);
-  /* A photo chosen but not sent yet, already shrunk. */
-  const [photo, setPhoto] = useState<{ blob: Blob; w: number; h: number; url: string } | null>(null);
   const [canPhoto, setCanPhoto] = useState(false);
-  const fileInput = useRef<HTMLInputElement>(null);
   useEffect(() => { void canStoreImages().then(setCanPhoto); }, []);
   const [canCall, setCanCall] = useState(true);
   // Read after mount: the server render has no window to ask.
@@ -912,6 +912,8 @@ function SoloChat({
   /* Making something to send that is not a text: shown instead of "typing". */
   const [sending, setSending] = useState<"photo" | "voice" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /* A photo or video chosen but not sent yet. */
+  const attach = useAttach(setError);
   /* Some failures are worth another go and some are not. Offering "Try again"
      on a prompt-level block just runs the user into the same wall. */
   const [canRetry, setCanRetry] = useState(true);
@@ -1002,17 +1004,16 @@ function SoloChat({
 
   async function sendDraft() {
     const content = draft.trim();
-    const pic = photo;
-    if (!content && !pic) return;
-    const base = newMessage("user", content || PHOTO_ONLY, { replyTo: replyTo?.id });
+    if (!content && !attach.draft) return;
+    const file = attach.take();
+    const base = newMessage("user", content || (file?.kind === "video" ? VIDEO_ONLY : PHOTO_ONLY), { replyTo: replyTo?.id });
     let msg: SoloMessage = base;
-    if (pic) {
-      setPhoto(null);
-      const id = `img-${base.id}`;
+    if (file) {
       /* The file first, then the message that points at it. */
-      if (!(await savePhoto(id, pic.blob))) { setError("Couldn't keep that photo on this device. Try again."); return; }
-      msg = { ...base, image: { id, w: pic.w, h: pic.h } };
-      URL.revokeObjectURL(pic.url);
+      const kept = await keepAttachment(file, base.id);
+      URL.revokeObjectURL(file.url);
+      if (!kept) { setError(`Couldn't keep that ${file.kind} on this device. Try again.`); return; }
+      msg = { ...base, ...kept };
     }
     update((cur) => ({
       ...cur,
@@ -1444,9 +1445,11 @@ function SoloChat({
                 <QuoteBubble who={q ? nameOf(q) : ""} text={q?.content} onJump={q ? () => jumpTo(q.id) : undefined} />
               )}
               {m.image && <Photo id={m.image.id} w={m.image.w} h={m.image.h} />}
+              {m.video && <Video id={m.video.id} w={m.video.w} h={m.video.h} seconds={m.video.seconds} />}
               {m.voiceNote ? <VoiceNote id={m.voiceNote.id} seconds={m.voiceNote.seconds} text={m.content} />
                 : m.song ? <SongCard title={m.song.title} artist={m.song.artist} />
                 : m.image && (m.content === PHOTO_ONLY || isMediaCaption(m.content)) ? null
+                : m.video && m.content === VIDEO_ONLY ? null
                 : m.content}
               {m.edited && <span className="stamp"> · edited</span>}
               {m.interrupted && <span className="stamp"> · cut off</span>}
@@ -1456,7 +1459,7 @@ function SoloChat({
                 onReply={replyHere}
                 onEdit={(text) => editLine(m, text)}
                 onDelete={() => {
-                  const files = [m.image?.id, m.voiceNote?.id].filter((x): x is string => !!x);
+                  const files = filesOf(m);
                   if (files.length) void deleteImages(files);
                   update(deleteMessage(state, muse.id, m.id));
                 }}
@@ -1570,39 +1573,8 @@ function SoloChat({
         {replyTo && (
           <ReplyBar who={replyTo.from === "user" ? "yourself" : muse.name} text={replyTo.content} onCancel={() => setReplyTo(null)} />
         )}
-        {photo && (
-          <div className="photo-draft">
-            {/* A photo still on this device (an object URL): nothing for next/image to optimise. */}
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={photo.url} alt="Photo to send" />
-            <button type="button" className="link-btn" aria-label="Remove photo" onClick={() => { URL.revokeObjectURL(photo.url); setPhoto(null); }}>×</button>
-          </div>
-        )}
-        {canPhoto && (
-          <>
-            <button type="button" className="attach" aria-label="Send a photo" onClick={() => fileInput.current?.click()}>
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                <rect x="3" y="5" width="18" height="14" rx="3" /><circle cx="12" cy="12" r="3.2" /><path d="M8 5l1.5-2h5L16 5" />
-              </svg>
-            </button>
-            <input
-              ref={fileInput}
-              type="file"
-              accept="image/*"
-              className="sr-only"
-              onChange={async (e) => {
-                const file = e.target.files?.[0];
-                e.target.value = "";
-                if (!file) return;
-                const small = await shrink(file);
-                if (!small) { setError("Couldn't open that photo. Try a different one."); return; }
-                if (photo) URL.revokeObjectURL(photo.url);
-                setPhoto({ ...small, url: URL.createObjectURL(small.blob) });
-                box.current?.focus();
-              }}
-            />
-          </>
-        )}
+        {attach.preview}
+        {attach.button}
         <label className="sr-only" htmlFor="solo-composer">Write to {muse.name}</label>
         <textarea
           id="solo-composer"
@@ -1624,7 +1596,7 @@ function SoloChat({
         />
         {/* Never disabled while they are typing back: a second text is how
             people talk, and it gets answered with the first. */}
-        <button className="send" onClick={() => void sendDraft()} disabled={!draft.trim() && !photo}>Send</button>
+        <button className="send" onClick={() => void sendDraft()} disabled={!draft.trim() && !attach.draft}>Send</button>
       </div>
     </main>
   );

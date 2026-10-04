@@ -85,6 +85,9 @@ export interface SoloMessage {
   point?: "user" | "muse";
   /** A follow-up she sent because they went quiet after her question. */
   nudge?: boolean;
+  /* A video they sent. The file and a few frames from through it are in
+     IndexedDB, never here; the model is sent the frames. */
+  video?: { id: string; w: number; h: number; seconds: number; frames: string[] };
 }
 
 /* Her own life, going on between conversations: a few storylines, each moving
@@ -257,6 +260,9 @@ export interface SoloState {
      message or photo). `from`: the first message still sent. `photosAfter`:
      photos before this go as words only. The thread itself is untouched. */
   cutoffs?: Record<string, { from?: string; photosAfter?: string }>;
+  /* What each character and the user have talked about one to one, before
+     the stretch a group gets word for word. See refreshDigests. */
+  digests?: Record<string, { text: string; upTo: string; at: string }>;
   /** "How it's going", in their words, from the story screen. Kept until asked again. */
   stories?: Record<string, { text: string; at: string }>;
   /* Changes to a starter, kept as an overlay rather than a copy so the
@@ -371,6 +377,7 @@ export function parseState(raw: string | null | undefined): SoloState {
       scores: parsed.scores ?? {},
       started: parsed.started ?? {},
       cutoffs: parsed.cutoffs ?? {},
+      digests: parsed.digests ?? {},
       stories: parsed.stories ?? {},
       edits: parsed.edits ?? {},
       feelings: parsed.feelings ?? {},
@@ -734,8 +741,8 @@ export function recentOneToOne(
   now = Date.now(),
   opts: { messages?: number; chars?: number } = {}
 ): { from: "user" | "muse"; content: string; at: string }[] {
-  const max = opts.messages ?? 16;
-  let budget = opts.chars ?? 4000;
+  const max = opts.messages ?? 30;
+  let budget = opts.chars ?? 6000;
   const shown = (state.conversations[museId] ?? []).filter((m) => !m.showAt || Date.parse(m.showAt) <= now);
   const out: { from: "user" | "muse"; content: string; at: string }[] = [];
   for (let i = shown.length - 1; i >= 0 && out.length < max; i--) {

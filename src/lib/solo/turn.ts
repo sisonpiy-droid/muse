@@ -7,6 +7,7 @@ import {
 } from "./store";
 import { lifeForTurn, momentDue, togetherNow } from "./life";
 import { photoBase64 } from "./photos";
+import { VIDEO_ONLY, clipLength, framesBase64 } from "./attach";
 import { storyLine, storyOf } from "./story";
 import { embedTexts } from "./learn";
 
@@ -118,15 +119,16 @@ export async function prepareTurn(
       },
     },
     // Bounded by size rather than count -- see windowOf.
-    messages: withReactions(await withPhotos(sending, cut?.photosAfter)).map(({ m, image, note }) => {
+    messages: withReactions(await withPhotos(sending, cut?.photosAfter)).map(({ m, image, frames, note }) => {
       const q = quoteOf(thread, m);
       return {
         role: m.from === "user" ? ("user" as const) : ("assistant" as const),
         /* Same reasoning: one pasted message over the route's limit sat in
            the window and killed every turn after it, permanently. */
-        content: `${note}${m.voiceNote ? "(voice note) " : ""}${m.content}`.slice(0, MAX_MESSAGE),
+        content: `${note}${m.voiceNote ? "(voice note) " : ""}${m.video ? videoNote(m, !!frames) : m.content}`.slice(0, MAX_MESSAGE),
         at: m.at,
         ...(image ? { image } : {}),
+        ...(frames ? { frames } : {}),
         ...(q
           ? { quote: { role: q.from === "user" ? "user" : "assistant", content: q.content.slice(0, QUOTE_CHARS) } }
           : {}),
@@ -187,15 +189,35 @@ export async function prepareTurn(
 
 /* The most recent few photos go with the reply, as pictures; older ones stay
    words. Loaded from IndexedDB only for the messages that need them. */
-async function withPhotos(window: SoloMessage[], after?: string): Promise<{ m: SoloMessage; image?: { mime: string; data: string } }[]> {
+export async function withPhotos(window: SoloMessage[], after?: string): Promise<{
+  m: SoloMessage;
+  image?: { mime: string; data: string };
+  frames?: { mime: string; data: string }[];
+}[]> {
   const recent = new Set(window
     .filter((m) => m.from === "user" && m.image && (!after || m.at > after))
     .slice(-3).map((m) => m.id));
+  /* Videos: only the latest goes as frames. Four pictures each, and an older
+     clip is not what anyone is talking about now. */
+  const clip = window.filter((m) => m.from === "user" && m.video?.frames.length && (!after || m.at > after)).at(-1)?.id;
   return Promise.all(window.map(async (m) => {
+    if (m.id === clip) {
+      const frames = await framesBase64(m);
+      return frames.length ? { m, frames } : { m };
+    }
     if (!recent.has(m.id) || !m.image) return { m };
     const image = await photoBase64(m.image.id).catch(() => null);
     return image ? { m, image } : { m };
   }));
+}
+
+/* How a video reads in the transcript: what it was, and whether its frames
+   are attached to this message. */
+export function videoNote(m: SoloMessage, withFrames: boolean): string {
+  if (!m.video) return "";
+  const caption = m.content === VIDEO_ONLY ? "" : m.content;
+  return `(sent a video, ${clipLength(m.video.seconds)}${withFrames ? " -- the pictures with this are frames from through it, in order" : ""})${caption ? `
+${caption}` : ""}`;
 }
 
 /* Reactions, as the model reads them. Theirs to one of the Muse's texts rides

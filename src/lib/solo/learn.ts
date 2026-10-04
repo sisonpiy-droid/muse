@@ -1,6 +1,6 @@
 "use client";
 
-import { addMemories, attachEmbeddings, type SoloMessage, type SoloState } from "./store";
+import { addMemories, attachEmbeddings, findMuse, type SoloMessage, type SoloState } from "./store";
 
 /* Turning conversation into memory, for one-to-one chats and circles alike.
  *
@@ -99,4 +99,47 @@ export async function learnFrom(opts: {
       return attachEmbeddings(cur, patch);
     });
   } catch { /* a missed memory is not worth an error banner */ }
+}
+
+/* ------------------------------------------------- the one-to-one, digested */
+
+/* How much of a one-to-one chat goes into a group word for word; everything
+   before it goes as the digest. Keep in step with recentOneToOne. */
+export const EXCERPT_MESSAGES = 30;
+/** How many new older messages make the digest worth redoing. */
+const DIGEST_EVERY = 30;
+const digesting = new Set<string>();
+
+/* Brings each member's digest of their one-to-one with the user up to date,
+   in the background, when a group is opened. Quiet on failure: the group
+   still has the recent stretch and the memories. */
+export async function refreshDigests(state: SoloState, museIds: string[], update: Update): Promise<void> {
+  await Promise.all(museIds.map(async (id) => {
+    const thread = state.conversations[id] ?? [];
+    const older = thread.slice(0, -EXCERPT_MESSAGES);
+    if (older.length < 10 || digesting.has(id)) return;
+    const had = state.digests?.[id];
+    const covered = had ? older.findIndex((m) => m.id === had.upTo) : -1;
+    const fresh = older.slice(covered + 1);
+    if (had && fresh.length < DIGEST_EVERY) return;
+    const name = findMuse(state, id)?.name;
+    if (!name) return;
+    digesting.add(id);
+    try {
+      const res = await fetch("/api/solo/digest", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          name, you: state.userName ?? "them", previous: had?.text ?? "",
+          messages: fresh.slice(-150).map((m) => ({ from: m.from, content: m.content.slice(0, 600), at: m.at })),
+        }),
+      });
+      const { digest } = await res.json();
+      if (typeof digest !== "string" || !digest.trim()) return;
+      const upTo = older.at(-1)!.id;
+      update((cur) => ({ ...cur, digests: { ...(cur.digests ?? {}), [id]: { text: digest, upTo, at: new Date().toISOString() } } }));
+    } catch { /* the group goes on without it */ } finally {
+      digesting.delete(id);
+    }
+  }));
 }

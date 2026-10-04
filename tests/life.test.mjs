@@ -156,7 +156,7 @@ check("in a group, each member brings the recent end of their own one-to-one cha
   const log = Array.from({ length: 30 }, (_, i) => ({ id: `m${i}`, from: i % 2 ? "muse" : "user", content: `line ${i}`, at: new Date(NOW - (30 - i) * 60_000).toISOString() }));
   const s = { ...blank(), conversations: { [RHEA]: log, other: [{ id: "o", from: "user", content: "secret", at: hoursAgo(1) }] } };
   const mine = store.recentOneToOne(s, RHEA, NOW);
-  assert.equal(mine.length, 16);
+  assert.equal(mine.length, 30, "everything that fits, up to thirty");
   assert.equal(mine.at(-1).content, "line 29");
   assert.ok(!mine.some((l) => l.content === "secret"));
   const block = persona.oneToOneBlock(mine, "Piyush", "UTC");
@@ -215,6 +215,28 @@ check("a picture taken away stays away; an edit can give a starter one", () => {
   assert.deepEqual(store.findMuse(s, RHEA).avatar, { id: "avatar-1", made: true });
   s = store.editMuse(s, RHEA, { avatar: null });
   assert.equal(store.findMuse(s, RHEA).avatar, null, "null, not undefined: never drawn again on its own");
+});
+
+/* ------------------------------------------------- videos, and groups */
+
+const { videoNote } = await import("../src/lib/solo/turn.ts");
+const { filesOf, clipLength, VIDEO_ONLY } = await import("../src/lib/solo/attach.ts");
+
+check("a video reads as one in the transcript, with its length, and says when its frames are attached", () => {
+  const v = { id: "v", from: "user", content: VIDEO_ONLY, at: hoursAgo(0), video: { id: "vid-v", w: 720, h: 1280, seconds: 83, frames: ["f0", "f1"] } };
+  assert.equal(clipLength(83), "1:23");
+  assert.match(videoNote(v, true), /^\(sent a video, 1:23 -- the pictures with this are frames/);
+  assert.equal(videoNote({ ...v, content: "dekh ye" }, false), "(sent a video, 1:23)\ndekh ye");
+  assert.deepEqual(filesOf(v), ["vid-v", "f0", "f1"], "deleting it takes the frames too");
+});
+
+check("in a group, the one-to-one goes as the recent stretch word for word, and everything before it digested", () => {
+  const log = Array.from({ length: 40 }, (_, i) => ({ id: `m${i}`, from: i % 2 ? "muse" : "user", content: `line ${i}`, at: new Date(NOW - (40 - i) * 60_000).toISOString() }));
+  const s = { ...blank(), conversations: { [RHEA]: log } };
+  assert.equal(store.recentOneToOne(s, RHEA, NOW).length, 30);
+  const block = persona.oneToOneBlock(store.recentOneToOne(s, RHEA, NOW), "Piyush", "UTC", "- Piyush has a big interview on Friday.");
+  assert.match(block, /over time, one to one:\n- Piyush has a big interview[\s\S]*Piyush: line 10/);
+  assert.match(persona.oneToOneBlock([], "Piyush", "UTC", "- only the digest"), /only the digest/);
 });
 
 let pass = 0, fail = 0;

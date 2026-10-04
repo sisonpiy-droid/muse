@@ -6,6 +6,13 @@ import { Avatar } from "@/components/Avatar";
 import { QuoteBubble, ReplyBar, jumpTo } from "@/components/Quote";
 import { TraitEditor } from "@/components/TraitEditor";
 import { useFollow } from "@/components/useFollow";
+import { useAttach } from "@/components/Attach";
+import { Photo } from "@/components/Photo";
+import { Video } from "@/components/Video";
+import { VIDEO_ONLY, filesOf, keepAttachment } from "@/lib/solo/attach";
+import { deleteImages } from "@/lib/solo/backend";
+import { PHOTO_ONLY } from "@/lib/solo/photos";
+import { videoNote, withPhotos } from "@/lib/solo/turn";
 import { useReplyLoop } from "@/components/useReplyLoop";
 import { REGISTERS, hasFeelings, splitBurst } from "@/lib/presence/persona";
 import type { Update } from "@/app/solo/page";
@@ -14,7 +21,7 @@ import {
   insertAfter, lastShowAt, membersOf, memoriesForTurn, newMessage, paced, plansForTurn, promptPersona, quoteOf, recentOneToOne, rewindTo, windowOf,
   type SoloCircle, type SoloMessage, type SoloMuse, type SoloState,
 } from "@/lib/solo/store";
-import { learnFrom } from "@/lib/solo/learn";
+import { embedTexts, learnFrom, refreshDigests } from "@/lib/solo/learn";
 import { MessageActions } from "./MessageActions";
 import { Turn } from "./Turn";
 
@@ -48,6 +55,8 @@ export function CircleChat({
   const [draft, setDraft] = useState("");
   const [speaking, setSpeaking] = useState<{ name: string; text: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /* A photo or video chosen but not sent yet. */
+  const attach = useAttach(setError);
   const [replyTo, setReplyTo] = useState<SoloMessage | null>(null);
   /* The message whose actions are open. One at a time, like any chat app. */
   const [picked, setPicked] = useState<string | null>(null);
@@ -78,15 +87,30 @@ export function CircleChat({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [log.length, clock]);
 
+  /* Each member's one-to-one, digested, brought up to date as the group opens. */
+  useEffect(() => {
+    void refreshDigests(latest.current, membersOf(latest.current, circle).map((m) => m.id), update);
+    // Once per group opened; reads the latest state through the ref.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [circle.id]);
+
   useFollow(shown.length * 2 + (speaking || typingNext || loop.busy ? 1 : 0), speaking?.text, shown.at(-1)?.from === "user");
 
   const nameOf = (id: string) => members.find((m) => m.id === id)?.name ?? "Someone";
   const whoSaid = (m: SoloMessage) => (m.from === "user" ? "You" : nameOf(m.speakerId ?? ""));
 
-  function sendDraft() {
+  async function sendDraft() {
     const content = draft.trim();
-    if (!content || members.length < 2) return;
-    const msg = newMessage("user", content, { replyTo: replyTo?.id });
+    if ((!content && !attach.draft) || members.length < 2) return;
+    const file = attach.take();
+    let msg = newMessage("user", content || (file?.kind === "video" ? VIDEO_ONLY : PHOTO_ONLY), { replyTo: replyTo?.id });
+    if (file) {
+      /* The file first, then the message that points at it. */
+      const kept = await keepAttachment(file, msg.id);
+      URL.revokeObjectURL(file.url);
+      if (!kept) { setError(`Couldn't keep that ${file.kind} on this device. Try again.`); return; }
+      msg = { ...msg, ...kept };
+    }
     update((cur) => ({
       ...cur,
       conversations: { ...cur.conversations, [circle.id]: [...(cur.conversations[circle.id] ?? []), msg] },
@@ -119,6 +143,14 @@ export function CircleChat({
       .map((q) => q.speakerId as string);
     const speakers = chooseSpeakers(people, unanswered.map((m) => m.content).join("\n"), running, repliedTo);
 
+    /* The room's recent photos and the latest video's frames, read once for
+       the whole round: everyone in the room sees the same pictures. */
+    const pictures = new Map((await withPhotos(windowOf(running, 80))).map((x) => [x.m.id, x]));
+
+    /* Recall by meaning, once for the round, as in one-to-one chats: word
+       overlap alone missed most of what someone remembered. */
+    const [queryVector] = (await embedTexts([unanswered.map((u) => u.content).join("\n")])) ?? [null];
+
     let anchor = last.id;
     for (const m of speakers) {
       const persona = promptPersona(m, s.userName);
@@ -149,11 +181,14 @@ export function CircleChat({
                first rather than to the same message twice. */
             log: windowOf(running, 80).map((x) => {
               const q = quoteOf(running, x);
+              const pic = pictures.get(x.id);
               return {
                 from: x.from,
                 speakerId: x.speakerId,
-                content: x.content.slice(0, 8000),
+                content: (x.video ? videoNote(x, !!pic?.frames) : x.content).slice(0, 8000),
                 at: x.at,
+                ...(pic?.image ? { image: pic.image } : {}),
+                ...(pic?.frames ? { frames: pic.frames } : {}),
                 ...(q ? { quote: { from: q.from, speakerId: q.speakerId, content: q.content.slice(0, QUOTE_CHARS) } } : {}),
               };
             }),
@@ -164,12 +199,14 @@ export function CircleChat({
             /* So nobody in the room asks what you already told them. */
             /* Their own memories, wherever learned. Anything from outside this
                room is marked private; see circleBlock for what that means. */
-            memories: memoriesForTurn(s, m.id, unanswered.map((u) => u.content).join("\n"), null, { room: room.id })
+            memories: memoriesForTurn(s, m.id, unanswered.map((u) => u.content).join("\n"), queryVector, { room: room.id })
               .map((x) => x.slice(0, 420)),
             plans: plansForTurn(s, m.id, { room: room.id }).map((p) => ({ what: p.what.slice(0, 430), at: p.at })),
             /* The recent end of their own one-to-one chat with the user, so
                they walk in remembering it -- theirs only, never anyone else's. */
             oneToOne: recentOneToOne(s, m.id),
+            /* And everything before that, digested -- see refreshDigests. */
+            digest: s.digests?.[m.id]?.text ?? null,
             topic: room.topic?.trim() || undefined,
             roomTraits: room.traits?.length ? room.traits.slice(0, 8) : undefined,
             /* Each speaker brings their own standing state into the room. One
@@ -314,13 +351,19 @@ export function CircleChat({
               {m.replyTo && (
                 <QuoteBubble who={q ? whoSaid(q) : ""} text={q?.content} onJump={q ? () => jumpTo(q.id) : undefined} />
               )}
-              {m.content}
+              {m.image && <Photo id={m.image.id} w={m.image.w} h={m.image.h} />}
+              {m.video && <Video id={m.video.id} w={m.video.w} h={m.video.h} seconds={m.video.seconds} />}
+              {(m.image && m.content === PHOTO_ONLY) || (m.video && m.content === VIDEO_ONLY) ? null : m.content}
               {m.edited && <span className="stamp"> · edited</span>}
               <MessageActions
                 content={m.content}
                 onReply={replyHere}
                 onEdit={(text) => editLine(m, text)}
-                onDelete={() => update(deleteMessage(state, circle.id, m.id))}
+                onDelete={() => {
+                  const files = filesOf(m);
+                  if (files.length) void deleteImages(files);
+                  update(deleteMessage(state, circle.id, m.id));
+                }}
                 onDeleteFrom={() => update(deleteFrom(state, circle.id, m.id))}
                 onDone={() => setPicked(null)}
               />
@@ -419,6 +462,8 @@ export function CircleChat({
             onCancel={() => setReplyTo(null)}
           />
         )}
+        {attach.preview}
+        {attach.button}
         <label className="sr-only" htmlFor="circle-composer">Write to {circle.name}</label>
         <textarea
           id="circle-composer"
@@ -433,11 +478,11 @@ export function CircleChat({
             if (el) { el.style.height = "auto"; el.style.height = `${Math.min(el.scrollHeight, 128)}px`; }
           }}
           onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendDraft(); }
+            if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void sendDraft(); }
             if (e.key === "Escape" && replyTo) setReplyTo(null);
           }}
         />
-        <button className="send" onClick={sendDraft} disabled={!draft.trim()}>Send</button>
+        <button className="send" onClick={() => void sendDraft()} disabled={!draft.trim() && !attach.draft}>Send</button>
       </div>
     </main>
   );

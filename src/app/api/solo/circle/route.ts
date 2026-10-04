@@ -72,6 +72,10 @@ const bodySchema = z.object({
           .optional(),
         /** When it was sent, ISO. */
         at: z.string().max(40).optional(),
+        /* A photo the user sent to the room, recent ones only; and frames
+           from the latest video. Shrunk in the browser first. */
+        image: z.object({ mime: z.enum(["image/jpeg", "image/png", "image/webp"]), data: z.string().max(1_600_000) }).optional(),
+        frames: z.array(z.object({ mime: z.enum(["image/jpeg", "image/png", "image/webp"]), data: z.string().max(400_000) })).max(4).optional(),
       })
     )
     .min(1)
@@ -86,8 +90,10 @@ const bodySchema = z.object({
   /** The recent end of the speaker's own one-to-one chat with the user. */
   oneToOne: z
     .array(z.object({ from: z.enum(["user", "muse"]), content: z.string().max(600), at: z.string().max(40).optional() }))
-    .max(20)
+    .max(32)
     .default([]),
+  /** Everything before that, digested: what the two of them have talked about over time. */
+  digest: z.string().max(2000).nullish(),
   /** The speaker's dated plans and events, each with its instant. */
   plans: z.array(z.object({ what: z.string().max(430), at: z.string().max(40) })).max(8).default([]),
   /** Maps a speakerId to a display name, so the transcript reads as a room. */
@@ -122,7 +128,7 @@ export async function POST(req: Request) {
   if (!parsed.success) {
     return Response.json({ error: "Check the request and try again." }, { status: 400 });
   }
-  const { circleName, speaker, others, log, names, userName, timezone, mood, register, feelings, topic, roomTraits, memories, plans, oneToOne } =
+  const { circleName, speaker, others, log, names, userName, timezone, mood, register, feelings, topic, roomTraits, memories, plans, oneToOne, digest } =
     parsed.data;
   const tz = timezone ?? undefined;
   const now = Date.now();
@@ -130,7 +136,12 @@ export async function POST(req: Request) {
   const clock = { now, previousAt: previousMoment(asTimed), plans };
   /* Pauses marked on the user's lines, before the room is labelled. */
   const stamped = stampPauses(asTimed, tz, now);
-  const timedLog = log.map((m, i) => ({ ...m, content: stamped[i].content }));
+  const timedLog = log.map((m, i) => ({
+    ...m,
+    content: stamped[i].content,
+    images: m.from === "user" && (m.image || m.frames?.length) ? [...(m.image ? [m.image] : []), ...(m.frames ?? [])] : undefined,
+  }));
+  const seesPictures = timedLog.some((m) => m.images?.length);
 
   if (log.reduce((n, m) => n + m.content.length, 0) > MAX_TOTAL_CHARS) {
     return Response.json({ error: "This conversation has got too long to send." }, { status: 413 });
@@ -151,8 +162,14 @@ export async function POST(req: Request) {
       clock
     ) +
     coveredBlock(coveredGround(messages), you) +
-    oneToOneBlock(oneToOne, you, tz) +
-    circleBlock({ you, me: speaker.persona.them, others, circleName, topic, roomTraits });
+    oneToOneBlock(oneToOne, you, tz, digest) +
+    circleBlock({ you, me: speaker.persona.them, others, circleName, topic, roomTraits }) +
+    (seesPictures
+      ? `
+
+PHOTOS AND VIDEOS
+${you} can send photos and videos to the group, and you can see them -- a video as a few frames from through it. React the way you would to a photo in a group chat: to what matters in it, in your own voice, and off what the others said about it. Never describe the picture, and never mention frames.`
+      : "");
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream({

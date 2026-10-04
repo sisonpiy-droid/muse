@@ -1075,17 +1075,22 @@ HOW TO BE IN A GROUP
 export function oneToOneBlock(
   lines: { from: "user" | "muse"; content: string; at?: string }[] | null | undefined,
   you: string,
-  timeZone?: string
+  timeZone?: string,
+  /** What came before that stretch, digested. */
+  digest?: string | null
 ): string {
-  if (!lines?.length) return "";
-  const last = lines.at(-1)?.at;
+  if (!lines?.length && !digest?.trim()) return "";
+  const last = lines?.at(-1)?.at;
   return `
 
-YOU AND ${you.toUpperCase()}, ON YOUR OWN
+YOU AND ${you.toUpperCase()}, ON YOUR OWN${digest?.trim() ? `
+What the two of you have talked about over time, one to one:
+${digest.trim()}
+` : ""}${lines?.length ? `
 The end of your own one-to-one chat with ${you}${last ? `, which last moved ${wallClockOf(last, timeZone)}` : ""}. Nobody else in this group was there or has seen it.
 """
 ${lines.map((l) => `${l.from === "user" ? you : "you"}: ${l.content}`).join("\n")}
-"""`;
+"""` : ""}`;
 }
 
 const wallClockOf = (iso: string, timeZone?: string) => {
@@ -1103,24 +1108,26 @@ export function circleHistory(
     content: string;
     /** The message this one replies to, as it was when it was sent. */
     quote?: { from: "user" | "muse"; speakerId?: string; content: string };
+    /** Pictures the user sent with it: a photo, or frames from a video. */
+    images?: { mime: string; data: string }[];
   }[],
   meId: string,
   youName: string,
   nameOf: (speakerId: string) => string
-): { role: "user" | "assistant"; content: string }[] {
+): { role: "user" | "assistant"; content: string; images?: { mime: string; data: string }[] }[] {
   /* Named from this member's side of the room: their own line is "you", so a
      reply to what they said reads as one. */
   const whoWrote = (q: { from: "user" | "muse"; speakerId?: string }) =>
     q.from === "user" ? youName : q.speakerId === meId ? "you" : nameOf(q.speakerId ?? "");
 
-  const out: { role: "user" | "assistant"; content: string }[] = [];
+  const out: { role: "user" | "assistant"; content: string; images?: { mime: string; data: string }[] }[] = [];
   for (const m of log) {
     const content = withQuote(m.content, m.quote && { who: whoWrote(m.quote), text: m.quote.content });
     if (m.from === "muse" && m.speakerId === meId) {
       out.push({ role: "assistant", content });
     } else {
       const who = m.from === "user" ? youName : nameOf(m.speakerId ?? "");
-      out.push({ role: "user", content: `${who}: ${content}` });
+      out.push({ role: "user", content: `${who}: ${content}`, ...(m.images?.length ? { images: m.images } : {}) });
     }
   }
   /* Consecutive non-self lines are merged. Providers reject or mishandle two
@@ -1128,8 +1135,10 @@ export function circleHistory(
   const merged: typeof out = [];
   for (const m of out) {
     const last = merged[merged.length - 1];
-    if (last && last.role === m.role && m.role === "user") last.content += `\n${m.content}`;
-    else merged.push({ ...m });
+    if (last && last.role === m.role && m.role === "user") {
+      last.content += `\n${m.content}`;
+      if (m.images?.length) last.images = [...(last.images ?? []), ...m.images];
+    } else merged.push({ ...m });
   }
   return merged;
 }
