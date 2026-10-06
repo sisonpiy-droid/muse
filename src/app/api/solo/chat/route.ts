@@ -7,7 +7,7 @@ import {
   coveredBlock, coveredGround, lifeBlock, momentBlock, personaSystem, promiseBlock, quizBlock, romanceAllowed, romanceBlock,
   sendBlock, sharedBlock, togetherBlock, withQuote, wornBlock, yesBlock, type Feelings,
 } from "@/lib/presence/persona";
-import { previousMoment, stampPauses, timeBlock } from "@/lib/presence/time";
+import { nowBlock, previousMoment, stampPauses, timeBlock } from "@/lib/presence/time";
 
 /* Several texts in a row are one turn.
  *
@@ -315,6 +315,7 @@ You can react to their latest message with one emoji, the way people do in a cha
       /* Last, so nothing after it crowds it out: a moment is the one thing this
          reply must do. */
       momentBlock(moment, userName || "them") +
+      nowBlock(userName || "them", tz, now) +
       last
     : buildMuseSystemPrompt({
     name: muse.name,
@@ -368,7 +369,7 @@ ${timeBlock({ you: userName || "them", timeZone: tz, ...clock })}`;
       { mood: mood || "any", topic: topic || "any", register: register || "texts" },
       timezone ?? undefined,
       standing
-    ) + last;
+    ) + nowBlock(userName || "them", tz, now) + last;
 
   const bare = { ...persona, samples: undefined, metrics: undefined, extra: undefined };
 

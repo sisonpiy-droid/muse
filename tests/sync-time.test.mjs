@@ -16,7 +16,7 @@ globalThis.localStorage = {
 const { KEY, addMemories, memoriesForTurn, newMessage, plansForTurn } = await import("../src/lib/solo/store.ts");
 const { Persister, combineRaw, mergeList, mergeStates } = await import("../src/lib/solo/sync.ts");
 const { localBackend } = await import("../src/lib/solo/backend.ts");
-const { previousMoment, resolveWhen, stampPauses, timeBlock } = await import("../src/lib/presence/time.ts");
+const { nowBlock, previousMoment, resolveWhen, stampPauses, timeBlock } = await import("../src/lib/presence/time.ts");
 const { circleBlock, personaSystem } = await import("../src/lib/presence/persona.ts");
 const { parseMemories } = await import("../src/lib/ai/gemini.ts");
 
@@ -297,6 +297,16 @@ check("the room is told what (private) means: remembered, but confidences kept",
 
 check("new messages carry a timestamp", () => {
   assert.ok(Number.isFinite(Date.parse(newMessage("user", "hi").at)));
+});
+
+check("the hour is said last, in their timezone, with what that hour looks like", () => {
+  const at = Date.parse("2026-10-06T18:30:00Z"); // midnight in Kolkata, evening in London
+  const ist = nowBlock("Piyush", "Asia/Kolkata", at);
+  assert.match(ist, /WEDNESDAY.*00:00 -- THE MIDDLE OF THE NIGHT/);
+  assert.match(ist, /can't sleep/);
+  assert.match(nowBlock("Piyush", "Europe/London", at), /19:30 -- EVENING/);
+  assert.match(nowBlock("Piyush", "Europe/London", Date.parse("2026-10-06T07:00:00Z")), /MORNING/);
+  assert.match(nowBlock("Piyush", "Asia/Kolkata", Date.parse("2026-10-06T17:00:00Z")), /22:30 -- LATE AT NIGHT/);
 });
 
 let pass = 0, fail = 0;

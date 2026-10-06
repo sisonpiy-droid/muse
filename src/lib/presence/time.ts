@@ -183,6 +183,32 @@ export function timeBlock(opts: {
   return lines.join("\n");
 }
 
+/* The hour again, said last. timeBlock sits near the top of the prompt, and
+   everything after it -- her own day, her storylines, "bring up what happened
+   to you" -- won: "good morning" at 11pm, lunch at midnight, just off to
+   college at 2am. Said at the end, with what that hour looks like, it holds. */
+const HOURS = [
+  [5, "the middle of the night", "you are up far too late: in bed, can't sleep, or awake for a reason. Quieter, sleepier, a bit softer"],
+  [12, "morning", "the day is just starting: waking up, getting ready, on the way, the first class or job of the day"],
+  [17, "afternoon", "the middle of the day: work, college, lunch, errands, the afternoon slump"],
+  [22, "evening", "the day is winding down: home, dinner, a show, plans for tonight"],
+  [24, "late at night", "the day is done: in bed or nearly, winding down, sleepy, late-night talk"],
+] as const;
+
+export function nowBlock(you: string, timeZone: string | undefined, now: number): string {
+  const h = Number(fmt(now, timeZone, { hour: "numeric", hourCycle: "h23" }));
+  const [, part, day] = HOURS.find(([end]) => h < end)!;
+  const time = fmt(now, timeZone, { weekday: "long", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+  return `
+
+IT IS ${time.toUpperCase()} -- ${part.toUpperCase()} -- FOR YOU BOTH
+Everything you say fits this hour, over anything above that suggests another time of day:
+- Right now ${day}.
+- Greet for the hour or not at all: no "good morning" unless it is morning, no "good night" before it is night.
+- Your own news fits the clock: what already happened today is earlier, what is still coming is later. At night lunch is long over; in the morning last night was last night.
+- If ${you} says something that does not fit the hour, you can notice it the way a person would.`;
+}
+
 /** When the conversation last moved before the unanswered run at its end. */
 export function previousMoment(messages: Timed[]): string | null {
   let i = messages.length - 1;

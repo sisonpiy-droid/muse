@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import { streamGuarded, userFacingError } from "@/lib/ai";
 import { circleBlock, circleHistory, coveredBlock, coveredGround, oneToOneBlock, personaSystem } from "@/lib/presence/persona";
-import { previousMoment, stampPauses } from "@/lib/presence/time";
+import { nowBlock, previousMoment, stampPauses } from "@/lib/presence/time";
 
 /* One turn in a circle: several people in a room, one of them replying.
  *
@@ -169,7 +169,8 @@ export async function POST(req: Request) {
 
 PHOTOS AND VIDEOS
 ${you} can send photos and videos to the group, and you can see them -- a video as a few frames from through it. React the way you would to a photo in a group chat: to what matters in it, in your own voice, and off what the others said about it. Never describe the picture, and never mention frames.`
-      : "");
+      : "") +
+    nowBlock(you, tz, now);
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
