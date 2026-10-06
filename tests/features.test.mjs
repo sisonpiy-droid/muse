@@ -272,6 +272,20 @@ check("the model's one line of history is background, and absent when there is n
   assert.equal(storyLine(storyOf(blank(), RHEA, Date.now(), "UTC"), Date.now()), null);
 });
 
+check("Romantic is offered only for invented adults who are not family", async () => {
+  const { moodsFor, romanceAllowed } = await import("../src/lib/presence/persona.ts");
+  assert.ok(romanceAllowed({ mode: "character", arch: "partner" }));
+  assert.ok(romanceAllowed({ mode: "fictional", arch: "other", minor: false }));
+  assert.ok(!romanceAllowed({ mode: "fictional", arch: "other" }), "unclear age counts as a minor");
+  assert.ok(!romanceAllowed({ mode: "character", arch: "partner", minor: true }));
+  assert.ok(!romanceAllowed({ mode: "character", arch: "sibling" }));
+  assert.ok(!romanceAllowed({ mode: "memorial", arch: "partner" }), "never real people");
+  assert.ok(!romanceAllowed({ mode: "figure", arch: "other" }));
+  assert.ok("flirty" in moodsFor({ mode: "character", arch: "friend" }));
+  assert.ok(!("flirty" in moodsFor({ mode: "character", arch: "parent" })));
+  assert.ok(!("flirty" in moodsFor(null)));
+});
+
 let pass = 0, fail = 0;
 for (const [n, f] of results) {
   try { await f(); console.log(`  PASS  ${n}`); pass++; }

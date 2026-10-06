@@ -26,7 +26,7 @@ import { useFollow } from "@/components/useFollow";
 import { useReplyLoop } from "@/components/useReplyLoop";
 import { MADE_TAB, TABS } from "@/lib/personas";
 import {
-  DEFAULT_VIBE, MOODS, PICKABLE_REGISTERS, REGISTERS, TOPICS, feelingsSummary, hasFeelings, splitBurst,
+  DEFAULT_VIBE, PICKABLE_REGISTERS, REGISTERS, TOPICS, feelingsSummary, hasFeelings, moodsFor, splitBurst,
   vibeSummary, type Vibe,
 } from "@/lib/presence/persona";
 import { safeFilename, transcriptMarkdown } from "@/lib/export";
@@ -1518,7 +1518,7 @@ function SoloChat({
               <div>
                 <label>What mood is {muse.name} in?</label>
                 <div className="tags">
-                  {Object.entries(MOODS).map(([k, v]) => (
+                  {Object.entries(moodsFor(muse.persona)).map(([k, v]) => (
                     <button key={k} className="tag" aria-pressed={vibe.mood === k}
                       onClick={() => setVibe({ ...vibe, mood: k })}
                       style={vibe.mood === k ? { borderColor: "var(--accent)", color: "var(--accent)" } : undefined}>

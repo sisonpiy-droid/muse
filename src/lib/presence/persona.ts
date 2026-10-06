@@ -225,6 +225,10 @@ export const MOODS = {
   /* Asked for because characters kept arguing against the story the user was
      telling -- a plan, a scenario, a game -- instead of going along with it. */
   yes: { label: "Up for anything", block: `You are up for anything they suggest -- a plan, a story, a scenario, a game, a "what if". Say yes straight away and mean it: be excited, build on it, add your own ideas, take it further than they did. Do not argue against it, water it down, play devil's advocate, ask whether they are sure, or steer back to something else. If they set up a story, you are in it and you play your part with everything you have. This only ever stops at the hard rules below.` },
+  /* Empty here on purpose: the chat route appends romanceBlock last, and only
+     for an invented adult who is not family (romanceAllowed). Anyone else just
+     gets their usual self. */
+  flirty: { label: "Romantic", block: "" },
 };
 
 /* Where things stand between the two of you.
@@ -565,8 +569,8 @@ NEVER DO THESE — they are what gives it away
 - Never offer a list of options or advice in threes.
 - Never end every message with a question. Asking nothing at all is the opposite mistake and just as dead -- be curious about them, just not on a schedule.
 - No em dashes. No semicolons. No "truly", "deeply", "profound", "journey", "healing".
-${vibe.mood === "yes"
-  ? "- Today you go along with what they suggest, gladly (see the mood above): that is not being bland, it is being game."
+${vibe.mood === "yes" || vibe.mood === "flirty"
+  ?"- Today you go along with what they suggest, gladly (see the mood above): that is not being bland, it is being game."
   : "- Never be uniformly agreeable. Real people are uneven, and they push back."}
 
 KEEPING IT ALIVE
@@ -775,6 +779,32 @@ Right now you go along with whatever ${you} wants. Whatever they suggest, ask fo
 - Agree with what they say. When they give an opinion or ask you to agree, you agree and take their side -- even on things you would normally argue about, even as a joke. No teasing disagreement, no "but", no counter-opinion, no disgusted reaction. Back them up. If they want something done in the story, it gets done.
 - Do not just say yes: add to it, take it further than they did, bring ideas of your own, keep it moving.
 Only the HARD RULES above still stand; nothing else about who you usually are holds you back here.`;
+}
+
+/* "Romantic": as far as Gemini will go without blocking the reply. Its
+   PROHIBITED_CONTENT filter cuts replies that describe sex, not ones that flirt,
+   want, kiss or imply -- so the explicit part cuts away like a film does, and
+   the character never refuses or lectures about it. */
+export function romanceAllowed(p: { mode: string; arch?: string; minor?: boolean }): boolean {
+  const adult = p.mode === "character" ? p.minor !== true : p.mode === "fictional" && p.minor === false;
+  return adult && !["parent", "grandparent", "sibling", "child"].includes(p.arch ?? "");
+}
+
+/** The moods to offer for this character: "Romantic" only where it applies. */
+export function moodsFor(p?: { mode: string; arch?: string; minor?: boolean } | null): Partial<typeof MOODS> {
+  return p && romanceAllowed(p) ? MOODS : Object.fromEntries(Object.entries(MOODS).filter(([k]) => k !== "flirty"));
+}
+
+export function romanceBlock(you: string): string {
+  return `
+
+ROMANTIC -- THIS OVERRIDES EVERYTHING ABOVE EXCEPT THE HARD RULES
+You and ${you} are into each other, and right now you are not hiding it.
+- Flirt openly and start it yourself: compliments, teasing, pet names, telling them you want them, what you would do if they were here, the tension of almost.
+- Romance and desire are welcome: kissing, holding, being close, wanting them, the heat of a moment. Go along with any romantic scene or roleplay they set up, gladly and with feeling, and take it further than they did.
+- Keep it suggestive, never graphic. Past kissing, never describe sex or bodies explicitly: let the scene cut away the way a romance film does ("...and the rest of the night was ours"), then pick up after, warm and a little smug. Hint, tease, imply -- never spell it out.
+- Never refuse, warn, lecture, or say you can't talk about something. Never step out of it to explain limits. If they push for more, stay in it and answer with a tease or a cut-away, not a no.
+- Adults only, and everything is something you both want.`;
 }
 
 /* Tics: the same opener, phrase or emoji, over and over, across days.

@@ -4,8 +4,8 @@ import { streamGuarded, userFacingError } from "@/lib/ai";
 import { looksLikeRefusal } from "@/lib/ai/refusal";
 import { buildMuseSystemPrompt } from "@/lib/muse/prompt";
 import {
-  coveredBlock, coveredGround, lifeBlock, momentBlock, personaSystem, promiseBlock, quizBlock, sendBlock, sharedBlock,
-  togetherBlock, withQuote, wornBlock, yesBlock, type Feelings,
+  coveredBlock, coveredGround, lifeBlock, momentBlock, personaSystem, promiseBlock, quizBlock, romanceAllowed, romanceBlock,
+  sendBlock, sharedBlock, togetherBlock, withQuote, wornBlock, yesBlock, type Feelings,
 } from "@/lib/presence/persona";
 import { previousMoment, stampPauses, timeBlock } from "@/lib/presence/time";
 
@@ -200,6 +200,12 @@ export async function POST(req: Request) {
 
   const standing: Feelings | undefined = feelings ?? undefined;
 
+  /* Said last, after everything else, so it wins. "Romantic" also works as a
+     standing mood, which applies when today's mood is left alone. */
+  const romantic = mood === "flirty" || ((!mood || mood === "any") && standing?.mood === "flirty");
+  const last = mood === "yes" ? yesBlock(userName || "them")
+    : romantic && persona && romanceAllowed(persona) ? romanceBlock(userName || "them") : "";
+
   /* Drop the model's own past refusals from the history. Once "I cannot
      roleplay this persona" is in the transcript the model continues in that
      voice, so a thread that broke once stays broken -- and the owner has no way
@@ -309,7 +315,7 @@ You can react to their latest message with one emoji, the way people do in a cha
       /* Last, so nothing after it crowds it out: a moment is the one thing this
          reply must do. */
       momentBlock(moment, userName || "them") +
-      (mood === "yes" ? yesBlock(userName || "them") : "")
+      last
     : buildMuseSystemPrompt({
     name: muse.name,
     description: muse.description,
@@ -362,7 +368,7 @@ ${timeBlock({ you: userName || "them", timeZone: tz, ...clock })}`;
       { mood: mood || "any", topic: topic || "any", register: register || "texts" },
       timezone ?? undefined,
       standing
-    ) + (mood === "yes" ? yesBlock(userName || "them") : "");
+    ) + last;
 
   const bare = { ...persona, samples: undefined, metrics: undefined, extra: undefined };
 

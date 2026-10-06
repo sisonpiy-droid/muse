@@ -5,7 +5,7 @@ import { useRef, useState } from "react";
 import { Avatar } from "@/components/Avatar";
 import { VoicePicker } from "@/components/VoicePicker";
 import {
-  ARCHETYPES, DEFAULT_FEELINGS, MOODS, TEXTURES, WARMTHS,
+  ARCHETYPES, DEFAULT_FEELINGS, TEXTURES, WARMTHS, moodsFor,
   type Feelings,
 } from "@/lib/presence/persona";
 import { MADE_TAB, TABS } from "@/lib/personas";
@@ -371,7 +371,7 @@ export function EditMuse({
 
       <div style={{ marginTop: "1.25rem" }}>
         <span style={labelStyle}>What sort of period they&rsquo;re having</span>
-        {chips(MOODS, feel.mood, (k) => setFeel((f) => ({ ...f, mood: k })))}
+        {chips(moodsFor(p), feel.mood, (k) => setFeel((f) => ({ ...f, mood: k })))}
       </div>
 
       <div style={{ marginTop: "1.25rem" }}>
