@@ -239,6 +239,15 @@ check("in a group, the one-to-one goes as the recent stretch word for word, and 
   assert.match(persona.oneToOneBlock([], "Piyush", "UTC", "- only the digest"), /only the digest/);
 });
 
+check("a burst written on separate lines arrives as separate texts, and nothing past six is dropped", () => {
+  assert.deepEqual(persona.splitBurst("arre pagal\nscooter wala jhagda\nab teri baari"), ["arre pagal", "scooter wala jhagda", "ab teri baari"]);
+  assert.deepEqual(persona.splitBurst("one\nstill one\n---\ntwo"), ["one\nstill one", "two"], "with ---, lines stay together");
+  assert.deepEqual(persona.splitBurst("a\nb", false), ["a\nb"], "a letter is one piece");
+  const eight = persona.splitBurst("1\n2\n3\n4\n5\n6\n7\n8");
+  assert.equal(eight.length, 6);
+  assert.equal(eight.at(-1), "6\n7\n8");
+});
+
 let pass = 0, fail = 0;
 for (const [n, f] of results) {
   try { await f(); console.log(`  PASS  ${n}`); pass++; }

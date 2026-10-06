@@ -466,10 +466,17 @@ function timeContext(timeZone?: string) {
   return `It is ${inZone({ weekday: "long" })} ${part}, ${clockOf(d.getTime(), timeZone)}, where they are. Notice it if it matters — if it's 3am, that is worth a word. Don't announce the time otherwise.`;
 }
 
+/* Texts in a burst. The model is told to separate them with "---", but often
+   puts each on its own line instead, and they arrived as one bubble. A reply
+   with no "---" at all is split on its line breaks. Never more than six
+   bubbles: anything past that joins the last one rather than being dropped. */
+const MAX_BURST = 6;
 export const splitBurst = (raw: string, allowBurst = true): string[] => {
-  const parts = raw.split(/\n?---+\n?/).map((s: string) => s.trim()).filter(Boolean);
+  let parts = raw.split(/\n?---+\n?/).map((s: string) => s.trim()).filter(Boolean);
   if (!parts.length) return [];
-  return allowBurst ? parts.slice(0, 4) : [parts.join("\n\n")];
+  if (!allowBurst) return [parts.join("\n\n")];
+  if (parts.length === 1) parts = parts[0].split(/\n+/).map((s) => s.trim()).filter(Boolean);
+  return parts.length > MAX_BURST ? [...parts.slice(0, MAX_BURST - 1), parts.slice(MAX_BURST - 1).join("\n")] : parts;
 };
 
 

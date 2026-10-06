@@ -20,7 +20,9 @@ function mergeRuns<T extends { role: "user" | "assistant"; content: string; imag
   for (const m of msgs) {
     const last = out[out.length - 1];
     if (last && last.role === m.role) {
-      last.content += `\n${m.content}`;
+      /* Her own texts go back separated the way she is told to write them;
+         joined on bare newlines, she copied that and stopped using "---". */
+      last.content += m.role === "assistant" ? `\n---\n${m.content}` : `\n${m.content}`;
       /* A photo sent in a burst stays with the burst. */
       if (m.images?.length) last.images = [...(last.images ?? []), ...m.images];
     } else out.push({ ...m });
