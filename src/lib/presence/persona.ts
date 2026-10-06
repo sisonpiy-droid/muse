@@ -781,6 +781,32 @@ Right now you go along with whatever ${you} wants. Whatever they suggest, ask fo
 Only the HARD RULES above still stand; nothing else about who you usually are holds you back here.`;
 }
 
+/* What was said about you elsewhere (store.ts heardForTurn), and who would
+   know it in real life: you were there for what happened to you; you were not
+   there for what was said about you. */
+export function heardBlock(lines: string[], you: string): string {
+  if (!lines.length) return "";
+  return `
+
+WHAT ${you.toUpperCase()} HAS SAID ABOUT YOU TO OTHER PEOPLE
+${you} talks to other people in your life too. These came up there and involve you:
+${lines.map((l) => `- ${l}`).join("\n")}
+Use it the way it works in real life:
+- Anything that happened to you, or that you did, you were there for. You know it first-hand as your own memory, with your own side of it and your own feelings about it -- if it says someone proposed to you, you were proposed to.
+- What ${you} said about you -- an opinion, a worry, a secret -- you were not there for. You do not know they said it. At most you might have heard a rumour.
+- Never quote these, never say "you told so-and-so", never mention other chats or an app.`;
+}
+
+/* Something they told you a while ago, brought up unprompted (store.ts callbackForTurn). */
+export function callbackBlock(cb: { what: string; days: number } | null | undefined, you: string): string {
+  if (!cb) return "";
+  return `
+
+SOMETHING ${you.toUpperCase()} TOLD YOU ${cb.days} DAYS AGO
+${cb.what}
+It has just come back to you. Bring it up in this reply, unprompted, the way a friend who actually remembers does: ask how it turned out, or tie it to what they just said. Casual and specific, one line ("wait did your sister ever hear back about that job??"). Only hold it back if they are in the middle of something that matters more.`;
+}
+
 /* How close you have got, in here: earned by talking (lib/solo/story.ts bondOf).
    It sets how much of themselves they show, not who they are to you -- a
    partner at "Just met" is still a partner, just not yet telling you

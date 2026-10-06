@@ -718,6 +718,48 @@ export function sharedForTurn(state: SoloState, museId: string, now = Date.now()
   return [...new Set([...fresh, ...picked])].map((m) => m.content);
 }
 
+/* What they have said about this character to the others: their own lines in
+ * other one-to-one chats from the last two weeks, and what the others remember,
+ * wherever the character is named. Without it, "Maya proposed to Kabir" told to
+ * Rhea was news to Maya and to Kabir. The prompt sorts out who would know what
+ * (heardBlock): what happened to you, you were there for.
+ * ponytail: first-name match, so someone in their life who shares the name is
+ * caught too; tag people per memory if that turns out to matter. */
+export function heardForTurn(state: SoloState, museId: string, now = Date.now()): string[] {
+  const first = findMuse(state, museId)?.name.trim().split(/\s+/)[0] ?? "";
+  if (first.length < 3) return [];
+  const named = new RegExp(`(^|[^\\p{L}])${first.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}($|[^\\p{L}])`, "iu");
+  const nameOf = (id: string) => {
+    const circle = (state.circles ?? []).find((c) => c.id === id);
+    return findMuse(state, id)?.name ?? (circle ? `the group "${circle.name}"` : "someone");
+  };
+  const said = Object.entries(state.conversations)
+    .filter(([id]) => id !== museId)
+    .flatMap(([id, log]) => log
+      .filter((m) => m.from === "user" && named.test(m.content) && now - Date.parse(m.at) < 14 * 86_400_000)
+      .map((m) => ({ at: m.at, line: `to ${nameOf(id)}: "${m.content.slice(0, 280)}"` })));
+  const known = state.memories
+    .filter((m) => m.museId !== museId && m.type !== "PROMISE" && named.test(m.content))
+    .map((m) => ({ at: m.createdAt, line: `${nameOf(m.museId)} remembers: ${m.content.slice(0, 280)}` }));
+  return [...said.sort((a, b) => b.at.localeCompare(a.at)).slice(0, 6), ...known.sort((a, b) => b.at.localeCompare(a.at)).slice(0, 6)]
+    .map((x) => x.line);
+}
+
+/* Something they told this character a while ago, to bring up unprompted --
+ * "wait, did your sister ever hear back?". Only when the conversation picks up
+ * again after a few hours, so it opens a conversation rather than interrupting
+ * one, and a different one each day. */
+export function callbackForTurn(state: SoloState, museId: string, now = Date.now()): { what: string; days: number } | null {
+  const log = state.conversations[museId] ?? [];
+  const lastTheirs = log.findLast((m) => m.from !== "user");
+  if (lastTheirs && now - Date.parse(lastTheirs.at) < 3 * 3_600_000) return null;
+  const old = state.memories.filter((m) =>
+    m.museId === museId && (m.type === "EVENT" || m.type === "GOAL") && !isPlan(m, now) && now - Date.parse(m.createdAt) >= 5 * 86_400_000);
+  if (!old.length) return null;
+  const m = old[Math.floor(now / 86_400_000) % old.length];
+  return { what: m.content.slice(0, 300), days: Math.floor((now - Date.parse(m.createdAt)) / 86_400_000) };
+}
+
 /* What the Muse said it would tell them later and has not yet. With how long
    ago, because "remind me to tell you" means something different after five
    minutes and after a day. */

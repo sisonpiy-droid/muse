@@ -4,7 +4,7 @@ import { streamGuarded, userFacingError } from "@/lib/ai";
 import { looksLikeRefusal } from "@/lib/ai/refusal";
 import { buildMuseSystemPrompt } from "@/lib/muse/prompt";
 import {
-  coveredBlock, coveredGround, lifeBlock, momentBlock, personaSystem, promiseBlock, quizBlock, romanceAllowed, bondBlock, romanceBlock,
+  coveredBlock, coveredGround, lifeBlock, momentBlock, personaSystem, promiseBlock, quizBlock, romanceAllowed, bondBlock, heardBlock, callbackBlock, romanceBlock,
   sendBlock, sharedBlock, togetherBlock, withQuote, wornBlock, yesBlock, type Feelings,
 } from "@/lib/presence/persona";
 import { nowBlock, previousMoment, stampPauses, timeBlock } from "@/lib/presence/time";
@@ -173,6 +173,10 @@ const bodySchema = z.object({
   score: z.object({ user: z.number().int().min(0), muse: z.number().int().min(0), rounds: z.number().int().min(0), lastAt: z.string().max(40) }).nullish(),
   /** How close you have got, as an index into LEVELS. Absent for a real person. */
   bond: z.number().int().min(0).max(10).nullish(),
+  /** What was said about them in the user's other chats. */
+  heard: z.array(z.string().max(320)).max(12).default([]),
+  /** Something told to them days ago, to bring up unprompted. */
+  callback: z.object({ what: z.string().max(300), days: z.number().int().min(0) }).nullish(),
 });
 
 /* Input bounds matter more here than in the signed-in app: there is no account
@@ -193,7 +197,7 @@ export async function POST(req: Request) {
     return Response.json({ error: "Check the request and try again." }, { status: 400 });
   }
   const { muse, persona, knows, mood, topic, register, feelings, messages, memories, plans, userName, timezone, story, shared, worn, can,
-    life, promises, moment, together, score, bond } = parsed.data;
+    life, promises, moment, together, score, bond, heard, callback } = parsed.data;
   const tz = timezone ?? undefined;
   /* The server's clock, not the phone's: a phone set five minutes wrong should
      not move a meeting. Timestamps on messages are compared against it. */
@@ -280,6 +284,7 @@ export async function POST(req: Request) {
       promiseBlock(promises, userName || "them") +
       togetherBlock(together, userName || "them") +
       bondBlock(bond, userName || "them") +
+      heardBlock(heard, userName || "them") +
       (knows?.length
         ? `
 
@@ -317,6 +322,7 @@ You can react to their latest message with one emoji, the way people do in a cha
       (register !== "live" && can ? quizBlock(score, userName || "they") : "") +
       /* Last, so nothing after it crowds it out: a moment is the one thing this
          reply must do. */
+      callbackBlock(callback, userName || "them") +
       momentBlock(moment, userName || "them") +
       nowBlock(userName || "them", tz, now) +
       last
@@ -347,7 +353,8 @@ You can react to their latest message with one emoji, the way people do in a cha
     timezone: timezone ?? undefined,
       }) + `
 
-${timeBlock({ you: userName || "them", timeZone: tz, ...clock })}` + bondBlock(bond, userName || "them");
+${timeBlock({ you: userName || "them", timeZone: tz, ...clock })}` + bondBlock(bond, userName || "them") +
+    heardBlock(heard, userName || "them") + callbackBlock(callback, userName || "them");
 
   /* Progressively less of the real message data, for when the provider will not
      accept the full profile.

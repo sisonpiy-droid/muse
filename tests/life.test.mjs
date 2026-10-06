@@ -270,6 +270,35 @@ check("how close you are grows with talking, days and calls, and is not for some
   assert.match(persona.bondBlock(3, "Piyush"), /CLOSE[\s\S]*confide/);
 });
 
+check("what was said about someone in another chat reaches them, and nobody else", () => {
+  const who = (id, name) => ({ id, name, description: "d", relationshipType: "friend", persona: { them: name, you: "Piyush", mode: "character", arch: "friend" } });
+  const msg = (id, from, content, h) => ({ id, from, content, at: hoursAgo(h) });
+  const s = { ...blank(), muses: [who("maya", "Maya"), who("kabir", "Kabir")],
+    conversations: {
+      [RHEA]: [msg("1", "user", "guess what, Maya proposed to Kabir!!", 2), msg("2", "muse", "NO WAY", 2)],
+      kabir: [msg("3", "user", "kabir you there", 1)],
+    },
+    memories: [{ id: "x", museId: RHEA, content: "Maya proposed to Kabir at the beach", type: "EVENT", importance: 4, confidence: 1, createdAt: hoursAgo(1) }],
+  };
+  const kabir = store.heardForTurn(s, "kabir", NOW);
+  assert.deepEqual(kabir, ['to Rhea: "guess what, Maya proposed to Kabir!!"', "Rhea remembers: Maya proposed to Kabir at the beach"]);
+  assert.equal(store.heardForTurn(s, "maya", NOW).length, 2, "Maya too");
+  assert.deepEqual(store.heardForTurn(s, RHEA, NOW), [], "not their own chat, and not 'kabir you there' (no Rhea in it)");
+  assert.deepEqual(store.heardForTurn({ ...s, conversations: { [RHEA]: [msg("1", "user", "Mayank is here", 1)] }, memories: [] }, "maya", NOW), [], "whole names only");
+  assert.match(persona.heardBlock(kabir, "Piyush"), /you were there for/);
+  assert.equal(persona.heardBlock([], "Piyush"), "");
+});
+
+check("an old thing they told her comes back when the conversation picks up again", () => {
+  const mem = (id, type, daysAgo) => ({ id, museId: RHEA, content: `memory ${id}`, type, importance: 3, confidence: 1, createdAt: new Date(NOW - daysAgo * 864e5).toISOString() });
+  const s = { ...blank(), memories: [mem("old", "EVENT", 9), mem("new", "EVENT", 1), mem("pref", "PREFERENCE", 30)],
+    conversations: { [RHEA]: [{ id: "a", from: "muse", content: "night!", at: hoursAgo(10) }, { id: "b", from: "user", content: "hey", at: hoursAgo(0) }] } };
+  assert.deepEqual(store.callbackForTurn(s, RHEA, NOW), { what: "memory old", days: 9 }, "only old events and goals");
+  const busy = { ...s, conversations: { [RHEA]: [{ id: "a", from: "muse", content: "haha", at: hoursAgo(1) }] } };
+  assert.equal(store.callbackForTurn(busy, RHEA, NOW), null, "not in the middle of a conversation");
+  assert.match(persona.callbackBlock({ what: "sister's job interview", days: 9 }, "Piyush"), /9 DAYS AGO[\s\S]*sister's job interview/);
+});
+
 let pass = 0, fail = 0;
 for (const [n, f] of results) {
   try { await f(); console.log(`  PASS  ${n}`); pass++; }
