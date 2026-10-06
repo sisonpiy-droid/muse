@@ -466,6 +466,33 @@ a { color: inherit; }
 .turn:focus-within .msg-actions,
 .turn.is-picked .msg-actions { opacity: 1; }
 
+/* With a mouse they float just under the bubble instead of sitting invisibly
+   inside it: inline, every bubble carried an empty bar's worth of space, and a
+   short message squeezed "reply" into "rep / ly". */
+@media (hover: hover) {
+  .msg-actions {
+    position: absolute; top: 100%; left: 0; z-index: 5;
+    margin-top: 0;
+    width: max-content; max-width: min(90vw, 34rem);
+    flex-wrap: wrap; align-items: center;
+    padding: 0.25rem 0.75rem;
+    background: var(--surface-2);
+    border: 1px solid var(--edge-lit);
+    border-radius: var(--r-full);
+    box-shadow: 0 6px 18px rgb(0 0 0 / 0.35);
+    font-family: var(--sans);
+    white-space: nowrap;
+    pointer-events: none;
+  }
+  .turn-user .msg-actions { left: auto; right: 0; }
+  .msg-actions .react-row { flex-basis: auto; }
+  .turn:hover .msg-actions,
+  .turn:focus-within .msg-actions,
+  .turn.is-picked .msg-actions { pointer-events: auto; }
+  .turn:hover, .turn:focus-within, .turn.is-picked { z-index: 6; }
+}
+.msg-actions button { white-space: nowrap; }
+
 /* On a phone there is no hover to hide them behind, and four links under
    every line nearly doubled a conversation. They take no room until a message
    is tapped, and they are real buttons when they do. */
