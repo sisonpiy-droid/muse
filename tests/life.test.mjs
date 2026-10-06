@@ -248,7 +248,7 @@ check("a burst written on separate lines arrives as separate texts, and nothing 
   assert.equal(eight.at(-1), "6\n7\n8");
 });
 
-check("how close you are grows with talking, days and calls, and is only for someone invented", () => {
+check("how close you are grows with talking, days and calls, and is not for someone who died or a public figure", () => {
   const msgs = (n, days) => Array.from({ length: n }, (_, i) => ({
     id: `m${i}`, from: i % 2 ? "muse" : "user", content: "hi", at: new Date(NOW - (i % days) * 864e5).toISOString(),
   }));
@@ -260,9 +260,12 @@ check("how close you are grows with talking, days and calls, and is only for som
   assert.equal(top.label, "Inseparable");
   assert.equal(top.next, null);
   assert.equal(top.progress, 1);
-  for (const mode of ["living", "memorial", "figure"]) {
+  for (const mode of ["memorial", "figure"]) {
     assert.equal(life.bondOf({ ...blank(), muses: [made(mode)] }, "x", NOW), null, mode);
   }
+  assert.equal(life.bondOf({ ...blank(), muses: [made("living")] }, "x", NOW).label, "Comfortable", "someone living already knows you");
+  const plain = { id: "p", name: "Old", description: "d", relationshipType: "friend" };
+  assert.equal(life.bondOf({ ...blank(), muses: [plain] }, "p", NOW).label, "Just met", "no profile still counts");
   assert.equal(persona.bondBlock(null, "Piyush"), "");
   assert.match(persona.bondBlock(3, "Piyush"), /CLOSE[\s\S]*confide/);
 });

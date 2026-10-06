@@ -347,7 +347,7 @@ You can react to their latest message with one emoji, the way people do in a cha
     timezone: timezone ?? undefined,
       }) + `
 
-${timeBlock({ you: userName || "them", timeZone: tz, ...clock })}`;
+${timeBlock({ you: userName || "them", timeZone: tz, ...clock })}` + bondBlock(bond, userName || "them");
 
   /* Progressively less of the real message data, for when the provider will not
      accept the full profile.

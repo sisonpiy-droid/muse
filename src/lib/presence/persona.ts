@@ -784,7 +784,8 @@ Only the HARD RULES above still stand; nothing else about who you usually are ho
 /* How close you have got, in here: earned by talking (lib/solo/story.ts bondOf).
    It sets how much of themselves they show, not who they are to you -- a
    partner at "Just met" is still a partner, just not yet telling you
-   everything. Only for someone made up: a real person's closeness is not a game. */
+   everything. Not for someone who died or a public figure; someone living
+   starts part way up (bondOf). */
 export const LEVELS = [
   { at: 0, label: "Just met", block: `You are still holding a little back with them. Friendly and curious, but the deeper stuff -- your worries, your secrets, the soppiest things -- you have not shared yet. You are still working them out.` },
   { at: 40, label: "Warming up", block: `You are relaxing around them. The teasing has started, a joke or two of your own, small personal things you would not tell just anyone. Still a few doors closed.` },

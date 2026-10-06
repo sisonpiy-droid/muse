@@ -194,12 +194,14 @@ export function momentsOf(s: SoloState, museId: string, now = Date.now(), tz?: s
 /* ----------------------------------------------------------------- bond */
 
 /* How close you have got: your messages, the days you have talked and the
-   calls, as points. Null for a real person -- see LEVELS. */
+   calls, as points. Someone living, who agreed to this, already knows you, so
+   starts at Comfortable. Null for someone who died or a public figure. */
 export function bondOf(s: SoloState, museId: string, now = Date.now(), tz?: string) {
   const muse = findMuse(s, museId);
-  if (!muse?.persona || portraitOfSomeoneReal(muse)) return null;
+  const mode = muse?.persona?.mode;
+  if (!muse || mode === "memorial" || mode === "figure") return null;
   const st = storyOf(s, museId, now, tz);
-  const points = st.yours + 12 * st.daysTalked + 25 * st.calls;
+  const points = (mode === "living" ? LEVELS[2].at : 0) + st.yours + 12 * st.daysTalked + 25 * st.calls;
   const level = LEVELS.findLastIndex((l) => points >= l.at);
   const next = LEVELS[level + 1];
   return {
