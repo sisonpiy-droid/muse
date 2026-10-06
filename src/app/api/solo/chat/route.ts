@@ -5,7 +5,7 @@ import { looksLikeRefusal } from "@/lib/ai/refusal";
 import { buildMuseSystemPrompt } from "@/lib/muse/prompt";
 import {
   coveredBlock, coveredGround, lifeBlock, momentBlock, personaSystem, promiseBlock, quizBlock, sendBlock, sharedBlock,
-  togetherBlock, withQuote, wornBlock, type Feelings,
+  togetherBlock, withQuote, wornBlock, yesBlock, type Feelings,
 } from "@/lib/presence/persona";
 import { previousMoment, stampPauses, timeBlock } from "@/lib/presence/time";
 
@@ -308,7 +308,8 @@ You can react to their latest message with one emoji, the way people do in a cha
       (register !== "live" && can ? quizBlock(score, userName || "they") : "") +
       /* Last, so nothing after it crowds it out: a moment is the one thing this
          reply must do. */
-      momentBlock(moment, userName || "them")
+      momentBlock(moment, userName || "them") +
+      (mood === "yes" ? yesBlock(userName || "them") : "")
     : buildMuseSystemPrompt({
     name: muse.name,
     description: muse.description,
@@ -361,7 +362,7 @@ ${timeBlock({ you: userName || "them", timeZone: tz, ...clock })}`;
       { mood: mood || "any", topic: topic || "any", register: register || "texts" },
       timezone ?? undefined,
       standing
-    );
+    ) + (mood === "yes" ? yesBlock(userName || "them") : "");
 
   const bare = { ...persona, samples: undefined, metrics: undefined, extra: undefined };
 
