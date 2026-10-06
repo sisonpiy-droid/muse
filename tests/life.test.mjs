@@ -248,6 +248,25 @@ check("a burst written on separate lines arrives as separate texts, and nothing 
   assert.equal(eight.at(-1), "6\n7\n8");
 });
 
+check("how close you are grows with talking, days and calls, and is only for someone invented", () => {
+  const msgs = (n, days) => Array.from({ length: n }, (_, i) => ({
+    id: `m${i}`, from: i % 2 ? "muse" : "user", content: "hi", at: new Date(NOW - (i % days) * 864e5).toISOString(),
+  }));
+  assert.deepEqual(life.bondOf(blank(), RHEA, NOW, "UTC"), { level: 0, label: "Just met", progress: 0, next: { label: "Warming up", toGo: 40 } });
+  const b = life.bondOf({ ...blank(), conversations: { [RHEA]: msgs(40, 3) } }, RHEA, NOW, "UTC");
+  assert.equal(b.label, "Warming up", "20 of yours + 3 days = 56");
+  assert.equal(b.next.toGo, 150 - 56);
+  const top = life.bondOf({ ...blank(), conversations: { [RHEA]: msgs(2000, 30) } }, RHEA, NOW, "UTC");
+  assert.equal(top.label, "Inseparable");
+  assert.equal(top.next, null);
+  assert.equal(top.progress, 1);
+  for (const mode of ["living", "memorial", "figure"]) {
+    assert.equal(life.bondOf({ ...blank(), muses: [made(mode)] }, "x", NOW), null, mode);
+  }
+  assert.equal(persona.bondBlock(null, "Piyush"), "");
+  assert.match(persona.bondBlock(3, "Piyush"), /CLOSE[\s\S]*confide/);
+});
+
 let pass = 0, fail = 0;
 for (const [n, f] of results) {
   try { await f(); console.log(`  PASS  ${n}`); pass++; }

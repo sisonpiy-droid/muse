@@ -40,7 +40,7 @@ import {
   type MediaAllowed, type SoloCircle, type SoloMessage, type SoloMuse, type SoloState,
 } from "@/lib/solo/store";
 import { ensureAvatar, makePicture, recordVoiceNote, voiceFor } from "@/lib/solo/media";
-import { NUDGE_STALE_MS, addPoint, advanceLife, markStarted, nudgeAt, planDue, readPoint, unlock } from "@/lib/solo/life";
+import { NUDGE_STALE_MS, addPoint, bondOf, advanceLife, markStarted, nudgeAt, planDue, readPoint, unlock } from "@/lib/solo/life";
 import { Persister, mergeStates, onOtherTabWrite } from "@/lib/solo/sync";
 import { embedTexts, learnFrom } from "@/lib/solo/learn";
 import { PHOTO_ONLY, savePhoto } from "@/lib/solo/photos";
@@ -1234,6 +1234,16 @@ function SoloChat({
   useLayoutEffect(() => { drafting.current = draft.trim().length > 0; });
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const nudgeDue = nudgeAt(log, tz);
+  /* How close you have got. The banner shows once per level, per device. */
+  const bond = bondOf(state, muse.id, clockNow(), tz);
+  const bondKey = `muse-bond-${muse.id}`;
+  const [seenBond, setSeenBond] = useState(() => { try { return Number(localStorage.getItem(bondKey)) || 0; } catch { return 0; } });
+  const levelUp = bond && bond.level > seenBond ? bond : null;
+  const seeBond = () => {
+    if (!bond) return;
+    try { localStorage.setItem(bondKey, String(bond.level)); } catch { /* the banner just shows again */ }
+    setSeenBond(bond.level);
+  };
   useEffect(() => {
     if (nudgeDue === null || drafting.current) return;
     const fire = () => {
@@ -1338,6 +1348,12 @@ function SoloChat({
           <h1>{muse.name}</h1>
           <div className="rel">
             {muse.relationshipType}
+            {bond && (
+              <>
+                {" · "}
+                <button className="inline-link" onClick={onStory}>{bond.label}</button>
+              </>
+            )}
             {memoriesFor.length > 0 && (
               <>
                 {" · "}
@@ -1574,6 +1590,16 @@ function SoloChat({
               </p>
             </div>
           )}
+        </div>
+      )}
+
+      {levelUp && (
+        <div className="notice bond-up" role="status">
+          <div>
+            <strong>You and {muse.name} are now {levelUp.label}</strong>
+            {muse.name} will open up a little more with you from here.
+          </div>
+          <button className="btn" onClick={seeBond}>Nice</button>
         </div>
       )}
 

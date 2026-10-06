@@ -5,7 +5,7 @@ import {
   QUOTE_CHARS, feelingsOf, findMuse, isMediaCaption, knownTo, mediaAllowed, memoriesForTurn, plansForTurn,
   promisesForTurn, promptPersona, quoteOf, sharedForTurn, windowOf, worthRecalling, type SoloMessage, type SoloMuse, type SoloState,
 } from "./store";
-import { lifeForTurn, momentDue, togetherNow } from "./life";
+import { bondOf, lifeForTurn, momentDue, togetherNow } from "./life";
 import { photoBase64 } from "./photos";
 import { VIDEO_ONLY, clipLength, framesBase64 } from "./attach";
 import { storyLine, storyOf } from "./story";
@@ -167,6 +167,7 @@ export async function prepareTurn(
     promises: promisesForTurn(s, museId).map((p) => ({ what: p.what.slice(0, 300), ago: Math.round(p.ago) })),
     moment: opts.register === "live" ? null : momentDue(s, museId, Date.now(), Intl.DateTimeFormat().resolvedOptions().timeZone),
     score: s.scores?.[museId] ?? null,
+    bond: bondOf(s, museId, Date.now(), Intl.DateTimeFormat().resolvedOptions().timeZone)?.level ?? null,
     userName: s.userName,
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     /* How often you actually talk, here. Background for the model. */

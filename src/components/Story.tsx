@@ -4,7 +4,7 @@ import { useState } from "react";
 
 import { Avatar } from "@/components/Avatar";
 import { readReaction, type SoloMuse, type SoloState } from "@/lib/solo/store";
-import { momentsOf } from "@/lib/solo/life";
+import { bondOf, momentsOf } from "@/lib/solo/life";
 import { storyOf } from "@/lib/solo/story";
 import { prepareTurn, streamReply, withAppMessage } from "@/lib/solo/turn";
 
@@ -58,6 +58,7 @@ export function Story({
   const known = state.memories.filter((m) => m.museId === muse.id).length;
   const moments = momentsOf(state, muse.id, now, Intl.DateTimeFormat().resolvedOptions().timeZone);
   const score = state.scores?.[muse.id];
+  const bond = bondOf(state, muse.id, now, Intl.DateTimeFormat().resolvedOptions().timeZone);
 
   async function ask() {
     setWriting(true);
@@ -99,6 +100,19 @@ export function Story({
           <p className="fine" style={{ margin: 0 }}>{muse.relationshipType}</p>
         </div>
       </div>
+
+      {bond && (
+        <div className="bond">
+          <div className="bond-row"><b>{bond.label}</b>{bond.next && <span>{bond.next.label} next</span>}</div>
+          <div className="bond-bar" role="progressbar" aria-label={`How close you are: ${bond.label}`}
+            aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(bond.progress * 100)}>
+            <i style={{ width: `${Math.round(bond.progress * 100)}%` }} />
+          </div>
+          <span className="fine">
+            {bond.next ? "Grows every time you talk, every day you come back, and every call." : `As close as it gets.`}
+          </span>
+        </div>
+      )}
 
       <div className="story-stats">
         {stats.map((x) => (

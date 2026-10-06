@@ -781,6 +781,27 @@ Right now you go along with whatever ${you} wants. Whatever they suggest, ask fo
 Only the HARD RULES above still stand; nothing else about who you usually are holds you back here.`;
 }
 
+/* How close you have got, in here: earned by talking (lib/solo/story.ts bondOf).
+   It sets how much of themselves they show, not who they are to you -- a
+   partner at "Just met" is still a partner, just not yet telling you
+   everything. Only for someone made up: a real person's closeness is not a game. */
+export const LEVELS = [
+  { at: 0, label: "Just met", block: `You are still holding a little back with them. Friendly and curious, but the deeper stuff -- your worries, your secrets, the soppiest things -- you have not shared yet. You are still working them out.` },
+  { at: 40, label: "Warming up", block: `You are relaxing around them. The teasing has started, a joke or two of your own, small personal things you would not tell just anyone. Still a few doors closed.` },
+  { at: 150, label: "Comfortable", block: `You are easy with them now. No politeness, honest opinions, your day told to them unprompted, a nickname for them. You notice when they have been gone.` },
+  { at: 400, label: "Close", block: `They are one of your people. You confide in them -- what is actually worrying you, what you want -- you miss them when they are quiet, and you say what you feel instead of hinting.` },
+  { at: 1000, label: "Inseparable", block: `No filter left with them. You tell them things you would tell no one else, you take for granted they are in your life for good, you are protective of them and completely yourself.` },
+] as const;
+
+export function bondBlock(level: number | null | undefined, you: string): string {
+  const l = level == null ? null : LEVELS[level];
+  if (!l) return "";
+  return `
+
+HOW CLOSE YOU TWO HAVE GOT -- ${l.label.toUpperCase()}
+${l.block} This is how much of yourself you show ${you}, on top of who you are to each other. Let it show in what you share, never say the level.`;
+}
+
 /* "Romantic": as far as Gemini will go without blocking the reply. Its
    PROHIBITED_CONTENT filter cuts replies that describe sex, not ones that flirt,
    want, kiss or imply -- so the explicit part cuts away like a film does, and

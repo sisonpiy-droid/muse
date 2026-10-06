@@ -1,6 +1,6 @@
 "use client";
 
-import { MOMENTS } from "@/lib/presence/persona";
+import { LEVELS, MOMENTS } from "@/lib/presence/persona";
 import { findMuse, promptPersona, type Life, type LifeArc, type SoloMemory, type SoloMessage, type SoloMuse, type SoloState } from "./store";
 import { storyOf } from "./story";
 
@@ -189,6 +189,26 @@ export function momentsOf(s: SoloState, museId: string, now = Date.now(), tz?: s
     .sort((a, b) => a.at.localeCompare(b.at));
   const next = open.find((m) => !had.some((u) => u.key === m.key) && !REACHED[m.key]?.(story));
   return { unlocked, next: next ? { label: next.label, toGo: TO_GO[next.key](story) } : null };
+}
+
+/* ----------------------------------------------------------------- bond */
+
+/* How close you have got: your messages, the days you have talked and the
+   calls, as points. Null for a real person -- see LEVELS. */
+export function bondOf(s: SoloState, museId: string, now = Date.now(), tz?: string) {
+  const muse = findMuse(s, museId);
+  if (!muse?.persona || portraitOfSomeoneReal(muse)) return null;
+  const st = storyOf(s, museId, now, tz);
+  const points = st.yours + 12 * st.daysTalked + 25 * st.calls;
+  const level = LEVELS.findLastIndex((l) => points >= l.at);
+  const next = LEVELS[level + 1];
+  return {
+    level,
+    label: LEVELS[level].label,
+    /* 0..1 of the way to the next level; 1 at the top. */
+    progress: next ? (points - LEVELS[level].at) / (next.at - LEVELS[level].at) : 1,
+    next: next ? { label: next.label, toGo: next.at - points } : null,
+  };
 }
 
 /* ------------------------------------------------------------------ quiz */

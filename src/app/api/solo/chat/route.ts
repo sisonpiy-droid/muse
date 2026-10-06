@@ -4,7 +4,7 @@ import { streamGuarded, userFacingError } from "@/lib/ai";
 import { looksLikeRefusal } from "@/lib/ai/refusal";
 import { buildMuseSystemPrompt } from "@/lib/muse/prompt";
 import {
-  coveredBlock, coveredGround, lifeBlock, momentBlock, personaSystem, promiseBlock, quizBlock, romanceAllowed, romanceBlock,
+  coveredBlock, coveredGround, lifeBlock, momentBlock, personaSystem, promiseBlock, quizBlock, romanceAllowed, bondBlock, romanceBlock,
   sendBlock, sharedBlock, togetherBlock, withQuote, wornBlock, yesBlock, type Feelings,
 } from "@/lib/presence/persona";
 import { nowBlock, previousMoment, stampPauses, timeBlock } from "@/lib/presence/time";
@@ -171,6 +171,8 @@ const bodySchema = z.object({
   together: z.object({ what: z.string().max(300), since: z.number().min(0) }).nullish(),
   /** The "how well do you know each other" score. */
   score: z.object({ user: z.number().int().min(0), muse: z.number().int().min(0), rounds: z.number().int().min(0), lastAt: z.string().max(40) }).nullish(),
+  /** How close you have got, as an index into LEVELS. Absent for a real person. */
+  bond: z.number().int().min(0).max(10).nullish(),
 });
 
 /* Input bounds matter more here than in the signed-in app: there is no account
@@ -191,7 +193,7 @@ export async function POST(req: Request) {
     return Response.json({ error: "Check the request and try again." }, { status: 400 });
   }
   const { muse, persona, knows, mood, topic, register, feelings, messages, memories, plans, userName, timezone, story, shared, worn, can,
-    life, promises, moment, together, score } = parsed.data;
+    life, promises, moment, together, score, bond } = parsed.data;
   const tz = timezone ?? undefined;
   /* The server's clock, not the phone's: a phone set five minutes wrong should
      not move a meeting. Timestamps on messages are compared against it. */
@@ -277,6 +279,7 @@ export async function POST(req: Request) {
       lifeBlock(life, userName || "them") +
       promiseBlock(promises, userName || "them") +
       togetherBlock(together, userName || "them") +
+      bondBlock(bond, userName || "them") +
       (knows?.length
         ? `
 

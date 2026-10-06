@@ -1173,3 +1173,12 @@ button.tag:disabled { opacity: 0.45; cursor: not-allowed; }
 .video-draft { position: relative; display: inline-block; }
 .video-draft video { height: 4.5rem; max-width: 9rem; object-fit: cover; border-radius: var(--r-sm); border: 1px solid var(--edge-lit); display: block; }
 .video-draft b { position: absolute; left: 0.3rem; bottom: 0.3rem; font-size: 0.7rem; color: #fff; text-shadow: 0 1px 2px rgb(0 0 0 / 0.8); }
+
+/* How close you have got: the story page's meter, and the level-up banner. */
+.bond { display: flex; flex-direction: column; gap: 0.45rem; margin-top: 1.25rem; }
+.bond-row { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; }
+.bond-row b { font-family: var(--serif); font-size: 1.3rem; font-weight: 500; color: var(--accent); }
+.bond-row span { font-size: 0.75rem; color: var(--faint); }
+.bond-bar { height: 6px; border-radius: var(--r-full); background: var(--surface-2); overflow: hidden; }
+.bond-bar i { display: block; height: 100%; border-radius: inherit; background: var(--accent); transition: width 400ms var(--ease); }
+.bond-up { margin: 0.75rem 0 0; animation: rise 300ms var(--ease) both; }
