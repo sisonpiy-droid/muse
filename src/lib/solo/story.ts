@@ -1,3 +1,4 @@
+import { formatter } from "@/lib/presence/time";
 import type { SoloMemory, SoloState } from "./store";
 
 /* The story of a relationship in here, from what is already kept.
@@ -31,7 +32,7 @@ export interface Story {
 }
 
 const dayOf = (iso: string, tz?: string) =>
-  new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(iso));
+  formatter("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(iso));
 
 export function storyOf(state: SoloState, museId: string, now: number, tz?: string): Story {
   const log = (state.conversations[museId] ?? []).filter((m) => !m.showAt || Date.parse(m.showAt) <= now);

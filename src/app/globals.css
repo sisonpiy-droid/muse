@@ -1013,6 +1013,14 @@ button.tag:disabled { opacity: 0.45; cursor: not-allowed; }
   margin: 0 0 0.35rem;
 }
 .photo img { display: block; width: 100%; height: 100%; object-fit: cover; }
+/* Sent blurred: tap to see. */
+.photo.veiled { position: relative; cursor: pointer; }
+.photo.veiled img { filter: blur(22px) brightness(0.75); transform: scale(1.15); }
+.veil {
+  position: absolute; inset: 0; display: grid; place-items: center;
+  color: #fff; font-family: var(--sans); font-size: 0.85rem; font-weight: 600; letter-spacing: 0.02em;
+  text-shadow: 0 1px 8px rgb(0 0 0 / 0.6);
+}
 .photo-missing { display: grid; place-items: center; height: 100%; color: var(--faint); font-size: 0.8rem; font-family: var(--sans); }
 .turn-user .photo { margin-left: auto; }
 .photo-full {
@@ -1182,3 +1190,4 @@ button.tag:disabled { opacity: 0.45; cursor: not-allowed; }
 .bond-bar { height: 6px; border-radius: var(--r-full); background: var(--surface-2); overflow: hidden; }
 .bond-bar i { display: block; height: 100%; border-radius: inherit; background: var(--accent); transition: width 400ms var(--ease); }
 .bond-up { margin: 0.75rem 0 0; animation: rise 300ms var(--ease) both; }
+.earlier { align-self: center; margin: 0.5rem 0; font-size: 0.8rem; }

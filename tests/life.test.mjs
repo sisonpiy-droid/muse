@@ -299,6 +299,11 @@ check("an old thing they told her comes back when the conversation picks up agai
   assert.match(persona.callbackBlock({ what: "sister's job interview", days: 9 }, "Piyush"), /9 DAYS AGO[\s\S]*sister's job interview/);
 });
 
+check("a goodbye is recognised, and ordinary words are not", () => {
+  for (const t of ["ok bye", "byeee", "good night!", "gn", "ttyl", "chal bye", "so ja raha hu", "gotta go", "see ya", "talk to you later"]) assert.ok(life.saidBye(t), t);
+  for (const t of ["maybe", "gnocchi tonight?", "byte", "sonu ja raha hai market"]) assert.ok(!life.saidBye(t), t);
+});
+
 let pass = 0, fail = 0;
 for (const [n, f] of results) {
   try { await f(); console.log(`  PASS  ${n}`); pass++; }

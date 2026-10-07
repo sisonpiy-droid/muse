@@ -1,6 +1,7 @@
 "use client";
 
 import { LEVELS, MOMENTS } from "@/lib/presence/persona";
+import { formatter } from "@/lib/presence/time";
 import { findMuse, promptPersona, type Life, type LifeArc, type SoloMemory, type SoloMessage, type SoloMuse, type SoloState } from "./store";
 import { storyOf } from "./story";
 
@@ -191,6 +192,11 @@ export function momentsOf(s: SoloState, museId: string, now = Date.now(), tz?: s
   return { unlocked, next: next ? { label: next.label, toGo: TO_GO[next.key](story) } : null };
 }
 
+/** "bye", "gn", "talk later", "chal bye": they are leaving. */
+export function saidBye(text: string): boolean {
+  return /\b(bye+|byee*|good ?night|gn+|ttyl|talk (to you )?later|gotta go|got to go|see (you|ya)|cya|chal(o)? bye|so(ne)? ja(ta|ti|ra|rha|rhi)?|sleep(ing)? now|going to sleep)\b/i.test(text);
+}
+
 /* ----------------------------------------------------------------- bond */
 
 /* How close you have got: your messages, the days you have talked and the
@@ -297,6 +303,6 @@ export function nudgeAt(thread: SoloMessage[], timeZone?: string): number | null
   let h = 0;
   for (let k = 0; k < last.id.length; k++) h = (h * 31 + last.id.charCodeAt(k)) | 0;
   const at = shownAt + NUDGE_AFTER_MS + (Math.abs(h) % NUDGE_SPREAD_MS);
-  const hour = Number(new Intl.DateTimeFormat("en-GB", { hour: "numeric", hourCycle: "h23", timeZone }).format(new Date(at)));
+  const hour = Number(formatter("en-GB", { hour: "numeric", hourCycle: "h23", timeZone }).format(new Date(at)));
   return hour >= 1 && hour < 8 ? null : at;
 }

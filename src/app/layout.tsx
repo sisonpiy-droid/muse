@@ -1,18 +1,20 @@
 import type { Metadata, Viewport } from "next";
-import { Instrument_Sans, Newsreader } from "next/font/google";
+import localFont from "next/font/local";
 
 import "./globals.css";
 
-const sans = Instrument_Sans({
-  subsets: ["latin"],
-  weight: ["400", "500", "600"],
+/* Kept in the repo (latin, variable weight, OFL) rather than fetched from
+   Google at build time: a dev server with no internet failed every page. */
+const sans = localFont({
+  src: "./fonts/instrument-sans.woff2",
+  weight: "400 600",
   variable: "--font-sans",
   display: "swap",
 });
 
-const serif = Newsreader({
-  subsets: ["latin"],
-  weight: ["300", "400", "500"],
+const serif = localFont({
+  src: "./fonts/newsreader.woff2",
+  weight: "300 500",
   variable: "--font-serif",
   display: "swap",
 });

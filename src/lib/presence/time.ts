@@ -26,11 +26,22 @@ const MIN = 60_000;
 const HOUR = 60 * MIN;
 const DAY = 24 * HOUR;
 
+/* Making a formatter costs ~60x more than using one, and the screen formats a
+   date per message per render: kept and reused. Throws as the constructor does
+   (an unknown timezone). */
+const formatters = new Map<string, Intl.DateTimeFormat>();
+export function formatter(locale: string, opts: Intl.DateTimeFormatOptions): Intl.DateTimeFormat {
+  const key = locale + JSON.stringify(opts);
+  let f = formatters.get(key);
+  if (!f) formatters.set(key, (f = new Intl.DateTimeFormat(locale, opts)));
+  return f;
+}
+
 function fmt(ts: number, timeZone: string | undefined, opts: Intl.DateTimeFormatOptions): string {
   try {
-    return new Intl.DateTimeFormat("en-GB", { ...opts, ...(timeZone ? { timeZone } : {}) }).format(new Date(ts));
+    return formatter("en-GB", { ...opts, ...(timeZone ? { timeZone } : {}) }).format(new Date(ts));
   } catch {
-    return new Intl.DateTimeFormat("en-GB", opts).format(new Date(ts));
+    return formatter("en-GB", opts).format(new Date(ts));
   }
 }
 
@@ -72,7 +83,7 @@ function dayWord(ts: number, now: number, timeZone?: string): string {
 export function offsetOf(timeZone: string | undefined, ts: number): string {
   if (!timeZone) return "+00:00";
   try {
-    const parts = new Intl.DateTimeFormat("en-US", {
+    const parts = formatter("en-US", {
       timeZone, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit",
       hour: "2-digit", minute: "2-digit", second: "2-digit",
     }).formatToParts(new Date(ts));

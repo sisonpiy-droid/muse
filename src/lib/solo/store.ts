@@ -85,6 +85,8 @@ export interface SoloMessage {
   point?: "user" | "muse";
   /** A follow-up she sent because they went quiet after her question. */
   nudge?: boolean;
+  /** A photo of theirs sent blurred, until it is tapped. */
+  veiled?: boolean;
   /* A video they sent. The file and a few frames from through it are in
      IndexedDB, never here; the model is sent the frames. */
   video?: { id: string; w: number; h: number; seconds: number; frames: string[] };

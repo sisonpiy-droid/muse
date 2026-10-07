@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { streamGuarded, userFacingError } from "@/lib/ai";
-import { circleBlock, circleHistory, coveredBlock, coveredGround, oneToOneBlock, personaSystem } from "@/lib/presence/persona";
+import { circleBlock, circleHistory, coveredBlock, coveredGround, oneToOneBlock, personaSystem, togetherBlock } from "@/lib/presence/persona";
 import { nowBlock, previousMoment, stampPauses } from "@/lib/presence/time";
 
 /* One turn in a circle: several people in a room, one of them replying.
@@ -96,6 +96,8 @@ const bodySchema = z.object({
   digest: z.string().max(2000).nullish(),
   /** The speaker's dated plans and events, each with its instant. */
   plans: z.array(z.object({ what: z.string().max(430), at: z.string().max(40) })).max(8).default([]),
+  /** A plan the speaker and the user have on right now. */
+  together: z.object({ what: z.string().max(300), since: z.number().min(0) }).nullish(),
   /** Maps a speakerId to a display name, so the transcript reads as a room. */
   names: z.record(z.string(), z.string().max(60)),
   userName: z.string().trim().max(80).nullish(),
@@ -128,7 +130,7 @@ export async function POST(req: Request) {
   if (!parsed.success) {
     return Response.json({ error: "Check the request and try again." }, { status: 400 });
   }
-  const { circleName, speaker, others, log, names, userName, timezone, mood, register, feelings, topic, roomTraits, memories, plans, oneToOne, digest } =
+  const { circleName, speaker, others, log, names, userName, timezone, mood, register, feelings, topic, roomTraits, memories, plans, oneToOne, digest, together } =
     parsed.data;
   const tz = timezone ?? undefined;
   const now = Date.now();
@@ -163,6 +165,7 @@ export async function POST(req: Request) {
     ) +
     coveredBlock(coveredGround(messages), you) +
     oneToOneBlock(oneToOne, you, tz, digest) +
+    togetherBlock(together, you) +
     circleBlock({ you, me: speaker.persona.them, others, circleName, topic, roomTraits }) +
     (seesPictures
       ? `

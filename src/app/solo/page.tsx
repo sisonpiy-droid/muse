@@ -40,7 +40,7 @@ import {
   type MediaAllowed, type SoloCircle, type SoloMessage, type SoloMuse, type SoloState,
 } from "@/lib/solo/store";
 import { ensureAvatar, makePicture, recordVoiceNote, voiceFor } from "@/lib/solo/media";
-import { NUDGE_STALE_MS, addPoint, bondOf, advanceLife, markStarted, nudgeAt, planDue, readPoint, unlock } from "@/lib/solo/life";
+import { NUDGE_STALE_MS, addPoint, bondOf, saidBye, advanceLife, markStarted, nudgeAt, planDue, readPoint, unlock } from "@/lib/solo/life";
 import { Persister, mergeStates, onOtherTabWrite } from "@/lib/solo/sync";
 import { embedTexts, learnFrom } from "@/lib/solo/learn";
 import { PHOTO_ONLY, savePhoto } from "@/lib/solo/photos";
@@ -89,7 +89,8 @@ type View =
   | { kind: "invent"; tab?: string }
   | { kind: "figure"; tab?: string }
   | { kind: "circle"; circleId: string }
-  | { kind: "new-circle" };
+  | { kind: "new-circle" }
+  | { kind: "edit-circle"; circleId: string };
 
 /** What each history entry carries. `depth` is how many screens sit above
  *  home, so back knows whether there is anywhere inside the app to go. */
@@ -359,7 +360,24 @@ export default function SoloPage() {
     const circle = circleOf(state, view.circleId);
     if (!circle) { setView({ kind: "home" }); return null; }
     return shell(
-      <CircleChat circle={circle} state={state} update={update} onBack={back} />
+      <CircleChat circle={circle} state={state} update={update} onBack={back}
+        onEdit={() => go({ kind: "edit-circle", circleId: circle.id })} />
+    );
+  }
+
+  if (view.kind === "edit-circle") {
+    const circle = circleOf(state, view.circleId);
+    if (!circle) { setView({ kind: "home" }); return null; }
+    return shell(
+      <NewCircle
+        state={state}
+        initial={circle}
+        onCancel={back}
+        onCreate={(name, memberIds) => {
+          update((cur) => ({ ...cur, circles: (cur.circles ?? []).map((c) => (c.id === circle.id ? { ...c, name, memberIds } : c)) }));
+          back();
+        }}
+      />
     );
   }
 
@@ -836,6 +854,10 @@ function CircleCard({
    component's purity check does not mistake it for something done while
    rendering. */
 const clockNow = () => Date.now();
+const TYPING_LEAD = 15_000;
+const WINDOW = 120;
+const chance = (p: number) => Math.random() < p;
+const between = (lo: number, hi: number) => lo + Math.random() * (hi - lo);
 
 /** Resolves once the last text of a burst is due on screen, or on abort. */
 async function untilShown(at: number, signal: AbortSignal): Promise<void> {
@@ -907,7 +929,10 @@ function SoloChat({
   // Read after mount: the server render has no window to ask.
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => setCanCall(canListen()), []);
-  const [draft, setDraft] = useState("");
+  /* The text lives in the textarea, not in state: a keystroke that set state
+     re-rendered the whole thread, and typing lagged in a long conversation.
+     Only whether there is anything in it is state. */
+  const [hasDraft, setHasDraft] = useState(false);
   const [streaming, setStreaming] = useState("");
   /* Making something to send that is not a text: shown instead of "typing". */
   const [sending, setSending] = useState<"photo" | "voice" | null>(null);
@@ -952,11 +977,19 @@ function SoloChat({
      the next one is due, so nothing re-renders while nothing is changing. */
   const [clock, setClock] = useState(() => Date.now());
   const shown = log.filter((m) => !m.showAt || Date.parse(m.showAt) <= clock);
-  const typingNext = shown.length < log.length;
+  /* "Typing" only in the last stretch before the next one shows: a text sent
+     for a minute from now should arrive out of nowhere, not after a minute of dots. */
+  /* Only the latest messages are drawn: every keystroke re-renders the thread,
+     and 400 bubbles made typing lag. Older ones on request. */
+  const [limit, setLimit] = useState(WINDOW);
+  const from = Math.max(0, shown.length - limit);
+  const typingNext = log.some((m) => m.showAt && Date.parse(m.showAt) > clock && Date.parse(m.showAt) - clock <= TYPING_LEAD);
   useEffect(() => {
     const due = log.map((m) => (m.showAt ? Date.parse(m.showAt) : 0)).filter((t) => t > clock);
     if (!due.length) return;
-    const t = setTimeout(() => setClock(Date.now()), Math.max(30, Math.min(...due) - Date.now() + 20));
+    const next = Math.min(...due);
+    const wake = next - TYPING_LEAD > Date.now() ? next - TYPING_LEAD : next;
+    const t = setTimeout(() => setClock(Date.now()), Math.max(30, wake - Date.now() + 20));
     return () => clearTimeout(t);
     // Reschedules when a message arrives or the clock moves; that is all that changes when.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1003,7 +1036,7 @@ function SoloChat({
   const nameOf = (m: SoloMessage) => (m.from === "user" ? "You" : muse.name);
 
   async function sendDraft() {
-    const content = draft.trim();
+    const content = (box.current?.value ?? "").trim();
     if (!content && !attach.draft) return;
     const file = attach.take();
     const base = newMessage("user", content || (file?.kind === "video" ? VIDEO_ONLY : PHOTO_ONLY), { replyTo: replyTo?.id });
@@ -1019,7 +1052,8 @@ function SoloChat({
       ...cur,
       conversations: { ...cur.conversations, [muse.id]: [...(cur.conversations[muse.id] ?? []), msg] },
     }));
-    setDraft("");
+    if (box.current) box.current.value = "";
+    setHasDraft(false);
     setReplyTo(null);
     setError(null);
     if (box.current) box.current.style.height = "auto";
@@ -1070,7 +1104,13 @@ function SoloChat({
       const { emoji, rest } = readReaction(acc.trim());
       if (emoji) update((cur) => react(cur, muse.id, last.id, "muse", emoji));
       const text = rest;
-      if (!text && emoji) return;
+      /* They said bye: sometimes one more text, a minute later, out of nowhere --
+         after a reply or after just a 👋. */
+      const oneMore = () => {
+        if (!saidBye(last.content) || !chance(0.5)) return;
+        void appTurn(`(${state.userName ?? "They"} just said bye and you said bye back. A minute later, send ONE more text, the "wait, one more thing" kind: something you forgot to tell them, a tease about something you will tell them tomorrow, or one last soft or funny line. Short. Do not ask them to stay.)`, { max: 2, later: between(45_000, 90_000) });
+      };
+      if (!text && emoji) { oneMore(); return; }
       /* Nothing came back. Saying so, with a way to ask again, beats a thread
          that simply stops. */
       if (!text) {
@@ -1107,6 +1147,7 @@ function SoloChat({
       if (moment) update((cur) => unlock(cur, muse.id, moment));
 
       void learnFrom({ museIds: [muse.id], window: [...thread, ...answer].slice(-8), state: s, update });
+      oneMore();
     } catch {
       if (!signal.aborted) setError("You're offline.");
     } finally {
@@ -1127,7 +1168,9 @@ function SoloChat({
     can: MediaAllowed,
     after: string,
     person: SoloMuse,
-    signal: AbortSignal
+    signal: AbortSignal,
+    /** When the first of them shows; now if absent. */
+    startAt?: number
   ): Promise<SoloMessage[]> {
     const left = { ...can };
     const out: SoloMessage[] = [];
@@ -1136,7 +1179,7 @@ function SoloChat({
     let nextAt = clockNow();
     const flush = () => {
       if (!pending.length || signal.aborted) return;
-      const start = out.length ? Math.max(clockNow(), nextAt + typingMs(pending[0])) : clockNow();
+      const start = out.length ? Math.max(clockNow(), nextAt + typingMs(pending[0])) : Math.max(clockNow(), startAt ?? 0);
       const msgs = paced(pending, start);
       const at = anchor;
       update((cur) => insertAfter(cur, muse.id, at, msgs));
@@ -1187,7 +1230,8 @@ function SoloChat({
           setSending(null);
           const msg = newMessage("muse", sentPhoto(part.description));
           const id = `img-${msg.id}`;
-          if (pic && (await savePhoto(id, pic.blob))) pending.push({ ...msg, image: { id, w: pic.w, h: pic.h } });
+          /* Some arrive blurred, tap to see: not knowing what it is is the pull. */
+          if (pic && (await savePhoto(id, pic.blob))) pending.push({ ...msg, image: { id, w: pic.w, h: pic.h }, ...(chance(0.4) ? { veiled: true } : {}) });
         }
         if (part.caption) pending.push(newMessage("muse", part.caption));
       }
@@ -1198,8 +1242,9 @@ function SoloChat({
 
   /* A turn the app starts rather than the user: a plan beginning, a nudge
      after being left on read. She texts; nothing of theirs is answered. */
-  async function appTurn(note: string, opts: { nudge?: boolean; max?: number } = {}) {
-    setStarting(true);
+  async function appTurn(note: string, opts: { nudge?: boolean; max?: number; later?: number } = {}) {
+    /* Sent for later: no "typing" while it is written, only before it shows. */
+    if (!opts.later) setStarting(true);
     try {
       const signal = new AbortController().signal;
       const prepared = await prepareTurn(latest.current, muse.id, { fallback: muse, canStore: canPhoto });
@@ -1211,7 +1256,8 @@ function SoloChat({
       const parts = splitBurst(text, true).slice(0, opts.max ?? 4);
       const anchor = (latest.current.conversations[muse.id] ?? []).at(-1)?.id;
       if (!parts.length) return;
-      const sent = await deliver(parts, { photo: false, voice: false, song: false }, anchor ?? "", prepared.person, signal);
+      const sent = await deliver(parts, { photo: false, voice: false, song: false }, anchor ?? "", prepared.person, signal,
+        opts.later ? clockNow() + opts.later : undefined);
       if (opts.nudge && sent.length) {
         const ids = new Set(sent.map((m) => m.id));
         update((cur) => ({
@@ -1231,7 +1277,7 @@ function SoloChat({
      few minutes on, while the chat is open -- never while they are typing,
      and never for a question asked long ago. */
   const drafting = useRef(false);
-  useLayoutEffect(() => { drafting.current = draft.trim().length > 0; });
+  useLayoutEffect(() => { drafting.current = hasDraft; });
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const nudgeDue = nudgeAt(log, tz);
   /* How close you have got. The banner shows once per level, per device. */
@@ -1258,7 +1304,7 @@ function SoloChat({
     return () => clearTimeout(t);
     // Re-armed when the time it is due changes, or typing stops or starts.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nudgeDue, draft.trim().length > 0]);
+  }, [nudgeDue, hasDraft]);
 
   /* A plan made together, when its time comes with the chat open: she starts
      it. Checked every minute, and never over a reply that is owed or on its
@@ -1451,7 +1497,13 @@ function SoloChat({
           </div>
         )}
 
-        {shown.map((m, i) => {
+        {from > 0 && (
+          <button className="link-btn earlier" onClick={() => setLimit((n) => n + WINDOW)}>
+            Show earlier messages
+          </button>
+        )}
+        {shown.slice(from).map((m, j) => {
+          const i = from + j;
           const q = quoteOf(log, m);
           const replyHere = () => { setReplyTo(m); setPicked(null); box.current?.focus(); };
           /* A call shows where it started, in the same thread as everything else. */
@@ -1466,9 +1518,15 @@ function SoloChat({
             )}
             <Turn id={m.id} mine={m.from === "user"} picked={picked === m.id} onPick={setPicked} onReply={replyHere}>
               {m.replyTo && (
-                <QuoteBubble who={q ? nameOf(q) : ""} text={q?.content} onJump={q ? () => jumpTo(q.id) : undefined} />
+                <QuoteBubble who={q ? nameOf(q) : ""} text={q?.content} onJump={q ? () => {
+                  /* Quoting something older than what is drawn: draw it all first. */
+                  if (document.getElementById(`msg-${q.id}`)) jumpTo(q.id);
+                  else { setLimit(Infinity); setTimeout(() => jumpTo(q.id), 50); }
+                } : undefined} />
               )}
-              {m.image && <Photo id={m.image.id} w={m.image.w} h={m.image.h} />}
+              {m.image && <Photo id={m.image.id} w={m.image.w} h={m.image.h} veiled={m.veiled}
+                onReveal={() => update((cur) => ({ ...cur, conversations: { ...cur.conversations,
+                  [muse.id]: (cur.conversations[muse.id] ?? []).map((x) => (x.id === m.id ? { ...x, veiled: false } : x)) } }))} />}
               {m.video && <Video id={m.video.id} w={m.video.w} h={m.video.h} seconds={m.video.seconds} />}
               {m.voiceNote ? <VoiceNote id={m.voiceNote.id} seconds={m.voiceNote.seconds} text={m.content} />
                 : m.song ? <SongCard title={m.song.title} artist={m.song.artist} />
@@ -1615,10 +1673,9 @@ function SoloChat({
           ref={box}
           rows={1}
           maxLength={MAX_MESSAGE}
-          value={draft}
           placeholder={`Write to ${muse.name}`}
           onChange={(e) => {
-            setDraft(e.target.value);
+            setHasDraft(e.target.value.trim().length > 0);
             loop.hold();
             const el = box.current;
             if (el) { el.style.height = "auto"; el.style.height = `${Math.min(el.scrollHeight, 128)}px`; }
@@ -1630,7 +1687,7 @@ function SoloChat({
         />
         {/* Never disabled while they are typing back: a second text is how
             people talk, and it gets answered with the first. */}
-        <button className="send" onClick={() => void sendDraft()} disabled={!draft.trim() && !attach.draft}>Send</button>
+        <button className="send" onClick={() => void sendDraft()} disabled={!hasDraft && !attach.draft}>Send</button>
       </div>
     </main>
   );
@@ -1645,15 +1702,17 @@ const TRAIT_IDEAS = ["funny", "sarcastic", "caring", "blunt", "chill", "dramatic
 /* ---------------------------------------------------------- new circle */
 
 function NewCircle({
-  state, onCancel, onCreate,
+  state, initial, onCancel, onCreate,
 }: {
   state: SoloState;
+  /** Editing an existing group rather than making one. */
+  initial?: SoloCircle;
   onCancel: () => void;
   onCreate: (name: string, memberIds: string[]) => void;
 }) {
   const everyone = allMuses(state);
-  const [picked, setPicked] = useState<string[]>([]);
-  const [name, setName] = useState("");
+  const [picked, setPicked] = useState<string[]>(initial?.memberIds ?? []);
+  const [name, setName] = useState(initial?.name ?? "");
 
   /* Only people with a full profile can be in a circle. A Muse without one has
      no archetype or samples for the group prompt to work from, and would be the
@@ -1687,7 +1746,7 @@ function NewCircle({
   return (
     <main className="shell">
       <header className="row" style={{ justifyContent: "space-between" }}>
-        <p className="mark">New circle</p>
+        <p className="mark">{initial ? "Edit group" : "New circle"}</p>
         <button className="link-btn" onClick={onCancel}>Cancel</button>
       </header>
 
@@ -1739,7 +1798,7 @@ function NewCircle({
           disabled={picked.length < 2}
           onClick={() => onCreate(name.trim() || suggested || "The group chat", picked)}
         >
-          {picked.length < 2 ? "Pick at least two" : `Put ${picked.length} in a room`}
+          {picked.length < 2 ? "Pick at least two" : initial ? "Save" : `Put ${picked.length} in a room`}
         </button>
         {full && <span className="fine">Eight is the most a room holds.</span>}
       </div>

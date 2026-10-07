@@ -3,9 +3,11 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { Avatar } from "@/components/Avatar";
+import { Menu } from "@/components/Menu";
 import { QuoteBubble, ReplyBar, jumpTo } from "@/components/Quote";
 import { TraitEditor } from "@/components/TraitEditor";
 import { useFollow } from "@/components/useFollow";
+import { togetherNow } from "@/lib/solo/life";
 import { useAttach } from "@/components/Attach";
 import { Photo } from "@/components/Photo";
 import { Video } from "@/components/Video";
@@ -17,7 +19,7 @@ import { useReplyLoop } from "@/components/useReplyLoop";
 import { REGISTERS, hasFeelings, splitBurst } from "@/lib/presence/persona";
 import type { Update } from "@/app/solo/page";
 import {
-  QUOTE_CHARS, circleOf, deleteFrom, deleteMessage, editCircle, editMessage, editMuse, feelingsOf,
+  QUOTE_CHARS, circleOf, deleteCircle, deleteConversation, deleteFrom, deleteMessage, editCircle, editMessage, editMuse, feelingsOf,
   insertAfter, lastShowAt, membersOf, memoriesForTurn, newMessage, paced, plansForTurn, promptPersona, quoteOf, recentOneToOne, rewindTo, windowOf,
   type SoloCircle, type SoloMessage, type SoloMuse, type SoloState,
 } from "@/lib/solo/store";
@@ -43,16 +45,18 @@ const ROOM_IDEAS = ["chaotic", "roasting each other", "supportive", "nostalgic",
 const TRAIT_IDEAS = ["funny", "sarcastic", "caring", "blunt", "chill", "dramatic", "nosy", "savage"];
 
 export function CircleChat({
-  circle, state, update, onBack,
+  circle, state, update, onBack, onEdit,
 }: {
   circle: SoloCircle;
   state: SoloState;
   update: Update;
   onBack: () => void;
+  onEdit: () => void;
 }) {
   const members = membersOf(state, circle);
   const log = state.conversations[circle.id] ?? [];
-  const [draft, setDraft] = useState("");
+  /* The text lives in the textarea: setting state per keystroke re-rendered the whole room. */
+  const [hasDraft, setHasDraft] = useState(false);
   const [speaking, setSpeaking] = useState<{ name: string; text: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   /* A photo or video chosen but not sent yet. */
@@ -100,7 +104,7 @@ export function CircleChat({
   const whoSaid = (m: SoloMessage) => (m.from === "user" ? "You" : nameOf(m.speakerId ?? ""));
 
   async function sendDraft() {
-    const content = draft.trim();
+    const content = (box.current?.value ?? "").trim();
     if ((!content && !attach.draft) || members.length < 2) return;
     const file = attach.take();
     let msg = newMessage("user", content || (file?.kind === "video" ? VIDEO_ONLY : PHOTO_ONLY), { replyTo: replyTo?.id });
@@ -115,7 +119,8 @@ export function CircleChat({
       ...cur,
       conversations: { ...cur.conversations, [circle.id]: [...(cur.conversations[circle.id] ?? []), msg] },
     }));
-    setDraft("");
+    if (box.current) box.current.value = "";
+    setHasDraft(false);
     setReplyTo(null);
     setError(null);
     if (box.current) box.current.style.height = "auto";
@@ -201,7 +206,12 @@ export function CircleChat({
                room is marked private; see circleBlock for what that means. */
             memories: memoriesForTurn(s, m.id, unanswered.map((u) => u.content).join("\n"), queryVector, { room: room.id })
               .map((x) => x.slice(0, 420)),
-            plans: plansForTurn(s, m.id, { room: room.id }).map((p) => ({ what: p.what.slice(0, 430), at: p.at })),
+            /* A plan with the user that is on right now goes as `together`, as in
+               their one-to-one: the plan list would call it "passed, outcome unknown". */
+            plans: plansForTurn(s, m.id, { room: room.id })
+              .filter((p) => p.what.slice(0, 300) !== togetherNow(s, m.id)?.what)
+              .map((p) => ({ what: p.what.slice(0, 430), at: p.at })),
+            together: togetherNow(s, m.id),
             /* The recent end of their own one-to-one chat with the user, so
                they walk in remembering it -- theirs only, never anyone else's. */
             oneToOne: recentOneToOne(s, m.id),
@@ -327,6 +337,37 @@ export function CircleChat({
             {topic && <span style={{ color: "var(--accent)" }}> · about {topic}</span>}
           </div>
         </div>
+        <Menu
+          label={`More for ${circle.name}`}
+          items={[
+            { label: "Edit group", onSelect: onEdit },
+            /* The same as one to one: the room goes along with it, and you kick it off. */
+            {
+              label: "Start a story with everyone",
+              onSelect: () => {
+                update((cur) => ({ ...cur, circles: (cur.circles ?? []).map((c) => (c.id === circle.id
+                  ? { ...c, topic: "a story we all play out together, saying yes to it" } : c)) }));
+                if (box.current) box.current.value = "let's play out a story, all of us 🎬 pitch me three ideas and we'll pick one";
+                void sendDraft();
+              },
+            },
+            "divider",
+            {
+              label: "Clear this chat",
+              disabled: !log.length,
+              onSelect: () => {
+                if (confirm(`Clear the conversation in ${circle.name}? Everyone keeps what they remember.`)) update((cur) => deleteConversation(cur, circle.id, false));
+              },
+            },
+            {
+              label: "Delete group",
+              danger: true,
+              onSelect: () => {
+                if (confirm(`Delete ${circle.name}? The people in it stay, with their own chats.`)) { onBack(); update((cur) => deleteCircle(cur, circle.id)); }
+              },
+            },
+          ]}
+        />
       </header>
 
       <div className="thread" role="log" aria-live="polite" aria-label={`Conversation in ${circle.name}`}>
@@ -469,10 +510,9 @@ export function CircleChat({
           id="circle-composer"
           ref={box}
           rows={1}
-          value={draft}
           placeholder={`Write to ${circle.name}`}
           onChange={(e) => {
-            setDraft(e.target.value);
+            setHasDraft(e.target.value.trim().length > 0);
             loop.hold();
             const el = box.current;
             if (el) { el.style.height = "auto"; el.style.height = `${Math.min(el.scrollHeight, 128)}px`; }
@@ -482,7 +522,7 @@ export function CircleChat({
             if (e.key === "Escape" && replyTo) setReplyTo(null);
           }}
         />
-        <button className="send" onClick={() => void sendDraft()} disabled={!draft.trim() && !attach.draft}>Send</button>
+        <button className="send" onClick={() => void sendDraft()} disabled={!hasDraft && !attach.draft}>Send</button>
       </div>
     </main>
   );
