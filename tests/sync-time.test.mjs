@@ -304,6 +304,8 @@ check("the hour is said last, in their timezone, with what that hour looks like"
   const ist = nowBlock("Piyush", "Asia/Kolkata", at);
   assert.match(ist, /WEDNESDAY.*00:00 -- THE MIDDLE OF THE NIGHT/);
   assert.match(ist, /can't sleep/);
+  assert.match(ist, /Late-night talk/, "after 11pm she is softer");
+  assert.doesNotMatch(nowBlock("Piyush", "Europe/London", at), /Late-night talk/, "not at 19:30");
   assert.match(nowBlock("Piyush", "Europe/London", at), /19:30 -- EVENING/);
   assert.match(nowBlock("Piyush", "Europe/London", Date.parse("2026-10-06T07:00:00Z")), /MORNING/);
   assert.match(nowBlock("Piyush", "Asia/Kolkata", Date.parse("2026-10-06T17:00:00Z")), /22:30 -- LATE AT NIGHT/);

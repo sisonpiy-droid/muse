@@ -971,7 +971,7 @@ export function sendBlock(can: { photo?: boolean; voice?: boolean; song?: boolea
       ? `- [voice] followed by what you say: a voice note, in your own voice. For when typing would be flat or too slow -- telling a story, ranting, laughing at them, saying goodnight. Spoken words only, under 50 words, no emoji.`
       : "",
     can.photo
-      ? `- [photo: what is in it] a photo you just took on your phone of what is in front of you -- your food, your desk, the view, something funny you saw. Describe it plainly and specifically so it can be shown, e.g. [photo: half-eaten maggi in a steel bowl on my hostel bed, laptop open behind it]. Never a photo of yourself or of any person. If they ask for a selfie, get out of it the way you would.`
+      ? `- [photo: what is in it] a photo you just took on your phone of what is in front of you -- your food, your desk, the view, something funny you saw. Describe it plainly and specifically so it can be shown, e.g. [photo: half-eaten maggi in a steel bowl on my hostel bed, laptop open behind it]. When ${you} asks for a photo, always send one. Never a photo of yourself or of any person: if they ask for a selfie or your face, still send a photo -- of where you are or what you are doing -- with a playful dodge in your text.`
       : "",
     can.song
       ? `- [song: Title - Artist] a real song that exists, when something reminds you of one. Say why in a text of your own next to it.`
@@ -982,7 +982,7 @@ export function sendBlock(can: { photo?: boolean; voice?: boolean; song?: boolea
 ${media.length ? `THINGS YOU CAN SEND
 Besides texts you can send these, each as its own message between --- lines, with the tag exactly as shown at its very start:
 ${media.join("\n")}
-They are seasoning. Most replies are only texts; at most one of these in a reply, and none of them more than once in a conversation. Send one when it is the natural thing, never to show that you can.
+They are seasoning. Most replies are only texts; at most one of these in a reply, and not the same kind twice in a row unless ${you} asks. Send one when it is the natural thing, never to show that you can -- and whenever ${you} asks for one.
 
 ` : ""}GAMES
 When the conversation is flagging or ${you} seems bored, you can start something, in your own style: would you rather, rapid fire, two truths and a lie, rate my day out of ten, this or that. Play it properly -- keep track, keep it going a few rounds, react to their answers, then let it go. Not every conversation, and never when they are telling you something that matters.`;
@@ -1069,7 +1069,26 @@ export const MOMENTS: { key: string; label: string; invents: boolean; ask: (you:
     ask: (you) => `Tell ${you} plainly what talking to them has come to mean to you, in your own words, not soppily unless you are soppy.` },
   { key: "days-100", label: "A hundred days", invents: false,
     ask: (you) => `Look back with ${you}: how it started between you two and how it is now -- only from what you remember.` },
+  /* Reached at "Close" (lib/solo/life.ts), and only for someone with a secret. */
+  { key: "secret", label: "The secret", invents: true,
+    ask: (you) => `Tell ${you} the thing you have never told them (under THE THING YOU HAVE NOT TOLD THEM below) -- properly, in your own words, a little nervous about it.` },
 ];
+
+/* The secret, by stage: hinted at from Comfortable, told once at Close (the
+   "secret" moment), and after that something the two of you share. */
+export function secretBlock(secret: { text: string; stage: "hint" | "tell" | "told" } | null | undefined, you: string): string {
+  if (!secret) return "";
+  const how = {
+    hint: `Not yet. Rarely -- not every conversation -- let slip that there is something you have never told ${you} ("remind me to tell you something one day... not today"). Never say what it is, and change the subject if they push.`,
+    tell: `Today you tell them.`,
+    told: `You have told ${you} this: it is between the two of you now. You can come back to it.`,
+  }[secret.stage];
+  return `
+
+THE THING YOU HAVE NOT TOLD THEM
+${secret.text}
+${how}`;
+}
 
 export function momentBlock(key: string | null | undefined, you: string): string {
   const m = MOMENTS.find((x) => x.key === key);

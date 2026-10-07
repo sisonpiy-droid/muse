@@ -4,7 +4,7 @@ import { streamGuarded, userFacingError } from "@/lib/ai";
 import { looksLikeRefusal } from "@/lib/ai/refusal";
 import { buildMuseSystemPrompt } from "@/lib/muse/prompt";
 import {
-  coveredBlock, coveredGround, lifeBlock, momentBlock, personaSystem, promiseBlock, quizBlock, romanceAllowed, bondBlock, heardBlock, callbackBlock, romanceBlock,
+  coveredBlock, coveredGround, lifeBlock, momentBlock, personaSystem, promiseBlock, quizBlock, romanceAllowed, bondBlock, heardBlock, callbackBlock, secretBlock, romanceBlock,
   sendBlock, sharedBlock, togetherBlock, withQuote, wornBlock, yesBlock, type Feelings,
 } from "@/lib/presence/persona";
 import { nowBlock, previousMoment, stampPauses, timeBlock } from "@/lib/presence/time";
@@ -177,6 +177,8 @@ const bodySchema = z.object({
   heard: z.array(z.string().max(320)).max(12).default([]),
   /** Something told to them days ago, to bring up unprompted. */
   callback: z.object({ what: z.string().max(300), days: z.number().int().min(0) }).nullish(),
+  /** Something they have never told the user, and where it stands. */
+  secret: z.object({ text: z.string().max(300), stage: z.enum(["hint", "tell", "told"]) }).nullish(),
 });
 
 /* Input bounds matter more here than in the signed-in app: there is no account
@@ -197,7 +199,7 @@ export async function POST(req: Request) {
     return Response.json({ error: "Check the request and try again." }, { status: 400 });
   }
   const { muse, persona, knows, mood, topic, register, feelings, messages, memories, plans, userName, timezone, story, shared, worn, can,
-    life, promises, moment, together, score, bond, heard, callback } = parsed.data;
+    life, promises, moment, together, score, bond, heard, callback, secret } = parsed.data;
   const tz = timezone ?? undefined;
   /* The server's clock, not the phone's: a phone set five minutes wrong should
      not move a meeting. Timestamps on messages are compared against it. */
@@ -285,6 +287,7 @@ export async function POST(req: Request) {
       togetherBlock(together, userName || "them") +
       bondBlock(bond, userName || "them") +
       heardBlock(heard, userName || "them") +
+      secretBlock(secret, userName || "them") +
       (knows?.length
         ? `
 

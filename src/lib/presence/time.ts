@@ -214,7 +214,8 @@ export function nowBlock(you: string, timeZone: string | undefined, now: number)
 
 IT IS ${time.toUpperCase()} -- ${part.toUpperCase()} -- FOR YOU BOTH
 Everything you say fits this hour, over anything above that suggests another time of day:
-- Right now ${day}.
+- Right now ${day}.${h >= 23 || h < 5 ? `
+- Late-night talk: softer, more honest and more personal than in the day. This is when you say what you would not say at noon -- a worry, a memory, what ${you} means to you.` : ""}
 - Greet for the hour or not at all: no "good morning" unless it is morning, no "good night" before it is night.
 - Your own news fits the clock: what already happened today is earlier, what is still coming is later. At night lunch is long over; in the morning last night was last night.
 - If ${you} says something that does not fit the hour, you can notice it the way a person would.`;

@@ -47,6 +47,8 @@ export interface LifeStep {
   arcs: { id?: string; title: string; beat: string | null; done?: boolean }[];
   /** Beats she has told them since last time. */
   told: string[];
+  /** Their secret, when one was asked for. */
+  secret?: string | null;
 }
 
 /** Folds a day of her life into the state. Pure. */
@@ -69,7 +71,8 @@ export function applyLife(s: SoloState, museId: string, step: LifeStep, now = Da
   arcs = arcs.filter((a) => !a.done || now - Date.parse(a.beats.at(-1)?.at ?? at) < 7 * DAY);
   const active = arcs.filter((a) => !a.done).slice(-3);
   arcs = [...arcs.filter((a) => a.done), ...active];
-  const life: Life = { arcs, advancedAt: at };
+  const secret = s.lives?.[museId]?.secret ?? (step.secret?.trim().slice(0, 300) || undefined);
+  const life: Life = { arcs, advancedAt: at, ...(secret ? { secret } : {}) };
   return { ...s, lives: { ...(s.lives ?? {}), [museId]: life } };
 }
 
@@ -104,12 +107,13 @@ export async function advanceLife(s: SoloState, museId: string, update: Update):
           id: a.id, title: a.title, beats: a.beats.slice(-3).map((b) => ({ id: b.id, text: b.text })),
         })),
         said,
+        needSecret: !life?.secret,
       }),
     });
     if (!res.ok) return;
     const step = (await res.json()) as LifeStep;
     if (!Array.isArray(step.arcs)) return;
-    update((cur) => (lifeDue(cur, museId) ? applyLife(cur, museId, { arcs: step.arcs, told: step.told ?? [] }) : cur));
+    update((cur) => (lifeDue(cur, museId) ? applyLife(cur, museId, { arcs: step.arcs, told: step.told ?? [], secret: step.secret }) : cur));
   } catch {
     /* she keeps the week she had */
   } finally {
@@ -140,6 +144,8 @@ const REACHED: Record<string, (x: ReturnType<typeof storyOf>) => boolean> = {
   "messages-500": (x) => x.messages >= 500,
   "days-30": (x) => x.daysTalked >= 30,
   "days-100": (x) => x.daysTalked >= 100,
+  /* Close, as bondOf counts it. */
+  secret: (x) => x.yours + 12 * x.daysTalked + 25 * x.calls >= LEVELS[3].at,
 };
 
 /* What is left before each one, for the story page's "next". */
@@ -152,6 +158,7 @@ const TO_GO: Record<string, (x: ReturnType<typeof storyOf>) => string> = {
   "messages-500": (x) => `${500 - x.messages} more messages`,
   "days-30": (x) => `${30 - x.daysTalked} more days of talking`,
   "days-100": (x) => `${100 - x.daysTalked} more days of talking`,
+  secret: () => `getting Close`,
 };
 
 const portraitOfSomeoneReal = (m: SoloMuse | undefined) => {
@@ -168,7 +175,8 @@ export function momentDue(s: SoloState, museId: string, now = Date.now(), tz?: s
   if (had.some((u) => now - Date.parse(u.at) < 20 * HOUR)) return null;
   const story = storyOf(s, museId, now, tz);
   const real = portraitOfSomeoneReal(muse);
-  const next = MOMENTS.find((m) => !had.some((u) => u.key === m.key) && !(real && m.invents) && REACHED[m.key]?.(story));
+  const next = MOMENTS.find((m) => !had.some((u) => u.key === m.key) && !(real && m.invents) && REACHED[m.key]?.(story)
+    && (m.key !== "secret" || !!s.lives?.[museId]?.secret));
   return next?.key ?? null;
 }
 
@@ -217,6 +225,18 @@ export function bondOf(s: SoloState, museId: string, now = Date.now(), tz?: stri
     progress: next ? (points - LEVELS[level].at) / (next.at - LEVELS[level].at) : 1,
     next: next ? { label: next.label, toGo: next.at - points } : null,
   };
+}
+
+/* ---------------------------------------------------------------- secret */
+
+/** Their secret and where it stands: hinted from Comfortable, told when the
+ *  "secret" moment is due, shared once it has been. Null below Comfortable. */
+export function secretFor(s: SoloState, museId: string, moment: string | null | undefined, now = Date.now()) {
+  const text = hasOwnLife(findMuse(s, museId)) ? s.lives?.[museId]?.secret : undefined;
+  if (!text) return null;
+  if (moment === "secret") return { text, stage: "tell" as const };
+  if ((s.unlocked?.[museId] ?? []).some((u) => u.key === "secret")) return { text, stage: "told" as const };
+  return (bondOf(s, museId, now)?.level ?? 0) >= 2 ? { text, stage: "hint" as const } : null;
 }
 
 /* ------------------------------------------------------------------ quiz */

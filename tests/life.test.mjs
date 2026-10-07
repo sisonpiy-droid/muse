@@ -304,6 +304,23 @@ check("a goodbye is recognised, and ordinary words are not", () => {
   for (const t of ["maybe", "gnocchi tonight?", "byte", "sonu ja raha hai market"]) assert.ok(!life.saidBye(t), t);
 });
 
+check("a secret is hinted from Comfortable, told once at Close, then shared", () => {
+  const msgs = (n, days) => Array.from({ length: n }, (_, i) => ({ id: `s${i}`, from: i % 2 ? "muse" : "user", content: "hi", at: new Date(NOW - (i % days) * 864e5).toISOString() }));
+  const withSecret = (n, days) => ({ ...blank(), conversations: { [RHEA]: msgs(n, days) }, lives: { [RHEA]: { arcs: [], advancedAt: hoursAgo(1), secret: "She almost moved to Berlin and never said why she stayed." } } });
+  assert.equal(life.secretFor(withSecret(10, 1), RHEA, null, NOW), null, "Just met: not even a hint");
+  assert.equal(life.secretFor(withSecret(300, 3), RHEA, null, NOW).stage, "hint", "Comfortable: hints");
+  const close = withSecret(800, 10);
+  assert.equal(life.momentDue(close, RHEA, NOW, "UTC") !== null, true);
+  assert.equal(life.secretFor(close, RHEA, "secret", NOW).stage, "tell");
+  const after = life.unlock(close, RHEA, "secret", NOW);
+  assert.equal(life.secretFor(after, RHEA, null, NOW).stage, "told");
+  assert.equal(life.secretFor({ ...blank(), conversations: { [RHEA]: msgs(800, 10) } }, RHEA, null, NOW), null, "no secret yet: nothing");
+  const kept = life.applyLife(withSecret(1, 1), RHEA, { arcs: [], told: [], secret: "something else" }, NOW);
+  assert.match(kept.lives[RHEA].secret, /Berlin/, "the first secret is kept");
+  assert.equal(life.applyLife(blank(), RHEA, { arcs: [], told: [], secret: "  writes poems  " }, NOW).lives[RHEA].secret, "writes poems");
+  assert.match(persona.secretBlock({ text: "x", stage: "hint" }, "Piyush"), /Never say what it is/);
+});
+
 let pass = 0, fail = 0;
 for (const [n, f] of results) {
   try { await f(); console.log(`  PASS  ${n}`); pass++; }

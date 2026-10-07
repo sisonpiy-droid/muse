@@ -109,7 +109,7 @@ check("each kind of media rests for a while after it was sent, and photos never 
   const on = { now, roll: 0 };
   assert.deepEqual(mediaAllowed(s("living", []), "m", on), { photo: true, voice: true, song: true });
   const recent = [
-    { id: "a", from: "muse", content: "(sent a photo: x)", at: at(2), image: { id: "i", w: 1, h: 1 } },
+    { id: "a", from: "muse", content: "(sent a photo: x)", at: at(1.5), image: { id: "i", w: 1, h: 1 } },
     { id: "b", from: "muse", content: "hi", at: at(1), voiceNote: { id: "v", seconds: 3 } },
     { id: "c", from: "muse", content: "(sent a song: s)", at: at(20), song: { title: "s", artist: "" } },
   ];
@@ -120,7 +120,7 @@ check("each kind of media rests for a while after it was sent, and photos never 
   assert.deepEqual(mediaAllowed(s("living", []), "m", { ...on, canStore: false }), { photo: false, voice: false, song: true });
 });
 
-check("unasked, media is on offer only some turns; asked for, it is on offer unless one was just sent", () => {
+check("unasked, media is on offer only some turns; asked for, it is always on offer", () => {
   const now = Date.parse("2026-10-02T12:00:00Z");
   const s = (log) => ({ ...blank(), muses: [{ id: "m", name: "X", description: "d", relationshipType: "friend", persona: { mode: "living" } }], conversations: { m: log } });
   const said = (content) => ({ id: "u", from: "user", content, at: new Date(now).toISOString() });
@@ -129,7 +129,9 @@ check("unasked, media is on offer only some turns; asked for, it is on offer unl
   assert.equal(mediaAllowed(s([said("ek voice note bhej")]), "m", { now, roll: 0.9 }).voice, true);
   assert.equal(mediaAllowed(s([said("koi gaana suggest kar")]), "m", { now, roll: 0.9 }).song, true);
   const justSent = [{ id: "a", from: "muse", content: "(sent a photo: x)", at: new Date(now - 5 * 60_000).toISOString(), image: { id: "i", w: 1, h: 1 } }, said("ek aur photo")];
-  assert.equal(mediaAllowed(s(justSent), "m", { now, roll: 0 }).photo, false);
+  assert.equal(mediaAllowed(s(justSent), "m", { now, roll: 0 }).photo, true, "asked again right after one: still sent");
+  assert.equal(mediaAllowed(s([said("show me your room")]), "m", { now, roll: 0.9 }).photo, true);
+  assert.equal(mediaAllowed(s([said("image bhej")]), "m", { now, roll: 0.9 }).photo, true);
   /* The roll comes from the message, so asking again is not a re-roll. */
   const log = [said("hmm")];
   assert.deepEqual(mediaAllowed(s(log), "m", { now }), mediaAllowed(s(log), "m", { now }));

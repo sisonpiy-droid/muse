@@ -96,7 +96,12 @@ export interface SoloMessage {
    on a little every day. See lib/solo/life.ts. */
 export interface LifeBeat { id: string; at: string; text: string; told?: boolean }
 export interface LifeArc { id: string; title: string; done?: boolean; beats: LifeBeat[] }
-export interface Life { arcs: LifeArc[]; advancedAt: string }
+export interface Life {
+  arcs: LifeArc[];
+  advancedAt: string;
+  /** Something they have never told the user, invented once (lib/solo/life.ts). */
+  secret?: string;
+}
 
 /** A moment unlocked by how far the two of you have come. */
 export interface Unlocked { key: string; at: string }
@@ -1541,20 +1546,18 @@ export const isMediaCaption = (content: string) => /^\(sent a (photo|song)[:)]/.
 /* How often each one is on offer, per conversation. They are seasoning: a
    photo every few hours is someone sharing their day, every message is a bot.
    A photo also costs real money to make. */
-const MEDIA_GAP_MS = { photo: 8 * 3_600_000, voice: 3 * 3_600_000, song: 24 * 3_600_000 };
+const MEDIA_GAP_MS = { photo: 2 * 3_600_000, voice: 3 * 3_600_000, song: 24 * 3_600_000 };
 
 export interface MediaAllowed { photo: boolean; voice: boolean; song: boolean }
 
 /* Asked for outright: "photo bhej", "send a voice note", "koi gaana suggest kar". */
 const ASKED = {
-  photo: /\b(photo|photos|pic|pics|picture|snap|selfie|tasveer|foto)\b/i,
+  photo: /\b(photo|photos|pic|pics|picture|pictures|image|images|img|snap|selfie|tasveer|foto|show me|dikha|dikhao|dikhana)\b/i,
   voice: /\b(voice ?notes?|vn|voice|audio|awaaz|aawaz|bol ke bhej)\b/i,
   song: /\b(song|songs|gaana|gaane|gana|music|playlist)\b/i,
 };
 /** Unasked, they are on offer about one turn in three. */
 const OFFERED = 0.35;
-/** Asked for, still not straight after the last one. */
-const ASKED_GAP_MS = 20 * 60_000;
 
 export function mediaAllowed(
   state: SoloState,
@@ -1579,7 +1582,8 @@ export function mediaAllowed(
   const roll = opts.roll ?? rollFor(log.at(-1)?.id ?? "");
   const allowed = (kind: keyof typeof MEDIA_GAP_MS, has: (m: SoloMessage) => boolean) => {
     const since = now - lastOf(has);
-    return ASKED[kind].test(said) ? since >= ASKED_GAP_MS : roll < OFFERED && since >= MEDIA_GAP_MS[kind];
+    /* Asked for: always. */
+    return ASKED[kind].test(said) || (roll < OFFERED && since >= MEDIA_GAP_MS[kind]);
   };
   const canStore = opts.canStore !== false;
   return {

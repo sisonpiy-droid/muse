@@ -5,7 +5,7 @@ import {
   QUOTE_CHARS, callbackForTurn, feelingsOf, findMuse, heardForTurn, isMediaCaption, knownTo, mediaAllowed, memoriesForTurn, plansForTurn,
   promisesForTurn, promptPersona, quoteOf, sharedForTurn, windowOf, worthRecalling, type SoloMessage, type SoloMuse, type SoloState,
 } from "./store";
-import { bondOf, lifeForTurn, momentDue, togetherNow } from "./life";
+import { bondOf, lifeForTurn, momentDue, secretFor, togetherNow } from "./life";
 import { photoBase64 } from "./photos";
 import { VIDEO_ONLY, clipLength, framesBase64 } from "./attach";
 import { storyLine, storyOf } from "./story";
@@ -167,6 +167,7 @@ export async function prepareTurn(
     promises: promisesForTurn(s, museId).map((p) => ({ what: p.what.slice(0, 300), ago: Math.round(p.ago) })),
     moment: opts.register === "live" ? null : momentDue(s, museId, Date.now(), Intl.DateTimeFormat().resolvedOptions().timeZone),
     score: s.scores?.[museId] ?? null,
+    secret: secretFor(s, museId, opts.register === "live" ? null : momentDue(s, museId, Date.now(), Intl.DateTimeFormat().resolvedOptions().timeZone)),
     /* What was said about them in the other chats, and an old thing to bring up
        -- not on a call, and not alongside a moment: one special thing a reply. */
     heard: heardForTurn(s, museId),
