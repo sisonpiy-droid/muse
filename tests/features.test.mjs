@@ -286,6 +286,16 @@ check("Romantic is offered only for invented adults who are not family", async (
   assert.ok(!("flirty" in moodsFor(null)));
 });
 
+check("forget about a word deletes the memories that mention it, whole words only", async () => {
+  const { mentions } = await import("../src/lib/solo/store.ts");
+  assert.ok(mentions("Piyush went to Goa in May", "goa"));
+  assert.ok(mentions("goa trip was fun", "Goa"));
+  assert.ok(!mentions("Piyush's goal is to run", "goa"), "not inside another word");
+  assert.ok(mentions("Wants to visit North Goa again", "north goa"));
+  assert.ok(!mentions("anything", "  "));
+  assert.ok(mentions("costs $5 (cheap)", "$5 (cheap)"), "regex characters are literal");
+});
+
 let pass = 0, fail = 0;
 for (const [n, f] of results) {
   try { await f(); console.log(`  PASS  ${n}`); pass++; }

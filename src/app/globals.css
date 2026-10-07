@@ -1191,3 +1191,5 @@ button.tag:disabled { opacity: 0.45; cursor: not-allowed; }
 .bond-bar i { display: block; height: 100%; border-radius: inherit; background: var(--accent); transition: width 400ms var(--ease); }
 .bond-up { margin: 0.75rem 0 0; animation: rise 300ms var(--ease) both; }
 .earlier { align-self: center; margin: 0.5rem 0; font-size: 0.8rem; }
+.forget-about { gap: 0.5rem; margin-top: 1.5rem; }
+.forget-about .input { flex: 1; min-width: 0; }

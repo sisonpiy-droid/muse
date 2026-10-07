@@ -952,6 +952,12 @@ export function editMemory(
 }
 
 /** Forgetting one thing, permanently. */
+/** Whether a memory mentions this word or phrase, whole words only: "goa" is not "goal". */
+export function mentions(content: string, about: string): boolean {
+  const q = about.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return !!q && new RegExp(`(^|[^\\p{L}\\p{N}])${q}($|[^\\p{L}\\p{N}])`, "iu").test(content);
+}
+
 export function deleteMemory(state: SoloState, memoryId: string): SoloState {
   const going = state.memories.find((m) => m.id === memoryId);
   if (!going) return state;

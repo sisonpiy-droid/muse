@@ -3,7 +3,7 @@
 import { useState } from "react";
 
 import { Avatar } from "@/components/Avatar";
-import type { SoloMemory, SoloMuse } from "@/lib/solo/store";
+import { mentions, type SoloMemory, type SoloMuse } from "@/lib/solo/store";
 
 /* Everything a character knows about you, and the ability to be wrong about it.
  *
@@ -152,6 +152,9 @@ export function Memories({
   onForgetAll: () => void;
   onBack: () => void;
 }) {
+  /* "Forget about Goa": every memory that mentions it, in one go. */
+  const [about, setAbout] = useState("");
+  const matching = about.trim() ? memories.filter((m) => mentions(m.content, about)) : [];
   return (
     <main className="shell">
       <header className="row" style={{ justifyContent: "space-between" }}>
@@ -185,8 +188,31 @@ export function Memories({
         </div>
       ) : (
         <>
+          <form
+            className="row forget-about"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!matching.length) return;
+              if (confirm(`Make ${muse.name} forget ${matching.length} ${matching.length === 1 ? "thing" : "things"} about "${about.trim()}"? It will not come back.`)) {
+                matching.forEach((m) => onDelete(m.id));
+                setAbout("");
+              }
+            }}
+          >
+            <input
+              className="input"
+              value={about}
+              onChange={(e) => setAbout(e.target.value)}
+              placeholder="Forget about… (e.g. Goa)"
+              aria-label={`Make ${muse.name} forget everything about`}
+            />
+            <button className="btn" disabled={!matching.length}>
+              {about.trim() ? `Forget ${matching.length}` : "Forget"}
+            </button>
+          </form>
+
           <ul className="memories">
-            {memories.map((m) => (
+            {(matching.length ? matching : memories).map((m) => (
               <Row
                 key={m.id}
                 memory={m}
