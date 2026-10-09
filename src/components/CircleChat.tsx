@@ -15,7 +15,7 @@ import { VIDEO_ONLY, filesOf, keepAttachment } from "@/lib/solo/attach";
 import { deleteImages } from "@/lib/solo/backend";
 import { PHOTO_ONLY } from "@/lib/solo/photos";
 import { videoNote, withPhotos } from "@/lib/solo/turn";
-import { useReplyLoop } from "@/components/useReplyLoop";
+import { backgroundedSince, useReplyLoop } from "@/components/useReplyLoop";
 import { REGISTERS, hasFeelings, splitBurst } from "@/lib/presence/persona";
 import type { Update } from "@/app/solo/page";
 import {
@@ -130,6 +130,7 @@ export function CircleChat({
   /* One round of the room, answering everything the user has said since anyone
      last spoke -- one message or several. */
   async function turn(signal: AbortSignal) {
+    const startedAt = Date.now();
     const s = latest.current;
     const room = circleOf(s, circle.id) ?? circle;
     const people = membersOf(s, room);
@@ -276,7 +277,7 @@ export function CircleChat({
         }
       } catch {
         setSpeaking(null);
-        if (!signal.aborted) setError("You're offline.");
+        if (!signal.aborted && !backgroundedSince(startedAt)) setError("You're offline.");
         break;
       }
     }

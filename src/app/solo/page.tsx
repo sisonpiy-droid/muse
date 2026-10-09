@@ -23,7 +23,7 @@ import { SongCard } from "@/components/SongCard";
 import { Story } from "@/components/Story";
 import { VoiceNote } from "@/components/VoiceNote";
 import { useFollow } from "@/components/useFollow";
-import { useReplyLoop } from "@/components/useReplyLoop";
+import { backgroundedSince, useReplyLoop } from "@/components/useReplyLoop";
 import { MADE_TAB, TABS } from "@/lib/personas";
 import {
   DEFAULT_VIBE, PICKABLE_REGISTERS, REGISTERS, TOPICS, feelingsSummary, hasFeelings, moodsFor, splitBurst,
@@ -1065,6 +1065,7 @@ function SoloChat({
   /* Answers whatever the user has said since the last reply -- one message or
      several. Does nothing if the thread already ends with a reply. */
   async function reply(signal: AbortSignal) {
+    const startedAt = clockNow();
     const s = latest.current;
     const thread = s.conversations[muse.id] ?? [];
     const last = thread[thread.length - 1];
@@ -1149,7 +1150,8 @@ function SoloChat({
       void learnFrom({ museIds: [muse.id], window: [...thread, ...answer].slice(-8), state: s, update });
       oneMore();
     } catch {
-      if (!signal.aborted) setError("You're offline.");
+      /* Lost to the page being in the background: not an error, asked again on return. */
+      if (!signal.aborted && !backgroundedSince(startedAt)) setError("You're offline.");
     } finally {
       setStreaming("");
       setSending(null);

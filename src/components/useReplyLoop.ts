@@ -36,6 +36,19 @@ export const TYPING_PAUSE_MS = 3500;
 /** Opening a conversation that is owed a reply: a moment to settle, then answer. */
 const RESUME_MS = 500;
 
+/* Leaving the page -- another tab, another app on a phone -- makes the browser
+   cut a request in flight. That is not "offline", and not an error: the reply
+   is still owed, and gets asked for again when they are back. */
+let lastHidden = 0;
+if (typeof document !== "undefined") {
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") lastHidden = Date.now();
+  });
+}
+/** Whether the page was in the background at any point since `since` (ms). */
+export const backgroundedSince = (since: number): boolean =>
+  typeof document !== "undefined" && (document.visibilityState === "hidden" || lastHidden >= since);
+
 /* Replies in progress, by conversation. Module-level so a screen that closes
    and opens again sees the reply the previous one started. */
 const flights = new Map<string, AbortController>();
@@ -84,6 +97,7 @@ export function useReplyLoop(
       return;
     }
     const ctrl = new AbortController();
+    const startedAt = Date.now();
     flights.set(key, ctrl);
     notify(key);
     try {
@@ -91,7 +105,11 @@ export function useReplyLoop(
     } finally {
       if (flights.get(key) === ctrl) flights.delete(key);
       notify(key);
-      if (again.current) {
+      /* Cut off by the page going to the background and still unanswered: ask
+         again, now if they are already back, or when they come back (above). */
+      if (!ctrl.signal.aborted && mounted.current && backgroundedSince(startedAt) && owedRef.current()) {
+        if (document.visibilityState === "visible") schedule(RESUME_MS);
+      } else if (again.current) {
         again.current = false;
         if (mounted.current) schedule();
         else void fire();
