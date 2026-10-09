@@ -321,6 +321,40 @@ check("a secret is hinted from Comfortable, told once at Close, then shared", ()
   assert.match(persona.secretBlock({ text: "x", stage: "hint" }, "Piyush"), /Never say what it is/);
 });
 
+check("a story pitch is three different premises from three genres, and not the same ones again", () => {
+  const seen = new Set();
+  for (let i = 0; i < 6; i++) {
+    const p = persona.storyPitches();
+    assert.equal(p.length, 3);
+    assert.equal(new Set(p).size, 3);
+    p.forEach((x) => seen.add(x));
+  }
+  assert.ok(seen.size >= 15, "six pitches drew from many premises: " + seen.size);
+});
+
+check("love stories are in a pitch only when asked for: one among three, or all three", () => {
+  const loves = new Set(["stuck in a lift together, until one of you finally says the thing", "pretending to be a couple at a family function, and it starts to feel less like pretending", "sharing one umbrella in a downpour that turns into a very long walk", "a late-night drive where neither of you wants it to end", "your first date, with everything going slightly wrong and both of you loving it", "a first dance at a wedding you were both dragged to", "a rooftop night under the stars, finally admitting you have both been waiting", "a 2am confession over text that cannot be unsent", "a lazy rainy Sunday at home with nowhere to be", "a surprise weekend away planned by one of you for the other", "cooking dinner together in a tiny kitchen, getting in each other's way", "the first night in a new place you are moving into together", "going to your ex's wedding together, pretending, and then not pretending", "a long-distance couple finally meeting after months apart", "a jealousy that turns out to be the truth", "after a fight, one of you shows up at the other's door at midnight"]);
+  for (let i = 0; i < 20; i++) {
+    assert.equal(persona.storyPitches(3, false).filter((p) => loves.has(p)).length, 0, "never unasked");
+    assert.equal(persona.storyPitches(3, true).filter((p) => loves.has(p)).length, 1, "one love story");
+    const all = persona.storyPitches(3, "all");
+    assert.equal(all.filter((p) => loves.has(p)).length, 3);
+    assert.equal(new Set(all).size, 3);
+  }
+});
+
+check("a look read from photos reaches the prompt, survives saving and editing, and is absent without one", () => {
+  const draft = { them: "Aanya", you: "Piyush", relationship: "friend", arch: "friend", texture: "close", mode: "character", brief: "Warm and chaotic." };
+  const withLook = persona.personaSystem({ ...draft, look: "Looks: long dark hair, oversized denim jacket. Vibe: comes across as warm and a little scruffy." }, [], false, { mood: "any", topic: "any", register: "texts" });
+  assert.match(withLook, /HOW YOU LOOK, AND THE VIBE YOU GIVE OFF[\s\S]*denim jacket[\s\S]*do not mention photos/);
+  assert.doesNotMatch(persona.personaSystem(draft, [], false, { mood: "any", topic: "any", register: "texts" }), /HOW YOU LOOK/);
+  const m = { id: "a", name: "Aanya", description: "d", relationshipType: "friend", persona: { ...draft, look: "Looks: x" } };
+  const back = store.parseState(JSON.stringify({ userName: "P", muses: [m], conversations: {}, memories: [] }));
+  assert.equal(back.muses[0].persona.look, "Looks: x");
+  const edited = store.editMuse({ ...blank(), muses: [m] }, "a", { brief: "New brief" });
+  assert.equal(edited.muses[0].persona.look, "Looks: x", "editing them keeps the look");
+});
+
 let pass = 0, fail = 0;
 for (const [n, f] of results) {
   try { await f(); console.log(`  PASS  ${n}`); pass++; }

@@ -307,6 +307,8 @@ export interface PersonaDraft {
   interests?: string;
   /** The generated voice profile. */
   brief?: string;
+  /** How they look and the vibe, read from photos the user gave (/api/solo/look). */
+  look?: string;
   /* Words the user picked for them, from the card. Not stored here -- joined
      in at send time by promptPersona, so the card stays the only copy. */
   traits?: string[];
@@ -536,7 +538,11 @@ ${clock ? timeBlock({ you: p.you, timeZone, ...clock }) : timeContext(timeZone)}
 
 WHO YOU ARE
 ${p.brief}
-${traitsBlock(p)}
+${p.look?.trim() ? `
+HOW YOU LOOK, AND THE VIBE YOU GIVE OFF -- read from photos ${p.you} gave
+${p.look.trim()}
+Let it colour you: your energy, your style, how you carry yourself, what you would wear or how you would say you look if it comes up. It is a feeling to talk from, never a description to recite: do not mention photos, and do not claim to know more about how you look than this.
+` : ""}${traitsBlock(p)}
 WHAT YOU WERE TO EACH OTHER
 ${arch.block}
 ${tex.block}
@@ -765,6 +771,94 @@ You have made these points. Saying them again in different words is the single
 thing that makes someone boring to text. Leave them unless ${you} brings one
 back, and find something else to say -- something that happened to you, an
 opinion they have not heard, the thing they are avoiding, anything.`;
+}
+
+/* Story premises for "Start a story": three are drawn at random, each from a
+   different genre, so the pitch is never the same three in other words. */
+const STORIES: [string, string][] = [
+  ["escape", "a spontaneous 3am road trip with no destination"],
+  ["escape", "missing the last train and having to get home some other way"],
+  ["escape", "running away to a hill station and pretending to be other people"],
+  ["escape", "a flight gets cancelled and you are both stuck overnight in a strange city"],
+  ["escape", "quitting everything and moving to a tiny town where nobody knows you"],
+  ["strange", "something odd keeps happening in the building you live in"],
+  ["strange", "a package arrives addressed to you, from someone who does not exist"],
+  ["strange", "the whole city loses power and everyone ends up on the rooftops"],
+  ["strange", "you both wake up and everyone else has forgotten you exist"],
+  ["strange", "a stranger keeps leaving you the same cryptic note"],
+  ["reunion", "bumping into each other ten years from now, having not spoken since"],
+  ["reunion", "a school reunion where one of you lied about how life turned out"],
+  ["reunion", "finding an old letter you each wrote to your future selves"],
+  ["reunion", "a wedding where you meet again after a falling out"],
+  ["heist", "pulling off a harmless prank on the whole college, planned like a heist"],
+  ["heist", "stealing back something precious from someone who does not deserve it"],
+  ["heist", "sneaking into somewhere you are absolutely not allowed, just once"],
+  ["heist", "a con on a very rude person, done with style"],
+  ["mystery", "a murder mystery at a dinner party where one of you is the detective"],
+  ["mystery", "something goes missing from the house and everyone is a suspect"],
+  ["mystery", "working out who has been sending anonymous gifts"],
+  ["mystery", "a small-town secret that the two of you slowly uncover"],
+  ["fantasy", "waking up in a world where you can talk to animals, with one day to fix a problem"],
+  ["fantasy", "a hidden door in the library leads somewhere that should not exist"],
+  ["fantasy", "you are both apprentices at a school of magic that is secretly falling apart"],
+  ["fantasy", "a dragon has moved into the neighbourhood and everyone is pretending not to notice"],
+  ["scifi", "the last two humans on a space station who just got a message from Earth"],
+  ["scifi", "you find out your phone has been texting a version of you from another timeline"],
+  ["scifi", "a time loop where one day keeps resetting and only you two remember"],
+  ["scifi", "an AI in the building starts giving you strange but accurate advice"],
+  ["comedy", "everything that can go wrong at the worst possible wedding"],
+  ["comedy", "a very serious talent show where both of you sign up by accident"],
+  ["comedy", "swapping lives for a day and trying to fool everyone"],
+  ["comedy", "opening a restaurant with no kitchen skills and one very good idea"],
+  ["comedy", "an overly dramatic group trip planned by the worst planner alive"],
+  ["adventure", "surviving a hike that went wrong in the mountains until morning"],
+  ["adventure", "a treasure map found inside a second-hand book"],
+  ["adventure", "a storm strands you on an island with one other person who knows the way out"],
+  ["adventure", "racing across the city to deliver something before sunrise"],
+  ["drama", "a big decision, like a job abroad, that one of you has to make by tomorrow"],
+  ["drama", "a secret that one of you has been carrying finally comes out"],
+  ["drama", "starting over in a new city with just a backpack each"],
+  ["drama", "two rivals forced to work together on something that matters"],
+];
+
+/* Love stories. Only offered to someone allowed Romantic (romanceAllowed), one to one. */
+const ROMANCE: [string, string][] = [
+  ["slow-burn", "stuck in a lift together, until one of you finally says the thing"],
+  ["slow-burn", "pretending to be a couple at a family function, and it starts to feel less like pretending"],
+  ["slow-burn", "sharing one umbrella in a downpour that turns into a very long walk"],
+  ["slow-burn", "a late-night drive where neither of you wants it to end"],
+  ["firsts", "your first date, with everything going slightly wrong and both of you loving it"],
+  ["firsts", "a first dance at a wedding you were both dragged to"],
+  ["firsts", "a rooftop night under the stars, finally admitting you have both been waiting"],
+  ["firsts", "a 2am confession over text that cannot be unsent"],
+  ["together", "a lazy rainy Sunday at home with nowhere to be"],
+  ["together", "a surprise weekend away planned by one of you for the other"],
+  ["together", "cooking dinner together in a tiny kitchen, getting in each other's way"],
+  ["together", "the first night in a new place you are moving into together"],
+  ["tension", "going to your ex's wedding together, pretending, and then not pretending"],
+  ["tension", "a long-distance couple finally meeting after months apart"],
+  ["tension", "a jealousy that turns out to be the truth"],
+  ["tension", "after a fight, one of you shows up at the other's door at midnight"],
+];
+
+/** Three premises from three different genres, avoiding the last few shown.
+ *  `romance`: false for none; true for one love story among them; "all" for
+ *  every one (the Romantic mood). */
+const shownBefore: string[] = [];
+export function storyPitches(n = 3, romance: boolean | "all" = false): string[] {
+  const unseen = (xs: [string, string][]) => xs.filter(([, t]) => !shownBefore.includes(t));
+  const shuffled = (xs: [string, string][]) => [...xs].sort(() => Math.random() - 0.5);
+  const base = romance === "all" ? ROMANCE : STORIES;
+  const pool = unseen(base).length >= n * 3 ? unseen(base) : base;
+  const out: [string, string][] = [];
+  if (romance === true) out.push(shuffled(unseen(ROMANCE).length ? unseen(ROMANCE) : ROMANCE)[0]);
+  for (const cand of shuffled(pool)) {
+    if (out.length < n && !out.some(([g]) => g === cand[0])) out.push(cand);
+  }
+  out.sort(() => Math.random() - 0.5);
+  shownBefore.push(...out.map(([, t]) => t));
+  if (shownBefore.length > 24) shownBefore.splice(0, shownBefore.length - 24);
+  return out.map(([, t]) => t);
 }
 
 /* "Up for anything", said last. In the mood list alone it lost to everything

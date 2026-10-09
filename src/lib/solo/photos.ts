@@ -19,10 +19,10 @@ export const PHOTO_ONLY = "(sent a photo)";
 
 const LONG_SIDE = 1280;
 
-export async function shrink(file: File): Promise<{ blob: Blob; w: number; h: number; mime: string } | null> {
+export async function shrink(file: File, side = LONG_SIDE): Promise<{ blob: Blob; w: number; h: number; mime: string } | null> {
   try {
     const bitmap = await createImageBitmap(file, { imageOrientation: "from-image" } as ImageBitmapOptions);
-    const scale = Math.min(1, LONG_SIDE / Math.max(bitmap.width, bitmap.height));
+    const scale = Math.min(1, side / Math.max(bitmap.width, bitmap.height));
     const w = Math.round(bitmap.width * scale);
     const h = Math.round(bitmap.height * scale);
     const canvas = document.createElement("canvas");
@@ -41,6 +41,13 @@ export async function shrink(file: File): Promise<{ blob: Blob; w: number; h: nu
 
 export async function savePhoto(id: string, blob: Blob): Promise<boolean> {
   return putImage(id, blob);
+}
+
+export async function blobBase64(blob: Blob): Promise<{ mime: string; data: string }> {
+  const buf = new Uint8Array(await blob.arrayBuffer());
+  let bin = "";
+  for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode(...buf.subarray(i, i + 0x8000));
+  return { mime: blob.type || "image/jpeg", data: btoa(bin) };
 }
 
 export async function photoBase64(id: string): Promise<{ mime: string; data: string } | null> {

@@ -121,6 +121,7 @@ const bodySchema = z.object({
       interests: z.string().optional().transform((s) => s?.slice(0, 400)),
       minor: z.boolean().optional(),
       traits: z.array(z.string().max(30)).max(8).optional(),
+      look: z.string().max(1200).optional(),
     })
     .nullish(),
   /* People this Muse shares a circle with. Additive: absent on every request

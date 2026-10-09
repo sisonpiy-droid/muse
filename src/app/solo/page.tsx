@@ -21,12 +21,13 @@ import { useAttach } from "@/components/Attach";
 import { Video } from "@/components/Video";
 import { SongCard } from "@/components/SongCard";
 import { Story } from "@/components/Story";
+import { Look } from "@/components/Look";
 import { VoiceNote } from "@/components/VoiceNote";
 import { useFollow } from "@/components/useFollow";
 import { backgroundedSince, useReplyLoop } from "@/components/useReplyLoop";
 import { MADE_TAB, TABS } from "@/lib/personas";
 import {
-  DEFAULT_VIBE, PICKABLE_REGISTERS, REGISTERS, TOPICS, feelingsSummary, hasFeelings, moodsFor, splitBurst,
+  DEFAULT_VIBE, PICKABLE_REGISTERS, REGISTERS, TOPICS, feelingsSummary, hasFeelings, moodsFor, romanceAllowed, splitBurst, storyPitches,
   vibeSummary, type Vibe,
 } from "@/lib/presence/persona";
 import { safeFilename, transcriptMarkdown } from "@/lib/export";
@@ -84,6 +85,7 @@ type View =
   | { kind: "edit"; museId: string }
   | { kind: "memories"; museId: string }
   | { kind: "story"; museId: string }
+  | { kind: "look"; museId: string }
   /* `tab` is where the new person goes when they were made from inside one. */
   | { kind: "import"; tab?: string }
   | { kind: "invent"; tab?: string }
@@ -443,6 +445,22 @@ export default function SoloPage() {
     );
   }
 
+  if (view.kind === "look") {
+    const muse = findMuse(state, view.museId);
+    if (!muse) { setView({ kind: "home" }); return null; }
+    return shell(
+      <Look
+        key={muse.id}
+        muse={muse}
+        onSave={(look) => update((cur) => ({
+          ...cur,
+          muses: cur.muses.map((m) => (m.id === muse.id && m.persona ? { ...m, persona: { ...m.persona, look: look ?? undefined } } : m)),
+        }))}
+        onBack={() => back()}
+      />
+    );
+  }
+
   if (view.kind === "story") {
     const muse = findMuse(state, view.museId);
     if (!muse) { setView({ kind: "home" }); return null; }
@@ -483,6 +501,7 @@ export default function SoloPage() {
         onEdit={() => go({ kind: "edit", museId: muse.id })}
         onMemories={() => go({ kind: "memories", museId: muse.id })}
         onStory={() => go({ kind: "story", museId: muse.id })}
+        onLook={() => go({ kind: "look", museId: muse.id })}
         onCall={() => {
           /* Inside the tap, before anything is awaited: mobile browsers only
              allow sound that a gesture started. */
@@ -909,7 +928,7 @@ function MuseCard({
 /* ------------------------------------------------------------------ chat */
 
 function SoloChat({
-  muse, state, update, onBack, onEdit, onMemories, onCall, onStory,
+  muse, state, update, onBack, onEdit, onMemories, onCall, onStory, onLook,
 }: {
   muse: SoloMuse;
   state: SoloState;
@@ -919,6 +938,7 @@ function SoloChat({
   onMemories: () => void;
   onCall: () => void;
   onStory: () => void;
+  onLook: () => void;
 }) {
   const log = state.conversations[muse.id] ?? [];
   /* The message whose actions are open. One at a time, like any chat app. */
@@ -1436,11 +1456,19 @@ function SoloChat({
             ...(muse.persona ? [{
               label: `Start a story with ${muse.name}`,
               onSelect: () => {
-                setVibe({ ...vibe, mood: "yes" });
-                void appTurn(`(${state.userName ?? "They"} wants to play out a story with you, over text, the two of you in it. Pitch three quick premises, numbered, one line each and in your own voice -- a mix, like running away somewhere, something strange happening where you live, a reunion that goes sideways. Ask which one. Once they pick, or say their own, start it and play it fully, chapter by chapter, and remember every choice.)`);
+                /* Romantic stays on if it is: a love story is what it is for. */
+                const flirty = vibe.mood === "flirty" || (vibe.mood === "any" && feelings.mood === "flirty");
+                const loves = !!muse.persona && romanceAllowed(muse.persona);
+                if (!(flirty && loves)) setVibe({ ...vibe, mood: "yes" });
+                const [a, b, c] = storyPitches(3, loves && (flirty ? "all" : true));
+                void appTurn(`(${state.userName ?? "They"} wants to play out a story with you, over text, the two of you in it. Pitch exactly these three premises, numbered, one or two lines each, in your own voice and your own words -- keep each one's idea, do not swap in other ones or add a fourth: 1) ${a}. 2) ${b}. 3) ${c}. Ask which one they want. Once they pick, or say their own, start it and play it fully, chapter by chapter, and remember every choice.)`);
               },
             }] : []),
             { label: `What ${muse.name} remembers`, onSelect: onMemories },
+            /* Someone in public life, or someone made up: photos to take a look and vibe from. */
+            ...(!muse.builtin && (muse.persona?.mode === "figure" || muse.persona?.mode === "character")
+              ? [{ label: muse.persona.look ? `Photos of ${muse.name} (added)` : `Add photos of ${muse.name}`, onSelect: onLook }]
+              : []),
             {
               label: settingsOf(state).proactiveEnabled && settingsOf(state).allowedMuseIds.includes(muse.id)
                 ? `Stop ${muse.name} texting first`

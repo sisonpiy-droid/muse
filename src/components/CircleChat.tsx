@@ -16,7 +16,7 @@ import { deleteImages } from "@/lib/solo/backend";
 import { PHOTO_ONLY } from "@/lib/solo/photos";
 import { videoNote, withPhotos } from "@/lib/solo/turn";
 import { backgroundedSince, useReplyLoop } from "@/components/useReplyLoop";
-import { REGISTERS, hasFeelings, splitBurst } from "@/lib/presence/persona";
+import { REGISTERS, hasFeelings, splitBurst, storyPitches } from "@/lib/presence/persona";
 import type { Update } from "@/app/solo/page";
 import {
   QUOTE_CHARS, circleOf, deleteCircle, deleteConversation, deleteFrom, deleteMessage, editCircle, editMessage, editMuse, feelingsOf,
@@ -348,7 +348,7 @@ export function CircleChat({
               onSelect: () => {
                 update((cur) => ({ ...cur, circles: (cur.circles ?? []).map((c) => (c.id === circle.id
                   ? { ...c, topic: "a story we all play out together, saying yes to it" } : c)) }));
-                if (box.current) box.current.value = "let's play out a story, all of us 🎬 pitch me three ideas and we'll pick one";
+                if (box.current) box.current.value = `let's play out a story, all of us 🎬 pick one: ${storyPitches().map((p, i) => `${i + 1}) ${p}`).join(" ")}`;
                 void sendDraft();
               },
             },
