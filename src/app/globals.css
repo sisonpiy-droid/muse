@@ -1203,3 +1203,28 @@ button.tag:disabled { opacity: 0.45; cursor: not-allowed; }
 .look-add:hover { color: var(--ink); border-color: var(--accent); }
 .look-card { margin-top: 1.25rem; padding: 0.9rem 1rem; border: 1px solid var(--edge); border-radius: var(--r-md); background: var(--surface); font-size: 0.9rem; line-height: 1.5; }
 .look-error { color: var(--danger); font-size: 0.85rem; margin: 0.5rem 0; }
+
+/* The chat list on the home screen: one row per conversation, WhatsApp-style. */
+.chat-list { list-style: none; margin: 0 -0.5rem; padding: 0; }
+.chat-row {
+  display: flex; align-items: center; gap: 0.85rem; width: 100%; padding: 0.7rem 0.5rem;
+  background: none; border: 0; border-bottom: 1px solid var(--edge); color: inherit; font: inherit;
+  text-align: left; cursor: pointer; border-radius: 0;
+}
+.chat-row:hover { background: var(--surface); }
+.chat-row .avatar { flex: 0 0 auto; }
+.chat-row-text { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 0.2rem; }
+.chat-row-top, .chat-row-bottom { display: flex; align-items: baseline; justify-content: space-between; gap: 0.75rem; }
+.chat-row-top b { font-weight: 600; font-size: 1rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-row-time { flex: 0 0 auto; font-size: 0.72rem; color: var(--faint); }
+.chat-row-time.unread { color: var(--accent); }
+.chat-row-preview { min-width: 0; flex: 1; font-size: 0.88rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-row-badge {
+  flex: 0 0 auto; min-width: 1.25rem; height: 1.25rem; padding: 0 0.35rem; border-radius: var(--r-full);
+  background: var(--accent); color: #16121D; font-size: 0.72rem; font-weight: 700; display: grid; place-items: center;
+}
+/* A group's two faces, squeezed into the width of one avatar so the text lines up. */
+.chat-row .stack-avatars { width: 44px; height: 44px; position: relative; }
+.chat-row .stack-avatars .avatar { position: absolute; width: 30px; height: 30px; font-size: 0.85rem; margin: 0; border-width: 2px; }
+.chat-row .stack-avatars .avatar:first-child { top: 0; left: 0; }
+.chat-row .stack-avatars .avatar:nth-child(2) { bottom: 0; right: 0; }

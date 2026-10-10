@@ -107,9 +107,28 @@ const settled = (v: View): View => (v.kind === "call" ? { kind: "chat", museId: 
 
 const depthNow = () => asEntry(window.history.state)?.depth ?? 0;
 
+/* Unread, the way a chat list counts it: texts of theirs since you last had
+   that chat open. Kept per device. */
+const seenKey = (id: string) => `muse-seen-${id}`;
+function markSeen(id: string) {
+  try { localStorage.setItem(seenKey(id), String(Date.now())); } catch { /* the count just stays */ }
+}
+function seenAt(id: string): number | null {
+  try { const v = localStorage.getItem(seenKey(id)); return v ? Number(v) : null; } catch { return null; }
+}
+
 export default function SoloPage() {
   const [state, setState] = useState<SoloState | null>(null);
   const [view, setView] = useState<View>({ kind: "home" });
+  /* Opening a chat reads it, and so does leaving it: what arrived while you
+     were in it is not unread. */
+  const thread = view.kind === "chat" ? view.museId : view.kind === "circle" ? view.circleId : null;
+  const lastThread = useRef<string | null>(null);
+  useEffect(() => {
+    if (lastThread.current && lastThread.current !== thread) markSeen(lastThread.current);
+    if (thread) markSeen(thread);
+    lastThread.current = thread;
+  }, [thread]);
 
   /* Every screen is a history entry.
    *
@@ -548,10 +567,6 @@ type Nav = {
   onTab: (tab: string) => void;
 };
 
-/** How many recent conversations the home screen keeps to hand. The rest of
- *  everyone is one tap away under their tab. */
-const RECENT = 3;
-
 const MADE_BLURB = "Built from your chats, from public life, or made up";
 const CIRCLES_BLURB = "Group chats, with whoever you put in the room";
 
@@ -569,16 +584,17 @@ function blurbOf(tab: string): string {
  * were talking to most recently, because opening a tab to carry on a
  * conversation you had an hour ago is a tap too many. */
 function SoloHome({
-  state, update, onOpen, onImport, onInvent, onFigure, onNewCircle, onTab,
+  state, update, onOpen, onImport, onInvent, onFigure, onOpenCircle, onNewCircle, onTab,
 }: { state: SoloState; update: Update } & Nav) {
   const [name, setName] = useState(state.userName ?? "");
   const muses = allMuses(state);
   const circles = state.circles ?? [];
 
-  const recent = muses
-    .filter((m) => (state.conversations[m.id]?.length ?? 0) > 0)
-    .sort((a, b) => lastAt(state, b.id) - lastAt(state, a.id))
-    .slice(0, RECENT);
+  /* Every conversation, people and groups together, newest first. */
+  const chats = [
+    ...muses.filter((m) => (state.conversations[m.id]?.length ?? 0) > 0).map((m) => ({ id: m.id, circle: undefined as SoloCircle | undefined, muse: m })),
+    ...circles.filter((c) => (state.conversations[c.id]?.length ?? 0) > 0).map((c) => ({ id: c.id, circle: c, muse: undefined as SoloMuse | undefined })),
+  ].sort((a, b) => lastAt(state, b.id) - lastAt(state, a.id));
 
   const inCircles = [...new Set(circles.flatMap((c) => c.memberIds))]
     .map((id) => findMuse(state, id))
@@ -624,14 +640,15 @@ function SoloHome({
           {/* The people you are already talking to come first. Making someone
               new is the rarer thing, and four full-width panels of it pushed
               your own chats below the fold on a phone. */}
-          {recent.length > 0 && (
+          {chats.length > 0 && (
             <>
-              <h2 className="section-title">Continue talking</h2>
-              <div className="card-grid">
-                {recent.map((m) => (
-                  <MuseCard key={m.id} muse={m} state={state} onOpen={onOpen} />
+              <h2 className="section-title">Chats</h2>
+              <ul className="chat-list">
+                {chats.map((c) => (
+                  <ChatRow key={c.id} state={state} id={c.id} muse={c.muse} circle={c.circle}
+                    onOpen={c.circle ? onOpenCircle : onOpen} />
                 ))}
-              </div>
+              </ul>
             </>
           )}
 
@@ -889,6 +906,44 @@ function countOf(n: number, one: string, many: string): string {
 
 /* No edit or delete links under the card any more: they sat one mis-tap from
    "delete chat" on a phone, and they are all in the chat's ⋯ menu now. */
+/* One line of the chat list: who, the last thing said, when, and how many of
+   theirs you have not seen. */
+function ChatRow({
+  state, id, muse, circle, onOpen,
+}: {
+  state: SoloState; id: string; muse?: SoloMuse; circle?: SoloCircle; onOpen: (id: string) => void;
+}) {
+  const now = clockNow();
+  const shown = (state.conversations[id] ?? []).filter((m) => !m.showAt || Date.parse(m.showAt) <= now);
+  const last = shown.at(-1);
+  if (!last) return null;
+  const members = circle ? membersOf(state, circle) : [];
+  const label = last.voiceNote ? "🎤 Voice message" : last.video ? "🎥 Video" : last.image ? "📷 Photo" : last.song ? `🎵 ${last.song.title}` : last.content;
+  const who = last.from === "user" ? "You: " : circle && last.speakerId ? `${findMuse(state, last.speakerId)?.name.split(" ")[0] ?? ""}: ` : "";
+  /* Never opened since this was added: only what they said after your last text counts. */
+  const seen = seenAt(id) ?? Date.parse(shown.findLast((m) => m.from === "user")?.at ?? "") ?? 0;
+  const unread = Math.min(99, shown.filter((m) => m.from !== "user" && Date.parse(m.at) > (Number.isFinite(seen) ? seen : 0)).length);
+  return (
+    <li>
+      <button className="chat-row" onClick={() => onOpen(id)}>
+        {circle
+          ? <div className="stack-avatars" aria-hidden>{members.slice(0, 2).map((m) => <Avatar key={m.id} name={m.name} image={m.avatar?.id} />)}</div>
+          : <Avatar name={muse!.name} image={muse!.avatar?.id} />}
+        <div className="chat-row-text">
+          <div className="chat-row-top">
+            <b>{circle ? circle.name : muse!.name}</b>
+            <span className={unread ? "chat-row-time unread" : "chat-row-time"}>{ago(Date.parse(last.at))}</span>
+          </div>
+          <div className="chat-row-bottom">
+            <span className="chat-row-preview">{who}{label}</span>
+            {unread > 0 && <span className="chat-row-badge" aria-label={`${unread} unread`}>{unread}</span>}
+          </div>
+        </div>
+      </button>
+    </li>
+  );
+}
+
 function MuseCard({
   muse, state, onOpen,
 }: {
