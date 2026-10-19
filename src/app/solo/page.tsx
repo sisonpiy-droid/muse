@@ -43,6 +43,8 @@ import {
 import { ensureAvatar, makePicture, recordVoiceNote, voiceFor } from "@/lib/solo/media";
 import { NUDGE_STALE_MS, addPoint, bondOf, saidBye, advanceLife, markStarted, nudgeAt, planDue, readPoint, unlock } from "@/lib/solo/life";
 import { Persister, mergeStates, onOtherTabWrite } from "@/lib/solo/sync";
+import { Account, type CloudStatus } from "@/components/Account";
+import { browserIo, rememberSignIn, signedInEmail, syncOnce } from "@/lib/solo/cloud";
 import { embedTexts, learnFrom } from "@/lib/solo/learn";
 import { PHOTO_ONLY, savePhoto } from "@/lib/solo/photos";
 import { VIDEO_ONLY, filesOf, keepAttachment } from "@/lib/solo/attach";
@@ -86,6 +88,7 @@ type View =
   | { kind: "memories"; museId: string }
   | { kind: "story"; museId: string }
   | { kind: "look"; museId: string }
+  | { kind: "account" }
   /* `tab` is where the new person goes when they were made from inside one. */
   | { kind: "import"; tab?: string }
   | { kind: "invent"; tab?: string }
@@ -259,6 +262,53 @@ export default function SoloPage() {
   /* Texts a Muse sent first: collected into the thread, notification taps
      landed on the right conversation, new reasons offered to the server. */
   useOutreach(state, latestState, update, (museId) => go({ kind: "chat", museId }));
+
+  /* Signed in: the same people and chats on every device (lib/solo/cloud.ts).
+     Syncs when the app opens, a few seconds after something changes, and when
+     you come back to it. Signed out, none of this does anything. */
+  const [cloud, setCloud] = useState<{ email: string | null; status: CloudStatus; at: number | null }>({ email: null, status: "idle", at: null });
+  const syncing = useRef(false);
+  const syncAgain = useRef(false);
+  async function syncCloud() {
+    if (syncing.current) { syncAgain.current = true; return; }
+    const cur = latestState.current;
+    if (!cur) return;
+    syncing.current = true;
+    setCloud((c) => ({ ...c, status: "syncing" }));
+    try {
+      const r = await syncOnce(cur, browserIo);
+      if (r.status === "ok") {
+        rememberSignIn(r.email || signedInEmail());
+        if (r.changed) update((c) => (c === cur ? r.merged : mergeStates(cur, r.merged, c)));
+        setCloud({ email: r.email || signedInEmail(), status: "ok", at: clockNow() });
+      } else if (r.status === "signed-out") {
+        rememberSignIn(null);
+        setCloud({ email: null, status: "idle", at: null });
+      } else {
+        setCloud((c) => ({ ...c, status: r.status as CloudStatus }));
+      }
+    } finally {
+      syncing.current = false;
+      if (syncAgain.current) { syncAgain.current = false; void syncCloud(); }
+    }
+  }
+  /* Whether this device was signed in, read after mount: the server has no localStorage. */
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => { setCloud((c) => ({ ...c, email: signedInEmail() })); }, []);
+  useEffect(() => {
+    if (!cloud.email || !ready) return;
+    const t = setTimeout(() => void syncCloud(), state === persist.current?.persisted ? 0 : 5000);
+    return () => clearTimeout(t);
+    // Again whenever the state changes; syncCloud reads the latest through refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state, cloud.email, ready]);
+  useEffect(() => {
+    if (!cloud.email) return;
+    const onVisible = () => { if (document.visibilityState === "visible") void syncCloud(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cloud.email]);
 
   const banner = saveIssue && state && (
     <div className={saveIssue === "nearly" ? "notice" : "notice notice-bad"} role="alert">
@@ -464,6 +514,20 @@ export default function SoloPage() {
     );
   }
 
+  if (view.kind === "account") {
+    return shell(
+      <Account
+        email={cloud.email}
+        status={cloud.status}
+        syncedAt={cloud.at}
+        onSignedIn={(email) => setCloud({ email, status: "idle", at: null })}
+        onSignedOut={() => setCloud({ email: null, status: "idle", at: null })}
+        onSync={() => void syncCloud()}
+        onBack={() => back()}
+      />
+    );
+  }
+
   if (view.kind === "look") {
     const muse = findMuse(state, view.museId);
     if (!muse) { setView({ kind: "home" }); return null; }
@@ -540,6 +604,8 @@ export default function SoloPage() {
     onOpenCircle: (id: string) => go({ kind: "circle", circleId: id }),
     onNewCircle: () => go({ kind: "new-circle" }),
     onTab: (tab: string) => go({ kind: "tab", tab }),
+    onAccount: () => go({ kind: "account" }),
+    cloudEmail: cloud.email,
   };
 
   if (view.kind === "tab") {
@@ -565,6 +631,9 @@ type Nav = {
   onOpenCircle: (id: string) => void;
   onNewCircle: () => void;
   onTab: (tab: string) => void;
+  onAccount: () => void;
+  /** Set when this device is signed in and syncing. */
+  cloudEmail: string | null;
 };
 
 const MADE_BLURB = "Built from your chats, from public life, or made up";
@@ -584,7 +653,7 @@ function blurbOf(tab: string): string {
  * were talking to most recently, because opening a tab to carry on a
  * conversation you had an hour ago is a tap too many. */
 function SoloHome({
-  state, update, onOpen, onImport, onInvent, onFigure, onOpenCircle, onNewCircle, onTab,
+  state, update, onOpen, onImport, onInvent, onFigure, onOpenCircle, onNewCircle, onTab, onAccount, cloudEmail,
 }: { state: SoloState; update: Update } & Nav) {
   const [name, setName] = useState(state.userName ?? "");
   const muses = allMuses(state);
@@ -610,7 +679,9 @@ function SoloHome({
     <main className="shell">
       <header className="row" style={{ justifyContent: "space-between" }}>
         <p className="mark">Muse</p>
-        <span className="fine">no account · this browser only</span>
+        <button className="link-btn" onClick={onAccount} style={{ textDecoration: "none", fontSize: "0.78rem" }}>
+          {cloudEmail ? `synced · ${cloudEmail}` : "this browser only · sign in to sync"}
+        </button>
       </header>
 
       {!state.userName && (
@@ -734,8 +805,10 @@ function SoloHome({
       )}
 
       <p className="fine" style={{ marginTop: "2.5rem" }}>
-        Every Muse is an AI. Your people, conversations and memories are never stored on a server —
-        clearing this browser&apos;s data deletes them all, and there is no way to get them back.
+        Every Muse is an AI.{" "}
+        {cloudEmail
+          ? "You're signed in, so a copy of your people, chats and memories is stored on the server to sync between your devices. Photos, voice notes and videos stay on the device that made them."
+          : "Your people, conversations and memories are never stored on a server — clearing this browser's data deletes them all, and there is no way to get them back."}
         {settingsOf(state).proactiveEnabled &&
           " The one exception: a text someone has scheduled to send you waits on the server until it is sent."}
       </p>

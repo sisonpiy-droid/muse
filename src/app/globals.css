@@ -1228,3 +1228,10 @@ button.tag:disabled { opacity: 0.45; cursor: not-allowed; }
 .chat-row .stack-avatars .avatar { position: absolute; width: 30px; height: 30px; font-size: 0.85rem; margin: 0; border-width: 2px; }
 .chat-row .stack-avatars .avatar:first-child { top: 0; left: 0; }
 .chat-row .stack-avatars .avatar:nth-child(2) { bottom: 0; right: 0; }
+
+/* A recovery code, shown once. */
+.recovery-code {
+  font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 1.6rem; letter-spacing: 0.12em;
+  margin: 1.25rem 0; padding: 1rem 1.1rem; border: 1px dashed var(--accent); border-radius: var(--r-md);
+  background: var(--surface); text-align: center; user-select: all; overflow-wrap: anywhere;
+}

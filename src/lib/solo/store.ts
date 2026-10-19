@@ -1,6 +1,7 @@
 "use client";
 
 import { MADE_TAB, PERSONAS, TABS, type Persona } from "@/lib/personas";
+import { storyOf } from "./story";
 import { DEFAULT_FEELINGS, type Feelings, type PersonaDraft, type Vibe } from "@/lib/presence/persona";
 import { rankMemories, type RankableMemory } from "@/lib/memory/rank";
 
@@ -259,6 +260,8 @@ export interface SoloState {
   unlocked?: Record<string, Unlocked[]>;
   /** Quiz scores, keyed by Muse. */
   scores?: Record<string, Score>;
+  /** Closeness points banked when a chat was cleared, keyed by Muse, so the level survives it. */
+  bank?: Record<string, number>;
   /* Plans made together that have been started, by the memory id of the plan,
      so a movie night begins once. */
   started?: Record<string, string>;
@@ -382,6 +385,7 @@ export function parseState(raw: string | null | undefined): SoloState {
       lives: parsed.lives ?? {},
       unlocked: parsed.unlocked ?? {},
       scores: parsed.scores ?? {},
+      bank: parsed.bank ?? {},
       started: parsed.started ?? {},
       cutoffs: parsed.cutoffs ?? {},
       digests: parsed.digests ?? {},
@@ -1224,9 +1228,18 @@ export function deleteConversation(
 ): SoloState {
   const conversations = { ...state.conversations };
   delete conversations[threadId];
+  /* Clearing a chat keeps how close you are: its points are banked first. Clearing
+     chat and memories forgets that too. (Calls stay counted on their own.) */
+  const bank = { ...(state.bank ?? {}) };
+  if (alsoForget) delete bank[threadId];
+  else if (findMuse(state, threadId)) {
+    const st = storyOf(state, threadId, Date.now(), Intl.DateTimeFormat().resolvedOptions().timeZone);
+    bank[threadId] = (bank[threadId] ?? 0) + st.yours + 12 * st.daysTalked;
+  }
   return {
     ...state,
     conversations,
+    bank,
     memories: alsoForget ? state.memories.filter((m) => m.museId !== threadId) : state.memories,
   };
 }

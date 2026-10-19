@@ -113,6 +113,8 @@ model User {
   email        String    @unique
   name         String?
   passwordHash String?
+  /// bcrypt of the one-time recovery code shown at sign-up; resets the password without email.
+  recoveryHash String?
   avatarUrl    String?
   timezone     String    @default("UTC")
 
@@ -138,8 +140,22 @@ model User {
   notifications Notification[]
   subscription  Subscription?
   reports       Report[]
+  soloSync      SoloSync?
 
   @@index([deletedAt])
+}
+
+/// The /solo app keeps everything in the browser. Signed in, a copy of that state
+/// (without photos, voice notes or videos, which stay on each device) is kept
+/// here so another phone or computer can pick it up. One row per account.
+model SoloSync {
+  userId    String   @id
+  /// The whole solo state as JSON, embeddings removed.
+  data      String
+  /// Bumped on every write; a write that is not based on the current one is refused.
+  rev       Int      @default(0)
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 // Auth.js adapter tables. Only the credentials provider is wired up for now,

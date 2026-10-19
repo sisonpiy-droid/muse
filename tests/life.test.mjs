@@ -355,6 +355,21 @@ check("a look read from photos reaches the prompt, survives saving and editing, 
   assert.equal(edited.muses[0].persona.look, "Looks: x", "editing them keeps the look");
 });
 
+check("clearing a chat keeps how close you are; clearing chat and memories forgets it", () => {
+  const msgs = (n, days) => Array.from({ length: n }, (_, i) => ({ id: `k${i}`, from: i % 2 ? "muse" : "user", content: "hi", at: new Date(Date.now() - (i % days) * 864e5).toISOString() }));
+  const s = { ...blank(), conversations: { [RHEA]: msgs(600, 20) } };
+  const before = life.bondOf(s, RHEA, Date.now(), "UTC");
+  assert.ok(before.level >= 3, "Close before: " + before.label);
+  const cleared = store.deleteConversation(s, RHEA, false);
+  assert.equal(cleared.conversations[RHEA], undefined);
+  const after = life.bondOf(cleared, RHEA, Date.now(), "UTC");
+  assert.equal(after.level, before.level, "the level survives a clear");
+  const again = store.deleteConversation({ ...cleared, conversations: { [RHEA]: msgs(10, 2) } }, RHEA, false);
+  assert.ok(again.bank[RHEA] > cleared.bank[RHEA], "a second clear adds to the bank");
+  assert.equal(life.bondOf(store.deleteConversation(s, RHEA, true), RHEA, Date.now(), "UTC").level, 0, "clear chat and memories forgets it");
+  assert.equal(store.parseState(JSON.stringify(cleared)).bank[RHEA], cleared.bank[RHEA], "and it is saved");
+});
+
 let pass = 0, fail = 0;
 for (const [n, f] of results) {
   try { await f(); console.log(`  PASS  ${n}`); pass++; }

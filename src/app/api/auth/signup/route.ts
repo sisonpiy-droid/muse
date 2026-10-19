@@ -1,5 +1,6 @@
 import { hashPassword, signupSchema } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { hashRecoveryCode, makeRecoveryCode } from "@/lib/recovery";
 
 /* POST /api/auth/signup — §56.
    Creates the account only; the client signs in afterwards through the
@@ -38,9 +39,12 @@ export async function POST(req: Request) {
     return Response.json({ error: "An account with that email already exists." }, { status: 409 });
   }
 
+  /* Shown once, in this reply; only its hash is kept. */
+  const recoveryCode = makeRecoveryCode();
   const user = await prisma.user.create({
     data: {
       email: normalised,
+      recoveryHash: await hashRecoveryCode(recoveryCode),
       name: name ?? null,
       passwordHash: await hashPassword(password),
       timezone: timezone ?? "UTC",
@@ -49,5 +53,5 @@ export async function POST(req: Request) {
     select: { id: true, email: true, name: true },
   });
 
-  return Response.json({ user }, { status: 201 });
+  return Response.json({ user, recoveryCode }, { status: 201 });
 }

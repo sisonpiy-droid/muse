@@ -102,6 +102,8 @@ export function mergeStates(base: SoloState, theirs: SoloState, ours: SoloState)
     vibes: mergeRecord(base.vibes, theirs.vibes, ours.vibes),
     lives: mergeRecord(base.lives, theirs.lives, ours.lives),
     scores: mergeRecord(base.scores, theirs.scores, ours.scores),
+    /* Points only grow, so the larger of the two is the truth. */
+    bank: mergeRecord(base.bank, theirs.bank, ours.bank, (_b, t, o) => Math.max(t ?? 0, o ?? 0)),
     /* Like tombstones, these only grow: unlocked once is unlocked, started once is started. */
     unlocked: mergeRecord(base.unlocked, theirs.unlocked, ours.unlocked,
       (_b, t, o) => [...t, ...o.filter((x) => !t.some((y) => y.key === x.key))]),

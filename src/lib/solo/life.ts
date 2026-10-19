@@ -135,7 +135,7 @@ export function lifeForTurn(s: SoloState, museId: string): { title: string; beat
 
 /* --------------------------------------------------------------- moments */
 
-const REACHED: Record<string, (x: ReturnType<typeof storyOf>) => boolean> = {
+const REACHED: Record<string, (x: ReturnType<typeof storyOf>, bank: number) => boolean> = {
   "days-3": (x) => x.daysTalked >= 3,
   "call-1": (x) => x.calls >= 1,
   "days-7": (x) => x.daysTalked >= 7,
@@ -145,7 +145,7 @@ const REACHED: Record<string, (x: ReturnType<typeof storyOf>) => boolean> = {
   "days-30": (x) => x.daysTalked >= 30,
   "days-100": (x) => x.daysTalked >= 100,
   /* Close, as bondOf counts it. */
-  secret: (x) => x.yours + 12 * x.daysTalked + 25 * x.calls >= LEVELS[3].at,
+  secret: (x, bank) => bank + x.yours + 12 * x.daysTalked + 25 * x.calls >= LEVELS[3].at,
 };
 
 /* What is left before each one, for the story page's "next". */
@@ -175,7 +175,7 @@ export function momentDue(s: SoloState, museId: string, now = Date.now(), tz?: s
   if (had.some((u) => now - Date.parse(u.at) < 20 * HOUR)) return null;
   const story = storyOf(s, museId, now, tz);
   const real = portraitOfSomeoneReal(muse);
-  const next = MOMENTS.find((m) => !had.some((u) => u.key === m.key) && !(real && m.invents) && REACHED[m.key]?.(story)
+  const next = MOMENTS.find((m) => !had.some((u) => u.key === m.key) && !(real && m.invents) && REACHED[m.key]?.(story, s.bank?.[museId] ?? 0)
     && (m.key !== "secret" || !!s.lives?.[museId]?.secret));
   return next?.key ?? null;
 }
@@ -196,7 +196,7 @@ export function momentsOf(s: SoloState, museId: string, now = Date.now(), tz?: s
   const unlocked = had
     .map((u) => ({ ...u, label: MOMENTS.find((m) => m.key === u.key)?.label ?? u.key }))
     .sort((a, b) => a.at.localeCompare(b.at));
-  const next = open.find((m) => !had.some((u) => u.key === m.key) && !REACHED[m.key]?.(story));
+  const next = open.find((m) => !had.some((u) => u.key === m.key) && !REACHED[m.key]?.(story, s.bank?.[museId] ?? 0));
   return { unlocked, next: next ? { label: next.label, toGo: TO_GO[next.key](story) } : null };
 }
 
@@ -215,7 +215,7 @@ export function bondOf(s: SoloState, museId: string, now = Date.now(), tz?: stri
   const mode = muse?.persona?.mode;
   if (!muse || mode === "memorial" || mode === "figure") return null;
   const st = storyOf(s, museId, now, tz);
-  const points = (mode === "living" ? LEVELS[2].at : 0) + st.yours + 12 * st.daysTalked + 25 * st.calls;
+  const points = (mode === "living" ? LEVELS[2].at : 0) + (s.bank?.[museId] ?? 0) + st.yours + 12 * st.daysTalked + 25 * st.calls;
   const level = LEVELS.findLastIndex((l) => points >= l.at);
   const next = LEVELS[level + 1];
   return {
