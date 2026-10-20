@@ -42,6 +42,8 @@ const bodySchema = z.object({
   said: z.array(z.string().max(400)).max(30).default([]),
   /** They have no secret yet: invent one. */
   needSecret: z.boolean().default(false),
+  /** Make one of the new steps a bad day for them. */
+  rough: z.boolean().default(false),
 });
 
 export async function POST(req: Request) {
@@ -49,7 +51,7 @@ export async function POST(req: Request) {
   try { raw = await req.json(); } catch { return Response.json({ error: "Invalid request." }, { status: 400 }); }
   const parsed = bodySchema.safeParse(raw);
   if (!parsed.success) return Response.json({ error: "Invalid request." }, { status: 400 });
-  const { persona: p, userName, timezone, days, arcs, said, needSecret } = parsed.data;
+  const { persona: p, userName, timezone, days, arcs, said, needSecret, rough } = parsed.data;
   if (p.mode !== "character") return Response.json({ arcs: [], told: [] });
   const you = userName?.trim() || p.you || "them";
 
@@ -87,9 +89,11 @@ Also say which of the steps listed above (by their [id]) the character has now t
 
 ${needSecret ? `
 Also invent one secret they keep: something personal they have never told ${you}, the kind a friend tells you only once they really trust you -- a dream they gave up, a hidden talent, why they really left somewhere, something they are secretly proud or ashamed of${p.minor ? "" : ", a crush they never admitted"}. Specific and in keeping with who they are. Nothing grim (no abuse, crime, illness or death) and nothing about ${you}. One sentence, written as a note about them.
+` : ""}${rough ? `
+This time, one storyline's new step is a bad day for them: something went wrong today -- an embarrassing moment, a disappointment, a stressful deadline, a falling-out with a friend, a plan that collapsed -- the kind of day they would want to vent about to someone they trust. Nothing grim (no death, illness, accident, abuse or crime) and nothing about ${you}. Set that arc's "rough" to true.
 ` : ""}
 Return ONLY JSON, no prose, no code fence:
-{"arcs": [{"id": string|null (null for a new storyline), "title": string (a few words), "beat": string, "done": boolean}], "told": [string]${needSecret ? ', "secret": string' : ""}}`;
+{"arcs": [{"id": string|null (null for a new storyline), "title": string (a few words), "beat": string, "done": boolean${rough ? ', "rough": boolean' : ""}}], "told": [string]${needSecret ? ', "secret": string' : ""}}`;
 
   try {
     const { text } = await getProvider().generateResponse({
@@ -110,6 +114,7 @@ Return ONLY JSON, no prose, no code fence:
         title: String(x.title ?? "").slice(0, 80),
         beat: typeof x.beat === "string" ? x.beat.slice(0, 300) : null,
         done: x.done === true,
+        rough: rough && x.rough === true,
       }))
       .slice(0, 4);
     const told = (Array.isArray(out?.told) ? out.told : []).map(String).filter((x: string) => beatIds.has(x));

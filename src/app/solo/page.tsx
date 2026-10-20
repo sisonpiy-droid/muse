@@ -41,7 +41,7 @@ import {
   type MediaAllowed, type SoloCircle, type SoloMessage, type SoloMuse, type SoloState,
 } from "@/lib/solo/store";
 import { ensureAvatar, makePicture, recordVoiceNote, voiceFor } from "@/lib/solo/media";
-import { NUDGE_STALE_MS, addPoint, bondOf, saidBye, advanceLife, markStarted, nudgeAt, planDue, readPoint, unlock } from "@/lib/solo/life";
+import { NUDGE_STALE_MS, addPoint, bondOf, markRoughTexted, roughDue, saidBye, advanceLife, markStarted, nudgeAt, planDue, readPoint, unlock } from "@/lib/solo/life";
 import { Persister, mergeStates, onOtherTabWrite } from "@/lib/solo/sync";
 import { Account, type CloudStatus } from "@/components/Account";
 import { browserIo, rememberSignIn, signedInEmail, syncOnce } from "@/lib/solo/cloud";
@@ -1455,6 +1455,25 @@ function SoloChat({
     // Re-armed when the time it is due changes, or typing stops or starts.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nudgeDue, hasDraft]);
+
+  /* A bad day: when you open the chat and she had one she has not mentioned,
+     she texts first, wanting you. Once per bad day, and never over a reply
+     that is owed. */
+  const roughSent = useRef(new Set<string>());
+  useEffect(() => {
+    const t = setTimeout(() => {
+      const s = latest.current;
+      const due = roughDue(s, muse.id);
+      if (!due || roughSent.current.has(due.id) || loop.busy || starting || document.visibilityState !== "visible") return;
+      if ((s.conversations[muse.id] ?? []).at(-1)?.from === "user") return;
+      roughSent.current.add(due.id);
+      update((cur) => markRoughTexted(cur, muse.id, due.id));
+      void appTurn(`(You had a rough day today: ${due.text} You are texting ${s.userName ?? "them"} first, because you want them. Tell them what happened in your own words, a bit raw, the way you would to someone you trust: two or three short texts. You want comfort and company, not advice or solutions, and you do not ask whether they have time. Nothing is a crisis.)`, { max: 3 });
+    }, 4000);
+    return () => clearTimeout(t);
+    // When the chat opens, and when her life moves on (a new bad day lands).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [muse.id, state.lives?.[muse.id]]);
 
   /* A plan made together, when its time comes with the chat open: she starts
      it. Checked every minute, and never over a reply that is owed or on its

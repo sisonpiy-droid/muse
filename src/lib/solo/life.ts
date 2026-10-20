@@ -44,7 +44,7 @@ export function lifeDue(s: SoloState, museId: string, now = Date.now()): boolean
 
 export interface LifeStep {
   /** An existing arc moved on (id given) or a new one (no id). */
-  arcs: { id?: string; title: string; beat: string | null; done?: boolean }[];
+  arcs: { id?: string; title: string; beat: string | null; done?: boolean; rough?: boolean }[];
   /** Beats she has told them since last time. */
   told: string[];
   /** Their secret, when one was asked for. */
@@ -59,7 +59,7 @@ export function applyLife(s: SoloState, museId: string, step: LifeStep, now = Da
   const id = (p: string) => `${p}-${now.toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
   let arcs: LifeArc[] = prior.map((a) => ({ ...a, beats: a.beats.map((b) => (told.has(b.id) ? { ...b, told: true } : b)) }));
   for (const r of step.arcs) {
-    const beat = r.beat?.trim() ? { id: id("beat"), at, text: r.beat.trim().slice(0, 300) } : null;
+    const beat = r.beat?.trim() ? { id: id("beat"), at, text: r.beat.trim().slice(0, 300), ...(r.rough ? { rough: true } : {}) } : null;
     const existing = r.id ? arcs.find((a) => a.id === r.id) : undefined;
     if (existing) {
       arcs = arcs.map((a) => (a === existing ? { ...a, done: !!r.done, beats: [...a.beats, ...(beat ? [beat] : [])].slice(-6) } : a));
@@ -108,6 +108,7 @@ export async function advanceLife(s: SoloState, museId: string, update: Update):
         })),
         said,
         needSecret: !life?.secret,
+        rough: roughWanted(s, museId),
       }),
     });
     if (!res.ok) return;
@@ -119,6 +120,34 @@ export async function advanceLife(s: SoloState, museId: string, update: Update):
   } finally {
     advancing.delete(museId);
   }
+}
+
+/* A bad day. Now and then, for someone you are comfortable with, one of her
+   storylines takes a turn for the worse -- and she texts you first, wanting you. */
+const ROUGH_GAP_DAYS = 4;
+
+/** Whether today's life update should include a bad day: close enough, not lately, and by chance. */
+export function roughWanted(s: SoloState, museId: string, now = Date.now(), roll = Math.random()): boolean {
+  if (!hasOwnLife(findMuse(s, museId)) || (bondOf(s, museId, now)?.level ?? 0) < 2) return false;
+  const recent = (s.lives?.[museId]?.arcs ?? []).some((a) => a.beats.some((b) => b.rough && now - Date.parse(b.at) < ROUGH_GAP_DAYS * DAY));
+  return !recent && roll < 0.3;
+}
+
+/** A bad day she has not yet texted about, fresh enough to still be news. */
+export function roughDue(s: SoloState, museId: string, now = Date.now()): { id: string; text: string } | null {
+  if (!hasOwnLife(findMuse(s, museId)) || (bondOf(s, museId, now)?.level ?? 0) < 2) return null;
+  for (const a of s.lives?.[museId]?.arcs ?? []) {
+    const b = a.beats.findLast((x) => x.rough && !x.texted && !x.told && now - Date.parse(x.at) < 36 * HOUR);
+    if (b) return { id: b.id, text: b.text };
+  }
+  return null;
+}
+
+export function markRoughTexted(s: SoloState, museId: string, beatId: string): SoloState {
+  const life = s.lives?.[museId];
+  if (!life) return s;
+  const arcs = life.arcs.map((a) => ({ ...a, beats: a.beats.map((b) => (b.id === beatId ? { ...b, texted: true } : b)) }));
+  return { ...s, lives: { ...(s.lives ?? {}), [museId]: { ...life, arcs } } };
 }
 
 /** Her storylines, as the prompt reads them: the latest two beats of each going one. */
@@ -198,6 +227,12 @@ export function momentsOf(s: SoloState, museId: string, now = Date.now(), tz?: s
     .sort((a, b) => a.at.localeCompare(b.at));
   const next = open.find((m) => !had.some((u) => u.key === m.key) && !REACHED[m.key]?.(story, s.bank?.[museId] ?? 0));
   return { unlocked, next: next ? { label: next.label, toGo: TO_GO[next.key](story) } : null };
+}
+
+/** Between 9pm and 5am where they are. */
+export function isNight(ts: number, timeZone?: string): boolean {
+  const h = Number(formatter("en-GB", { hour: "numeric", hourCycle: "h23", timeZone }).format(new Date(ts)));
+  return h >= 21 || h < 5;
 }
 
 /** "bye", "gn", "talk later", "chal bye": they are leaving. */

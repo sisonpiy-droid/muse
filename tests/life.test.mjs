@@ -370,6 +370,60 @@ check("clearing a chat keeps how close you are; clearing chat and memories forge
   assert.equal(store.parseState(JSON.stringify(cleared)).bank[RHEA], cleared.bank[RHEA], "and it is saved");
 });
 
+check("back after two days away she reacts, more the closer you are; not for a short gap, someone who died, or when she spoke last", async () => {
+  const day = 864e5;
+  const mk = (gapDays, n = 600) => {
+    const old = Array.from({ length: n }, (_, i) => ({ id: `o${i}`, from: i % 2 ? "muse" : "user", content: "hi", at: new Date(Date.now() - (gapDays + 1 + (i % 25)) * day).toISOString() }));
+    const last = { id: "back", from: "user", content: "hey", at: new Date().toISOString() };
+    return { ...blank(), conversations: { [RHEA]: [...old, { id: "lastmuse", from: "muse", content: "later!", at: new Date(Date.now() - gapDays * day).toISOString() }, last] } };
+  };
+  const far = (await prepareTurn(mk(3), RHEA)).body;
+  assert.equal(far.away.days, 3);
+  assert.ok(far.away.level >= 3, "close: " + far.away.level);
+  assert.equal((await prepareTurn(mk(1), RHEA)).body.away, null, "a day is not away");
+  const memorial = { ...mk(5), muses: [{ id: "m", name: "Nani", description: "d", relationshipType: "grandma", persona: { them: "Nani", you: "P", mode: "memorial", arch: "grandparent" } }] };
+  memorial.conversations = { m: memorial.conversations[RHEA] };
+  assert.equal((await prepareTurn(memorial, "m")).body.away, null, "never for someone who died");
+  const spoke = mk(4); spoke.conversations[RHEA].pop();
+  assert.equal((await prepareTurn(spoke, RHEA)).body.away, null, "she spoke last: nothing to react to");
+  assert.match(persona.awayBlock({ days: 3, level: 4 }, "Piyush"), /where WERE you/);
+  assert.match(persona.awayBlock({ days: 3, level: 2 }, "Piyush"), /teasing sulk/);
+  assert.match(persona.awayBlock({ days: 3, level: 0 }, "Piyush"), /long time/);
+  assert.equal(persona.awayBlock(null, "P"), "");
+});
+
+check("a goodnight at night from someone close is a voice note; voice notes come more often the closer you are", () => {
+  assert.ok(life.isNight(Date.parse("2026-10-02T18:30:00Z"), "Asia/Kolkata"), "midnight");
+  assert.ok(!life.isNight(Date.parse("2026-10-02T09:00:00Z"), "Asia/Kolkata"), "2:30pm");
+  const s = { ...blank(), conversations: { [RHEA]: [{ id: "u", from: "user", content: "gn", at: new Date(NOW).toISOString() }] } };
+  assert.equal(store.mediaAllowed(s, RHEA, { now: NOW, roll: 0.99 }).voice, false);
+  assert.equal(store.mediaAllowed(s, RHEA, { now: NOW, roll: 0.99, goodnight: true }).voice, true);
+  assert.equal(store.mediaAllowed(s, RHEA, { now: NOW, roll: 0.5, level: 0 }).voice, false);
+  assert.equal(store.mediaAllowed(s, RHEA, { now: NOW, roll: 0.5, level: 4 }).voice, true);
+  const sent = (mins) => ({ ...s, conversations: { [RHEA]: [{ id: "v", from: "muse", content: "x", at: new Date(NOW - mins * 60_000).toISOString(), voiceNote: { id: "v", seconds: 3 } }, ...s.conversations[RHEA]] } });
+  assert.equal(store.mediaAllowed(sent(90), RHEA, { now: NOW, roll: 0, level: 3 }).voice, true, "close: an hour is enough");
+  assert.equal(store.mediaAllowed(sent(90), RHEA, { now: NOW, roll: 0, level: 1 }).voice, false, "not close: three hours");
+  assert.match(persona.goodnightBlock(true, "Piyush"), /\[voice\]/);
+  assert.equal(persona.goodnightBlock(false, "Piyush"), "");
+});
+
+check("a bad day: only for someone comfortable, not twice in four days, texted about once", () => {
+  const msgs = (n) => Array.from({ length: n }, (_, i) => ({ id: `r${i}`, from: i % 2 ? "muse" : "user", content: "hi", at: new Date(NOW - (i % 25) * 864e5).toISOString() }));
+  const close = { ...blank(), conversations: { [RHEA]: msgs(600) } };
+  assert.equal(life.roughWanted(close, RHEA, NOW, 0.1), true);
+  assert.equal(life.roughWanted(close, RHEA, NOW, 0.9), false, "by chance");
+  assert.equal(life.roughWanted(blank(), RHEA, NOW, 0.1), false, "not comfortable yet");
+  const withBad = life.applyLife(close, RHEA, { arcs: [{ title: "Portfolio", beat: "The printer ate her final boards the night before.", rough: true }], told: [] }, NOW);
+  assert.equal(life.roughWanted(withBad, RHEA, NOW + 864e5, 0.1), false, "not again for four days");
+  assert.equal(life.roughWanted(withBad, RHEA, NOW + 5 * 864e5, 0.1), true);
+  const due = life.roughDue(withBad, RHEA, NOW + 3_600_000);
+  assert.match(due.text, /printer/);
+  assert.equal(life.roughDue(life.markRoughTexted(withBad, RHEA, due.id), RHEA, NOW + 3_600_000), null, "once");
+  assert.equal(life.roughDue(withBad, RHEA, NOW + 40 * 3_600_000), null, "no longer news after a day and a half");
+  const plain = life.applyLife(close, RHEA, { arcs: [{ title: "x", beat: "A normal day.", rough: false }], told: [] }, NOW);
+  assert.equal(life.roughDue(plain, RHEA, NOW), null, "an ordinary beat is not a bad day");
+});
+
 let pass = 0, fail = 0;
 for (const [n, f] of results) {
   try { await f(); console.log(`  PASS  ${n}`); pass++; }

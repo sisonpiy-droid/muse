@@ -95,7 +95,8 @@ export interface SoloMessage {
 
 /* Her own life, going on between conversations: a few storylines, each moving
    on a little every day. See lib/solo/life.ts. */
-export interface LifeBeat { id: string; at: string; text: string; told?: boolean }
+/** `rough`: a bad day she may text them about; `texted`: she has. */
+export interface LifeBeat { id: string; at: string; text: string; told?: boolean; rough?: boolean; texted?: boolean }
 export interface LifeArc { id: string; title: string; done?: boolean; beats: LifeBeat[] }
 export interface Life {
   arcs: LifeArc[];
@@ -1578,7 +1579,9 @@ export function mediaAllowed(
   /* `roll`, 0 to 1, is whether this turn is one where they are on offer; by
      default it comes from the message being answered, so asking again gets the
      same answer rather than a re-roll. */
-  opts: { now?: number; canStore?: boolean; roll?: number } = {}
+  /* `level`: how close you are (0-4); voice notes come more often the closer. `goodnight`: a
+     goodnight at night from someone close, which is a voice note. */
+  opts: { now?: number; canStore?: boolean; roll?: number; level?: number; goodnight?: boolean } = {}
 ): MediaAllowed {
   const now = opts.now ?? Date.now();
   const person = findMuse(state, museId);
@@ -1593,10 +1596,14 @@ export function mediaAllowed(
   for (let i = log.length - 1; i >= 0 && log[i].from === "user"; i--) theirs.push(log[i].content);
   const said = theirs.join("\n");
   const roll = opts.roll ?? rollFor(log.at(-1)?.id ?? "");
+  const level = opts.level ?? 0;
   const allowed = (kind: keyof typeof MEDIA_GAP_MS, has: (m: SoloMessage) => boolean) => {
     const since = now - lastOf(has);
+    /* Voice notes come more often the closer you are. */
+    const odds = kind === "voice" ? Math.min(0.6, OFFERED + 0.08 * level) : OFFERED;
+    const gap = kind === "voice" && level >= 3 ? 3_600_000 : MEDIA_GAP_MS[kind];
     /* Asked for: always. */
-    return ASKED[kind].test(said) || (roll < OFFERED && since >= MEDIA_GAP_MS[kind]);
+    return ASKED[kind].test(said) || (roll < odds && since >= gap);
   };
   const canStore = opts.canStore !== false;
   return {
@@ -1604,7 +1611,7 @@ export function mediaAllowed(
        someone who has died: a photo of "my lunch today" from them is not a
        comfort, it is a lie with a picture attached. */
     photo: canStore && mode !== "figure" && mode !== "memorial" && allowed("photo", (m) => !!m.image),
-    voice: canStore && allowed("voice", (m) => !!m.voiceNote),
+    voice: canStore && (!!opts.goodnight || allowed("voice", (m) => !!m.voiceNote)),
     song: allowed("song", (m) => !!m.song),
   };
 }

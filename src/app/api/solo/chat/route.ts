@@ -4,7 +4,7 @@ import { streamGuarded, userFacingError } from "@/lib/ai";
 import { looksLikeRefusal } from "@/lib/ai/refusal";
 import { buildMuseSystemPrompt } from "@/lib/muse/prompt";
 import {
-  coveredBlock, coveredGround, lifeBlock, momentBlock, personaSystem, promiseBlock, quizBlock, romanceAllowed, bondBlock, heardBlock, callbackBlock, secretBlock, romanceBlock,
+  coveredBlock, coveredGround, lifeBlock, momentBlock, personaSystem, promiseBlock, quizBlock, romanceAllowed, awayBlock, bondBlock, callbackBlock, goodnightBlock, heardBlock, secretBlock, romanceBlock,
   sendBlock, sharedBlock, togetherBlock, withQuote, wornBlock, yesBlock, type Feelings,
 } from "@/lib/presence/persona";
 import { nowBlock, previousMoment, stampPauses, timeBlock } from "@/lib/presence/time";
@@ -178,6 +178,10 @@ const bodySchema = z.object({
   heard: z.array(z.string().max(320)).max(12).default([]),
   /** Something told to them days ago, to bring up unprompted. */
   callback: z.object({ what: z.string().max(300), days: z.number().int().min(0) }).nullish(),
+  /** Back after days away: how many, and how close (awayBlock). */
+  away: z.object({ days: z.number().int().min(2).max(3650), level: z.number().int().min(0).max(10) }).nullish(),
+  /** A goodnight at night from someone close (goodnightBlock). */
+  goodnight: z.boolean().nullish(),
   /** Something they have never told the user, and where it stands. */
   secret: z.object({ text: z.string().max(300), stage: z.enum(["hint", "tell", "told"]) }).nullish(),
 });
@@ -200,7 +204,7 @@ export async function POST(req: Request) {
     return Response.json({ error: "Check the request and try again." }, { status: 400 });
   }
   const { muse, persona, knows, mood, topic, register, feelings, messages, memories, plans, userName, timezone, story, shared, worn, can,
-    life, promises, moment, together, score, bond, heard, callback, secret } = parsed.data;
+    life, promises, moment, together, score, bond, heard, callback, secret, away, goodnight } = parsed.data;
   const tz = timezone ?? undefined;
   /* The server's clock, not the phone's: a phone set five minutes wrong should
      not move a meeting. Timestamps on messages are compared against it. */
@@ -328,6 +332,8 @@ You can react to their latest message with one emoji, the way people do in a cha
          reply must do. */
       callbackBlock(callback, userName || "them") +
       momentBlock(moment, userName || "them") +
+      awayBlock(away, userName || "them") +
+      goodnightBlock(goodnight, userName || "them") +
       nowBlock(userName || "them", tz, now) +
       last
     : buildMuseSystemPrompt({
@@ -383,7 +389,7 @@ ${timeBlock({ you: userName || "them", timeZone: tz, ...clock })}` + bondBlock(b
       { mood: mood || "any", topic: topic || "any", register: register || "texts" },
       timezone ?? undefined,
       standing
-    ) + nowBlock(userName || "them", tz, now) + last;
+    ) + awayBlock(away, userName || "them") + goodnightBlock(goodnight, userName || "them") + nowBlock(userName || "them", tz, now) + last;
 
   const bare = { ...persona, samples: undefined, metrics: undefined, extra: undefined };
 

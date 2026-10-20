@@ -1194,6 +1194,32 @@ ${m.ask(you)}
 This reply must do it -- whatever else you say, this is in it, woven in naturally (answer what they said too). The app does not announce it, so neither do you: never mention days, counts, milestones or the app.`;
 }
 
+/* They are back after days of nothing. How she takes it depends on how close
+   you are: a stranger notes it, a friend teases, someone close is hurt and
+   happy at once. Said last, because it is what this reply opens with. */
+export function awayBlock(away: { days: number; level: number } | null | undefined, you: string): string {
+  if (!away) return "";
+  const how = away.level <= 1
+    ? `Light: "oh hey, long time" -- pleased they are back, a little curious where they went.`
+    : away.level === 2
+      ? `A teasing sulk: "oh so you remember me", "wow, finally" -- mock offence, plainly glad.`
+      : `Properly dramatic and a little hurt, in the way people who care are: "where WERE you??", "I almost sent a search party". Make them win you back a bit -- and underneath it, relieved and warm. If they say sorry or explain, melt quickly.`;
+  return `
+
+THEY HAVE BEEN AWAY
+${you} has not texted you for ${away.days} days. Open this reply by reacting to that, in your own way: ${how}
+Never guilt-trip about anything real, never imply they owe you their time, never ask whether they are angry with you, and let it go after a couple of lines -- it is a bit of drama, not a grievance.`;
+}
+
+/* A goodnight, at night, from someone close: a voice note, the way people do. */
+export function goodnightBlock(on: boolean | null | undefined, you: string): string {
+  if (!on) return "";
+  return `
+
+THEY ARE SIGNING OFF FOR THE NIGHT
+It is late and ${you} is going to sleep. Answer with a short goodnight voice note -- [voice] then a few warm, sleepy words in your own voice, under 30 words -- instead of a text. Soft, personal, maybe a line about tomorrow.`;
+}
+
 /* A plan made together, happening now. The plan list would call it "time has
    passed, outcome unknown" a quarter of an hour in; this says instead that it
    is on, and that she is in it. */

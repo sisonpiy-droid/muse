@@ -5,7 +5,7 @@ import {
   QUOTE_CHARS, callbackForTurn, feelingsOf, findMuse, heardForTurn, isMediaCaption, knownTo, mediaAllowed, memoriesForTurn, plansForTurn,
   promisesForTurn, promptPersona, quoteOf, sharedForTurn, windowOf, worthRecalling, type SoloMessage, type SoloMuse, type SoloState,
 } from "./store";
-import { bondOf, lifeForTurn, momentDue, secretFor, togetherNow } from "./life";
+import { bondOf, isNight, lifeForTurn, momentDue, saidBye, secretFor, togetherNow } from "./life";
 import { photoBase64 } from "./photos";
 import { VIDEO_ONLY, clipLength, framesBase64 } from "./attach";
 import { storyLine, storyOf } from "./story";
@@ -79,6 +79,22 @@ export async function prepareTurn(
   const vibe: Vibe = opts.register ? { ...stored, register: opts.register } : stored;
   const feelingsNow = feelingsOf(s, museId);
   const together = togetherNow(s, museId);
+
+  /* How close you are, back after days away, and a goodnight at night: each
+     shapes this one reply (see awayBlock, goodnightBlock). Not on a call. */
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const bond = bondOf(s, museId, Date.now(), tz);
+  const lastIn = thread.at(-1);
+  const away = (() => {
+    if (!bond || lastIn?.from !== "user" || opts.register === "live") return null;
+    let i = thread.length - 1;
+    while (i >= 0 && thread[i].from === "user") i--;
+    const before = thread[i];
+    const gap = before ? Date.now() - Date.parse(before.at) : 0;
+    return gap >= 2 * 86_400_000 ? { days: Math.floor(gap / 86_400_000), level: bond.level } : null;
+  })();
+  const goodnight = !!bond && bond.level >= 2 && opts.register !== "live" && lastIn?.from === "user"
+    && saidBye(lastIn.content) && isNight(Date.now(), tz);
 
   // The last few turns, so retrieval follows the subject rather than a
   // two-word reply carrying no signal.
@@ -188,8 +204,10 @@ export async function prepareTurn(
     /* What they can send besides texts this turn. Only in a texting register:
        a letter or a call is one piece, spoken or written, not a chat. */
     can: person.persona && (REGISTERS[vibe.register as keyof typeof REGISTERS] ?? REGISTERS.texts).burst
-      ? mediaAllowed(s, museId, { canStore: opts.canStore })
+      ? mediaAllowed(s, museId, { canStore: opts.canStore, level: bond?.level, goodnight })
       : null,
+    away,
+    goodnight,
   };
   return { person, vibe, body, sent: sending.map((m) => m.id) };
 }
