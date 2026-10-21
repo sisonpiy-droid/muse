@@ -56,6 +56,7 @@ export async function voiceFor(person: SoloMuse, museId: string, update: Update)
         description: person.description.slice(0, 400),
         brief: (p?.brief ?? person.brief ?? "").slice(0, 6000),
         samples: (p?.samples ?? person.samples ?? "").slice(0, 4000),
+        gender: p?.gender,
       }),
     });
     const { voiceId } = await res.json();

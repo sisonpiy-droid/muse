@@ -278,7 +278,7 @@ export function ImportPersona({
       {step === 0 && (
         <>
           <h1 className="display" style={{ fontSize: "1.9rem" }}>The two of you</h1>
-          <p className="lede">Their name is what they&apos;ll answer to. Yours is what they&apos;ll call you.</p>
+          <p className="lede">Their name is what they&apos;ll answer to. Yours is what they&apos;ll call you. Gender is optional; it just gets the pronouns and the Hindi grammar right.</p>
 
           <div className="pair">
             <label className="field">
@@ -291,6 +291,20 @@ export function ImportPersona({
               <input className="input" value={draft.you} placeholder="Sam" maxLength={60}
                 onChange={(e) => D("you", e.target.value)} />
             </label>
+          </div>
+
+          <div className="pair">
+            {([["gender", "Their gender"], ["youGender", "Your gender"]] as const).map(([k, label]) => (
+              <div className="field" key={k}>
+                <span>{label}</span>
+                <div className="tags" role="group" aria-label={label}>
+                  {([["male", "Male"], ["female", "Female"], ["nonbinary", "Non-binary"]] as const).map(([v, text]) => (
+                    <button key={v} type="button" className="tag" aria-pressed={draft[k] === v}
+                      onClick={() => D(k, draft[k] === v ? undefined : v)} style={chip(draft[k] === v)}>{text}</button>
+                  ))}
+                </div>
+              </div>
+            ))}
           </div>
 
           <div className="pair">

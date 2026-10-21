@@ -276,6 +276,18 @@ export type Archetype = keyof typeof ARCHETYPES;
 export type Texture = keyof typeof TEXTURES;
 export type Mode = keyof typeof MODES;
 
+/* Who is a man, a woman or neither, so pronouns and -- in Hindi and Hinglish --
+   the gendered verb forms come out right for both people ("aa rahi hoon" against
+   "aa raha hoon"). Said once, in the character; never to be remarked on. */
+const GENDER_WORD: Record<string, string> = { male: "a man", female: "a woman", nonbinary: "non-binary (they/them unless told otherwise)" };
+export function genderBlock(p: { you: string; gender?: string; youGender?: string }): string {
+  const me = GENDER_WORD[p.gender ?? ""];
+  const you = GENDER_WORD[p.youGender ?? ""];
+  if (!me && !you) return "";
+  return `${me ? `You are ${me}.` : ""}${you ? ` ${p.you} is ${you}.` : ""} Use the right pronouns, and in Hindi or Hinglish the right gendered verb forms, for each of you ("aa rahi hoon" against "aa raha hoon", "tu aaya" against "tu aayi"). Never remark on it.
+`;
+}
+
 export interface PersonaDraft {
   them: string;
   you: string;
@@ -309,6 +321,9 @@ export interface PersonaDraft {
   brief?: string;
   /** How they look and the vibe, read from photos the user gave (/api/solo/look). */
   look?: string;
+  /** Their gender and the user's: "male", "female" or "nonbinary". Unset means not said. */
+  gender?: string;
+  youGender?: string;
   /* Words the user picked for them, from the card. Not stored here -- joined
      in at send time by promptPersona, so the card stays the only copy. */
   traits?: string[];
@@ -538,7 +553,7 @@ ${clock ? timeBlock({ you: p.you, timeZone, ...clock }) : timeContext(timeZone)}
 
 WHO YOU ARE
 ${p.brief}
-${p.look?.trim() ? `
+${genderBlock(p)}${p.look?.trim() ? `
 HOW YOU LOOK, AND THE VIBE YOU GIVE OFF -- read from photos ${p.you} gave
 ${p.look.trim()}
 Let it colour you: your energy, your style, how you carry yourself, what you would wear or how you would say you look if it comes up. It is a feeling to talk from, never a description to recite: do not mention photos, and do not claim to know more about how you look than this.

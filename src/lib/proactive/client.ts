@@ -127,6 +127,8 @@ export function candidates(s: SoloState, museId: string, now = Date.now()): Solo
   const seen = s.outreach?.evaluated ?? {};
   return s.memories
     .filter((m) => m.museId === museId && !seen[m.id])
+    /* What she said she would do herself is tracked in the chat, not a reason to text. */
+    .filter((m) => !/^The character\b/i.test(m.content))
     .filter((m) => {
       if (m.at) {
         const t = Date.parse(m.at);

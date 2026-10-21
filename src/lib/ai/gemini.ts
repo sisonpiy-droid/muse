@@ -477,6 +477,13 @@ is a plan: record that it was arranged, not that it happened. If a later line
 says how a plan went, or that it moved, that is a new fact which replaces the
 plan.
 
+A commitment the other side of the conversation makes -- the character saying
+"I'll be there in 20 minutes", "I'll call you at 9", "give me an hour" -- is an
+EVENT too: record it as "The character said they would <what> at <time>", with
+"when" set to the exact moment worked out from when it was said (minutes
+matter: "in 20 minutes" said at 14:02 is 14:22). Say "The character", never
+"the Muse".
+
 Two kinds of EVENT matter in particular. If the user asks to be reminded of
 something, record "User asked to be reminded on <day and date> to <what>",
 with "when" set to the moment they want the reminder. If the user says they

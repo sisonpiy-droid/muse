@@ -19,6 +19,10 @@
  * thing that took place.
  */
 
+/* "in 20 mins", "an hour", "a couple of minutes", "9:30", "at 7 baje": a time or a length
+   of time, said in a message. */
+export const DURATION = /\b(\d+\s*(?:min|mins|minutes?|hrs?|hours?|ghant[ae]|seconds?)|an hour|half an hour|few minutes|couple of minutes|\d{1,2}[:.]\d{2}|\d{1,2}\s?(?:am|pm|baje))\b/i;
+
 /** A pause long enough to mark in the transcript. */
 export const GAP_MS = 30 * 60_000;
 
@@ -126,15 +130,22 @@ export type Timed = { role: "user" | "assistant"; content: string; at?: string }
 export function stampPauses<T extends Timed>(messages: T[], timeZone: string | undefined, now: number): T[] {
   let prev: number | null = null;
   let stampedFirst = false;
+  /* The last few messages, either side: once someone has said "in 20 minutes" or
+     "at 9:30", even a minute between texts matters, and a plain gap below the
+     usual half hour is stamped too. */
+  const recent: string[] = [];
   return messages.map((m) => {
     const ts = m.at ? Date.parse(m.at) : NaN;
     if (!Number.isFinite(ts)) return m;
     const gap = prev === null ? null : ts - prev;
     prev = ts;
+    const timed = recent.some((c) => DURATION.test(c));
+    recent.push(m.content);
+    if (recent.length > 4) recent.shift();
     if (m.role !== "user") return m;
     const first = !stampedFirst;
     stampedFirst = true;
-    if (!first && (gap === null || gap < GAP_MS)) return m;
+    if (!first && (gap === null || gap < (timed ? MIN : GAP_MS))) return m;
     const when = wallClock(ts, timeZone);
     const label = first
       ? (now - ts > GAP_MS ? `${when}` : "")
@@ -183,14 +194,24 @@ export function timeBlock(opts: {
       const word = dayWord(p.ts, now, timeZone);
       const when = `${wallClock(p.ts, timeZone)}${word ? ` (${word})` : ""}`;
       const status =
-        Math.abs(d) < 15 * MIN ? "that is about now"
+        Math.abs(d) < 2 * MIN ? "that is about now"
           : d > 0 ? `in ${span(d)}`
           : `${span(d)} ago. The time has passed; whether it actually happened is not known. Do not assume it did or that it didn't, and do not invent how it went or what anyone did then -- not that you went, waited, were late or that it was called off. If it matters, ask, the way someone who doesn't know yet would`;
       lines.push(`- ${p.what.trim()} -- ${when}: ${status}.`);
     }
   }
 
-  lines.push(``, `Lines in [square brackets] at the start of ${you}'s messages are timestamps added by the app. Never write them yourself.`);
+  lines.push(
+    ``,
+    `REAL TIME PASSES AT REAL SPEED`,
+    `- Things take as long as they would in life: a trip, an errand, a shower, cooking, getting ready. The clock above is the only way time moves.`,
+    `- If you said you would be somewhere or do something in a stretch of time ("20 minutes"), you have NOT arrived or finished until that much real time has passed since you said it. Check the time above and the plans list. Until then you are on the way or still at it: say where you are, how far, what is holding you up ("just left", "stuck at the signal") -- never "I'm at the door" a couple of messages later.`,
+    `- If ${you} asks how long, answer honestly and in keeping with the distance. Do not shrink it because they are eager or because the chat feels quick.`,
+    `- If ${you} tells you to do something that takes time ("go finish your homework", "make dinner"), you go and do it: say you are going, and do not report it done until a believable amount of time has gone by. If they message meanwhile, you are partway through it.`,
+    `- Messages are quick. Two messages a few seconds apart are a few seconds apart, however much was said in them.`,
+    ``,
+    `Lines in [square brackets] at the start of ${you}'s messages are timestamps added by the app. Never write them yourself.`
+  );
   return lines.join("\n");
 }
 

@@ -23,6 +23,7 @@ const bodySchema = z.object({
   description: z.string().max(400).default(""),
   brief: z.string().max(6000).default(""),
   samples: z.string().max(4000).default(""),
+  gender: z.string().max(20).optional(),
 });
 
 export async function POST(req: Request) {
@@ -53,6 +54,7 @@ Reply with the voice id only.`,
         role: "user",
         content: [
           `Name: ${p.name}`,
+          p.gender && `Gender (said by the user, so trust it over anything inferred): ${p.gender}`,
           p.relationship && `Relationship to the user: ${p.relationship}`,
           p.description && `Described as: ${p.description}`,
           p.brief && `Profile:\n${p.brief.slice(0, 3000)}`,

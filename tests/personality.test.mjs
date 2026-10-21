@@ -184,6 +184,7 @@ check("every route reads a character the same way: no field is dropped by one do
   const full = {
     them: "Riya", you: "Piyush", relationship: "friend", callsYou: "Pi", arch: "friend", texture: "close", mode: "character",
     samples: "s", extra: "e", metrics: "m", brief: "b", verbatim: true, interests: "chai", minor: false, traits: ["blunt"], look: "Looks: x",
+    gender: "female", youGender: "male",
   };
   for (const mode of ["memorial", "character"]) {
     const out = personaSchema(mode).parse(full);
@@ -193,6 +194,71 @@ check("every route reads a character the same way: no field is dropped by one do
   }
   assert.equal(personaSchema("memorial").parse({ them: "A", you: "B" }).mode, "memorial");
   assert.equal(personaSchema("character").parse({ them: "A", you: "B" }).mode, "character");
+});
+
+/* ------------------------------------------------------------- real time */
+
+const time = await import("../src/lib/presence/time.ts");
+
+check("real time passes at real speed: the rules are in every prompt, and a near plan keeps its minutes", () => {
+  const now = Date.parse("2026-10-06T08:32:00Z");
+  const block = time.timeBlock({ you: "Piyush", timeZone: "Asia/Kolkata", now, plans: [{ what: "The character said they would arrive at the user's place", at: new Date(now + 18 * 60_000).toISOString() }] });
+  assert.match(block, /REAL TIME PASSES AT REAL SPEED/);
+  assert.match(block, /have NOT arrived or finished until that much real time has passed/);
+  assert.match(block, /never "I'm at the door" a couple of messages later/);
+  assert.match(block, /do not report it done until a believable amount of time has gone by/);
+  assert.match(block, /18 minutes/, "she can see she is still 18 minutes away");
+  assert.doesNotMatch(block, /about now/);
+  const closer = time.timeBlock({ you: "P", timeZone: "Asia/Kolkata", now, plans: [{ what: "arrive", at: new Date(now + 90_000).toISOString() }] });
+  assert.match(closer, /about now/, "within two minutes it is about now");
+  /* and it is in the character's prompt, not only the time block */
+  assert.match(sys(DRAFT, [], VIBE(), undefined, { now, previousAt: null, plans: [] }), /REAL TIME PASSES AT REAL SPEED/);
+});
+
+check("once a length of time is mentioned, even a minute between texts is stamped; otherwise only a long pause is", () => {
+  const t0 = Date.parse("2026-10-06T08:30:00Z");
+  const at = (min) => new Date(t0 + min * 60_000).toISOString();
+  const eta = [
+    { role: "user", content: "kitni der me aa rahi hai", at: at(0) },
+    { role: "assistant", content: "20 min me pahunch jaungi", at: at(0.2) },
+    { role: "user", content: "ok", at: at(2) },
+    { role: "user", content: "kahan hai ab", at: at(4) },
+  ];
+  const out = time.stampPauses(eta, "Asia/Kolkata", t0 + 5 * 60_000);
+  assert.match(out[2].content, /^\[.*a minute after the message before\]/s, "stamped: an ETA was just given");
+  assert.match(out[3].content, /^\[.*2 minutes after/s);
+  assert.equal(out[1].content, "20 min me pahunch jaungi", "her own lines are never stamped");
+  const plain = [
+    { role: "user", content: "hey", at: at(0) }, { role: "assistant", content: "yo", at: at(0.2) },
+    { role: "user", content: "wyd", at: at(2) },
+  ];
+  const quiet = time.stampPauses(plain, "Asia/Kolkata", t0 + 3 * 60_000);
+  assert.equal(quiet[2].content, "wyd", "no duration mentioned: a two minute gap is not marked");
+  assert.ok(time.DURATION.test("in 20 mins") && time.DURATION.test("an hour") && time.DURATION.test("at 9:30") && time.DURATION.test("7 baje"));
+  assert.ok(!time.DURATION.test("maybe tomorrow") && !time.DURATION.test("I have 3 cats"));
+});
+
+check("what she said she would do herself is not something she texts about out of the blue", async () => {
+  const { candidates } = await import("../src/lib/proactive/client.ts");
+  const mem = (id, content) => ({ id, museId: "m", content, type: "EVENT", importance: 3, confidence: 1, createdAt: new Date(NOW).toISOString(), at: new Date(NOW + 20 * 60_000).toISOString() });
+  const s = { ...blank(), memories: [mem("1", "The character said they would arrive at the user's place at 14:22"), mem("2", "Piyush has an interview at 14:30")] };
+  assert.deepEqual(candidates(s, "m", NOW).map((m) => m.id), ["2"]);
+});
+
+/* ------------------------------------------------------------------ gender */
+
+check("gender, when given, is said once in the character, for both people, with the Hindi grammar rule; absent, nothing is invented", () => {
+  assert.equal(persona.genderBlock({ you: "Piyush" }), "");
+  const both = persona.genderBlock({ you: "Piyush", gender: "female", youGender: "male" });
+  assert.match(both, /You are a woman\. Piyush is a man\./);
+  assert.match(both, /aa rahi hoon/);
+  assert.match(both, /Never remark on it/);
+  assert.match(persona.genderBlock({ you: "Piyush", gender: "nonbinary" }), /non-binary \(they\/them/);
+  assert.doesNotMatch(persona.genderBlock({ you: "Piyush", gender: "nonbinary" }), /Piyush is/);
+  const s = sys({ ...DRAFT, gender: "female", youGender: "male" });
+  assert.match(core(s), /You are a woman\. Piyush is a man\./, "part of who they are");
+  assert.equal(core(sys({ ...DRAFT, gender: "female", youGender: "male" }, [], VIBE({ mood: "teasing" }))), core(s), "not changed by mood");
+  assert.doesNotMatch(sys(DRAFT), /You are a (man|woman)/);
 });
 
 let pass = 0, fail = 0;
