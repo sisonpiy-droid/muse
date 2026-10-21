@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { prisma } from "@/lib/db";
 import { classify, compose } from "@/lib/proactive/compose";
+import { feelingsSchema, personaSchema } from "@/lib/presence/schema";
 import { deviceId, findDevice } from "@/lib/proactive/device";
 import { nextAllowed, planTime, validZone, type TriggerType } from "@/lib/proactive/timing";
 
@@ -21,28 +22,16 @@ import { nextAllowed, planTime, validZone, type TriggerType } from "@/lib/proact
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-const persona = z.object({
-  them: z.string().max(60),
-  you: z.string().max(60),
-  relationship: z.string().max(120).default(""),
-  callsYou: z.string().max(60).optional(),
-  arch: z.string().max(30).default("other"),
-  texture: z.string().max(30).default("close"),
-  mode: z.string().max(30).default("character"),
-  samples: z.string().max(14000).optional(),
-  extra: z.string().max(4000).optional(),
-  metrics: z.string().max(4000).optional(),
-  brief: z.string().max(6000).optional(),
-  verbatim: z.boolean().optional(),
-  interests: z.string().optional().transform((s) => s?.slice(0, 400)),
-  minor: z.boolean().optional(),
-  traits: z.array(z.string().max(30)).max(8).optional(),
-});
+const persona = personaSchema("character");
 
 const bodySchema = z.object({
   deviceId,
   muse: z.object({ id: z.string().max(80), name: z.string().max(60) }),
   persona,
+  /* The same standing state and closeness the chat uses, so a text she starts
+     is the same person as the one in the thread. */
+  feelings: feelingsSchema.nullish(),
+  bond: z.number().int().min(0).max(10).nullish(),
   userName: z.string().max(80).nullish(),
   /** Memories worth looking at that have not been looked at before. */
   candidates: z
@@ -155,7 +144,7 @@ export async function POST(req: Request) {
     let message: string | null = null;
     try {
       message = await compose({
-        persona: body.persona, you, tz, kind: r.kind, reason: r.reason, note: c.content,
+        persona: body.persona, feelings: body.feelings ?? undefined, bond: body.bond ?? null, you, tz, kind: r.kind, reason: r.reason, note: c.content,
         sendAt, eventAt: stated ?? null, recent: body.recent,
         ...(promise ? { promise: true, life: body.life } : {}),
       });

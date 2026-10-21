@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { streamGuarded, userFacingError } from "@/lib/ai";
 import { circleBlock, circleHistory, coveredBlock, coveredGround, oneToOneBlock, personaSystem, togetherBlock } from "@/lib/presence/persona";
+import { feelingsSchema, personaSchema } from "@/lib/presence/schema";
 import { nowBlock, previousMoment, stampPauses } from "@/lib/presence/time";
 
 /* One turn in a circle: several people in a room, one of them replying.
@@ -20,33 +21,14 @@ import { nowBlock, previousMoment, stampPauses } from "@/lib/presence/time";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-const personaSchema = z.object({
-  them: z.string().max(60),
-  you: z.string().max(60),
-  relationship: z.string().max(120).default(""),
-  callsYou: z.string().max(60).optional(),
-  arch: z.string().max(30).default("other"),
-  texture: z.string().max(30).default("close"),
-  mode: z.string().max(30).default("character"),
-  samples: z.string().max(14000).optional(),
-  extra: z.string().max(4000).optional(),
-  metrics: z.string().max(4000).optional(),
-  brief: z.string().max(6000).optional(),
-  /* Whether samples are attested, or lines written in their register. Dropped
-     here, reconstructed lines were labelled "their actual messages". */
-  verbatim: z.boolean().optional(),
-  interests: z.string().optional().transform((s) => s?.slice(0, 400)),
-  minor: z.boolean().optional(),
-  traits: z.array(z.string().max(30)).max(8).optional(),
-  look: z.string().max(1200).optional(),
-});
+const persona = personaSchema("character");
 
 const traitList = z.array(z.string().max(30)).max(8).optional();
 
 const bodySchema = z.object({
   circleName: z.string().trim().min(1).max(60),
   /** The member being asked to speak. */
-  speaker: z.object({ id: z.string().max(60), persona: personaSchema }),
+  speaker: z.object({ id: z.string().max(60), persona }),
   /** Everyone else in the room, for the roster. */
   others: z
     .array(
@@ -108,13 +90,7 @@ const bodySchema = z.object({
   /* Whoever is speaking brings their own standing state into the room. Keyed
      by speaker rather than shared: one person can be having a bad month while
      everyone else is fine, which is most group chats. */
-  feelings: z
-    .object({
-      mood: z.string().max(20).default("any"),
-      warmth: z.string().max(20).default("normal"),
-      note: z.string().max(600).default(""),
-    })
-    .nullish(),
+  feelings: feelingsSchema.nullish(),
 });
 
 const MAX_TOTAL_CHARS = 60_000;

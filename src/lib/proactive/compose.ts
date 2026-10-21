@@ -1,7 +1,7 @@
 import { getProvider } from "@/lib/ai";
 import { looksLikeRefusal } from "@/lib/ai/refusal";
-import { personaSystem, type PersonaDraft } from "@/lib/presence/persona";
-import { resolveWhen, wallClock } from "@/lib/presence/time";
+import { bondBlock, personaSystem, type Feelings, type PersonaDraft } from "@/lib/presence/persona";
+import { nowBlock, resolveWhen, wallClock } from "@/lib/presence/time";
 import type { TriggerType } from "./timing";
 
 /* Turning memories into reasons to text, and a reason into the text.
@@ -102,8 +102,13 @@ export function inventedNumbers(message: string, note: string): string[] {
   return (message.match(/\d+/g) ?? []).filter((n) => !inNote.has(n));
 }
 
-export async function compose(opts: {
+/** What a text she starts is told about herself, and about why she is texting. */
+export type ComposeOpts = {
   persona: PersonaDraft;
+  /** Their standing state, as the chat sends it: the same person in the thread and out of it. */
+  feelings?: Feelings;
+  /** How close you are (0-4), as the chat sends it. */
+  bond?: number | null;
   you: string;
   tz: string;
   kind: TriggerType;
@@ -118,18 +123,24 @@ export async function compose(opts: {
      job, because it is her own life. */
   promise?: boolean;
   life?: string[];
-}): Promise<string | null> {
+};
+
+/* The prompt for a text she starts. The character part is personaSystem -- the
+   very function the chat and the voice call use -- so a proactive text is the
+   same person with the same rules, plus the same standing mood, closeness and
+   hour-of-day as the chat; only the reason for writing is new. */
+export function composeSystem(opts: ComposeOpts): string {
   const { persona, you, tz } = opts;
   const together = /\bthe muse\b/i.test(opts.note);
   const lastAt = opts.recent.at(-1)?.at ?? null;
-  const system =
+  return (
     personaSystem(
       { ...persona, you },
       [opts.note],
       false,
       { mood: "any", topic: "any", register: "texts" },
       tz,
-      undefined,
+      opts.feelings,
       {
         now: opts.sendAt,
         previousAt: lastAt,
@@ -156,7 +167,14 @@ All you know about it is this note, and nothing else: "${opts.note}"
 ${opts.kind === "FOLLOW_UP" ? "It has happened, or is due. Ask how it went. Do not assume how it went.\n" : ""}${opts.kind === "REMINDER" && together ? "This is the time you two planned. Start it: text them the way you would when it is time, and get it going.\n" : opts.kind === "REMINDER" ? "They asked to be reminded. Remind them, the way you would, not like an alarm.\n" : ""}- One short text, or two or three in a burst separated by a line of ---, exactly the way you text ${you}.
 - About this reason only. Never a generic hello or "what are you up to".
 - Do not invent anything the note does not say: no times, places, names, companies or other details, and nothing about what they have already done or how they feel about it.
-- Never mention reminders, apps, notifications, memory or being told to text.`);
+- Never mention reminders, apps, notifications, memory or being told to text.`) +
+    bondBlock(opts.bond, you) +
+    nowBlock(you, tz, opts.sendAt)
+  );
+}
+
+export async function compose(opts: ComposeOpts): Promise<string | null> {
+  const system = composeSystem(opts);
 
   const merged: { role: "user" | "assistant"; content: string }[] = [];
   for (const m of opts.recent.slice(-6)) {

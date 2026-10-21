@@ -1,10 +1,11 @@
 "use client";
 
 import {
-  DEFAULT_OUTREACH, newMessage, promptPersona, findMuse,
+  DEFAULT_OUTREACH, feelingsOf, newMessage, promptPersona, findMuse,
   type OutreachSettings, type OutreachTrigger, type SoloMemory, type SoloMessage, type SoloState,
 } from "@/lib/solo/store";
-import { lifeForTurn } from "@/lib/solo/life";
+import { bondOf, lifeForTurn } from "@/lib/solo/life";
+import { hasFeelings } from "@/lib/presence/persona";
 
 /* The app's half of outreach.
  *
@@ -154,6 +155,10 @@ export async function offer(s: SoloState, museId: string): Promise<{ created: Ou
         deviceId: id,
         muse: { id: museId, name: muse.name.slice(0, 60) },
         persona,
+        /* The same standing mood and closeness the chat sends, so a text she
+           starts is the person from the thread. */
+        feelings: hasFeelings(feelingsOf(s, museId)) ? feelingsOf(s, museId) : null,
+        bond: bondOf(s, museId)?.level ?? null,
         userName: s.userName,
         candidates: list.map((m) => ({ id: m.id, content: m.content.slice(0, 420), type: m.type, at: m.at ?? null, createdAt: m.createdAt })),
         keep: s.memories.filter((m) => m.museId === museId).map((m) => m.id).slice(-400),

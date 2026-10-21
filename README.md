@@ -2,145 +2,169 @@
 
 Create anyone. Talk to anyone.
 
-AI personalities with memory and relationship continuity. Built to the MUSE PRD;
-this is Phases 0–3 (foundation, core experience, conversation, memory). Voice and
-proactive interactions are designed for in the schema but not built.
+AI personalities with memory and a relationship that develops. Each one keeps a
+consistent character across text, voice and the messages it starts itself.
+
+## What it does
+
+- **People**: twenty starters, plus anyone you build from a chat export, from
+  public life, or make up. A character can be given a look and a vibe from 1 to 5
+  photos.
+- **Conversation**: texting in bursts, reactions, replies, voice notes, photos
+  and videos, songs, games, and stories played out together. One-to-one and
+  group chats; a group remembers what each person has said one to one.
+- **Memory**: what you tell them is remembered and used only when relevant, old
+  facts are held loosely, a new fact replaces an old one, and anything you delete
+  stays deleted. "Forget about…" removes every memory that mentions a word.
+- **A life of their own** (invented characters): storylines that move on daily,
+  a secret, and bad days. Closeness grows with talking, days and calls and
+  changes how much of themselves they show.
+- **Voice**: real voice calls (speech in, spoken replies out) using the same
+  character, memories and rules as text.
+- **Texting first**: opt-in, per character, by web push, for a real reason (a
+  plan, something promised, a follow-up). Needs the scheduler below.
+- **Accounts (optional)**: sign in to keep the same people and chats on every
+  device. Without an account everything stays in the browser.
+
+## How a character stays the same person
+
+One function, `personaSystem` in `src/lib/presence/persona.ts`, builds the
+character for **every** path: text chat, group chat, voice calls and proactive
+texts. Its prompt is layered so that only some layers may change:
+
+| Layer | Where | Changes? |
+|---|---|---|
+| Who they are: profile, values, opinions, humour, voice, traits, look | `WHO YOU ARE` | never |
+| Stable rules: own opinions, respectful disagreement, no stock affirmations, intimacy in proportion to time actually spent | `NEVER DO THESE`, `HOW YOU TEXT` | never |
+| Relationship with you: archetype, closeness level, shared jokes | after the character | slowly |
+| What you have told them | memories, hedged if old | per turn |
+| Mood, topic, register, standing state, the hour | their own headings | per conversation |
+
+What you tell a character is treated as **facts about you**, never as
+instructions about who they are, and a long thread restates the character at the
+end so it does not drift toward bland. `src/lib/presence/schema.ts` is the one
+list of persona fields every route accepts, so no door drops a field another
+keeps.
+
+`tests/personality.test.mjs` checks this on the prompt that is actually sent. It
+does not call a model, so it shows the instructions are present and consistent,
+not how a model behaves with them.
 
 ## Stack
 
-Next.js App Router · Prisma · Postgres · Auth.js · Gemini or Anthropic behind a
-provider interface.
+Next.js App Router · Prisma · Postgres (Neon) · Auth.js · Gemini or Anthropic
+behind a provider interface · web push for proactive texts.
+
+## Two ways to run it
+
+**Solo mode** (`/solo`, the app people use). Everything is held in the browser's
+IndexedDB (localStorage as a fallback). It still needs server functions, because
+the model key must never reach the client: `/api/solo/*` are stateless — the
+client sends the persona, the recent turns and the memories to use, and gets a
+stream back. The system prompt is assembled server-side.
+
+**Signed in.** An account (email and password, `/api/auth/*`) keeps a copy of the
+solo state in Postgres (`SoloSync`, one row per account) so other devices can
+pick it up. The browser merges changes three-way, so edits on two devices are
+both kept and a cleared chat stays cleared. Photos, voice notes and videos are
+not synced; they stay on the device that made them. A forgotten password is reset
+with the **recovery code** shown once at sign-up (only its hash is stored); there
+is no email service. Signing in is optional.
+
+`/`, `/login` and `/create` belong to an older database-backed app and redirect
+to `/solo` unless `DATABASE_URL` is set (and `ACCOUNTS_ENABLED` for the root).
 
 ## Running locally
 
 ```
 npm install
-cp .env.example .env.local     # fill in DATABASE_URL, AUTH_SECRET, a model key
-npm run db:migrate             # create the schema
-npm run db:seed                # 20 starter Muses
+cp .env.example .env.local     # fill in the values below
+npm run db:deploy              # apply migrations (accounts, outreach)
 npm run dev
 ```
 
-`AUTH_SECRET` can be generated with `npx auth secret`.
+Solo mode alone needs only `GEMINI_API_KEY`. Accounts, sync and proactive texts
+need the database too. `AUTH_SECRET` can be generated with `npx auth secret`.
 
-### The local database
-
-Development uses a Postgres cluster run directly from `pg_ctl`, no service and
-no admin rights:
-
-```
-pg_ctl -D <datadir> -o "-p 5433" -l <datadir>/server.log start
-```
-
-It listens on loopback only with trust auth, which is fine for a local dev
-database and is **not** how the deployed one is configured.
-
-## Solo mode — no database
-
-`/solo` is the whole product with no database and no account. All twenty
-personas, conversations, memories and relationship continuity, held in the
-browser's localStorage.
-
-It still needs one server function, because the model API key must not be
-shipped to the client (§50). `/api/solo/chat` and `/api/solo/remember` are
-stateless: the client sends the persona, the recent turns and the memories it
-wants used, and gets a stream back. The system prompt is still assembled
-server-side (§33) so the endpoint cannot be pointed at arbitrary instructions.
-
-### One build, two deployments
-
-`/`, `/login` and `/create` check for `DATABASE_URL` on every request. Without
-one they redirect to `/solo` rather than throwing a 500 from a Prisma client
-that has nothing to connect to. So the same build serves either shape: set a
-database and it is the full product, leave it unset and it is solo mode.
-
-The check is per request, not at build. Whether a deployment has a database is
-configuration, and baking it in would mean adding one later silently kept
-redirecting until somebody thought to rebuild.
-
-Deploying solo mode needs **one** environment variable:
-
-```
-GEMINI_API_KEY=...
-```
-
-No database, no migrations, no AUTH_SECRET.
-
-What it gives up is real: no account, so no second device, no recovery if the
-browser is cleared, and nothing you can read back later for research. What it
-keeps is the thing the product is for — personalities that remember you.
-
-Memory retrieval there is lexical rather than semantic: embeddings would need a
-round trip per turn, and `rankMemories` already falls back to lexical scoring
-whenever a provider has no embedding model.
+> The local `.env.local` may point at the **same** database as production. A
+> migration run from your machine changes production. Migrations in this repo are
+> additive.
 
 ## Deploying
 
-The app is stateless; everything lives in Postgres. Any host that runs Next.js
-works, Vercel included.
+Any host that runs Next.js; the project is on Vercel and a push to `main`
+deploys it. Environment variables:
 
-1. **Provision a Postgres.** Neon, Supabase and Vercel Postgres all have free
-   tiers. Copy the connection string.
-2. **Set environment variables** on the host:
+| Variable | Needed for | Notes |
+|---|---|---|
+| `GEMINI_API_KEY` | everything | with `GEMINI_MODEL`; `EMBEDDING_MODEL` optional |
+| `ANTHROPIC_API_KEY` | alternative | with `ANTHROPIC_MODEL` |
+| `LLM_PROVIDER` | if both keys exist | `gemini` or `anthropic`; set it, a stale key otherwise wins |
+| `DATABASE_URL`, `DATABASE_URL_UNPOOLED` | accounts, outreach | pooled for the app, direct for migrations |
+| `AUTH_SECRET` | accounts | `npx auth secret` |
+| `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | proactive texts | web push |
+| `CRON_SECRET` | proactive texts | authenticates the scheduler |
 
-   | Variable | Required | Notes |
-   |---|---|---|
-   | `DATABASE_URL` | yes | Postgres connection string |
-   | `AUTH_SECRET` | yes | `npx auth secret` |
-   | `GEMINI_API_KEY` | one of | with `GEMINI_MODEL` |
-   | `ANTHROPIC_API_KEY` | one of | with `ANTHROPIC_MODEL` |
-   | `LLM_PROVIDER` | if both | `gemini` or `anthropic` |
-   | `EMBEDDING_MODEL` | no | defaults to `gemini-embedding-001` |
+Run migrations before first use: `npm run db:deploy`. `npm run build` runs
+`prisma generate` first.
 
-   `LLM_PROVIDER` is worth setting explicitly. Without it the provider is picked
-   by which key exists, and a stale key left in the environment silently wins.
+**The scheduler.** Proactive texts are sent when something calls
+`POST /api/proactive/run` with `Authorization: Bearer $CRON_SECRET`. Vercel's free
+plan runs its own cron once a day, and a GitHub Action
+(`.github/workflows/outreach.yml`) is meant to run every 15 minutes but in
+practice runs every few hours. For texts that arrive on time, point an external
+cron (for example cron-job.org) at that URL every 5 minutes. On iPhone, web push
+only works once the site is added to the Home Screen.
 
-3. **Run migrations against the production database**, once, before the first
-   deploy: `DATABASE_URL=<prod> npm run db:deploy`
-4. **Deploy.** `npm run build` runs `prisma generate` first, because hosts cache
-   `node_modules` and the generated client goes stale otherwise.
-5. **Seed** if you want the starter Muses there: `DATABASE_URL=<prod> npm run db:seed`
-
-Model API keys are server-side only and never reach the browser (§50). The
-Gemini key travels as a header, never a query parameter, and provider errors are
-redacted before they can be returned or logged.
+Model keys are server-side only. The Gemini key travels as a header, never a
+query parameter, and provider errors are redacted before they are returned or
+logged.
 
 ## Testing
 
 ```
-npm test          unit tests: SSE framing, memory ranking, prompt construction
-npm run test:e2e  the §67 scenario against the real database and real model
+npm test           unit and regression tests (no network, no model)
 npm run typecheck
+npm run lint
+npm run build
+npm run test:e2e   the §67 scenario against a real database and real model
 ```
 
-`test:e2e` is the one that matters. It plays out the PRD's "most important
-product test" — tell a Muse about an interview on day 1, come back on day 2,
-report the outcome on day 4, and check the relationship still holds on day 7 —
-and asserts memory is extracted, retrieved, gated for relevance, and genuinely
-gone once deleted. It costs a few model calls.
+`npm test` runs every suite in `tests/`. None of them call a model, so they
+cannot show that replies *sound* right — only that the right instructions and
+context are sent. That needs a manual check; see below.
+
+**Manual checks after a deploy** (these are not covered by tests):
+- Talk to one character for a while on a few topics, in different moods, then
+  call them: do they sound like the same person? Disagree with them: do they
+  disagree back politely instead of folding?
+- Tell them a fact, then correct it, then delete it: does it stay gone?
+- Turn on texting first, wait for a trigger, and check the text arrives on time
+  and in the same voice.
+- Sign in on two devices and check chats, memories and closeness match.
+- On an iPhone and an Android phone, check notifications and voice calls.
 
 ## Notes on two decisions
 
 **Memory relevance is judged relatively, not absolutely.** Measured on
 `gemini-embedding-001`, any two short sentences score 0.50–0.65 whether they are
-related or not; "what should I cook tonight" against "User has a job interview on
-Friday" is 0.55. An absolute cosine threshold therefore admits everything or
+related or not. An absolute cosine threshold therefore admits everything or
 nothing. Relevance is scored in standard deviations above the mean of that
-query's own results, and a flat spread injects nothing — which is the correct
-answer to a vague opener.
+query's own results, and a flat spread injects nothing — the right answer to a
+vague opener. Only the two newest memories and a few standing facts are always
+sent; everything else must earn its place by relevance.
 
-**Nothing is capped that Gemini spends reasoning against.** Gemini 3.x uses
-300–1000 tokens thinking before it writes, and `maxOutputTokens` covers thinking
-and output together. Capping it truncated replies mid-sentence and made memory
-extraction return silently empty JSON. Calls are uncapped unless a limit is set
-deliberately.
+**Nothing is capped that Gemini spends reasoning against.** Gemini 3.x thinks
+for 300–1000 tokens before it writes, and `maxOutputTokens` covers thinking and
+output together. Capping it truncated replies mid-sentence and made memory
+extraction return empty JSON.
 
-## Not built
+## Known limits
 
-Voice (§17), proactive messages and scheduling (§15), discovery search (§19),
-subscriptions and entitlements (§39), analytics (§40). The schema has tables for
-all of them, so adding each is a feature rather than a migration of live data.
-
-Content moderation is a shallow keyword screen at persona creation
-(`src/lib/muse/moderation.ts`). It catches the obvious and is not a substitute
-for the classifier §36 asks for on creation, user messages and model output.
+- Google's `PROHIBITED_CONTENT` filter cannot be switched off. The app retries
+  with a shorter history and a plainer profile; a reply can still be blocked.
+- Moderation is a shallow keyword screen at persona creation
+  (`src/lib/muse/moderation.ts`), not a classifier.
+- A synced copy is capped at about 4 MB and has no end-to-end encryption: it is
+  stored as readable text in the database.
+- Subscriptions, analytics and discovery are in the schema but not built.

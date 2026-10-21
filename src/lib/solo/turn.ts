@@ -208,6 +208,8 @@ export async function prepareTurn(
       : null,
     away,
     goodnight,
+    /* A long thread: the character is put back in front of the model (anchorBlock). */
+    long: thread.length > 40,
   };
   return { person, vibe, body, sent: sending.map((m) => m.id) };
 }

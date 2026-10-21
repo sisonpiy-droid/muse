@@ -2,9 +2,10 @@ import { z } from "zod";
 
 import { streamGuarded, userFacingError } from "@/lib/ai";
 import { looksLikeRefusal } from "@/lib/ai/refusal";
+import { feelingsSchema, personaSchema } from "@/lib/presence/schema";
 import { buildMuseSystemPrompt } from "@/lib/muse/prompt";
 import {
-  coveredBlock, coveredGround, lifeBlock, momentBlock, personaSystem, promiseBlock, quizBlock, romanceAllowed, awayBlock, bondBlock, callbackBlock, goodnightBlock, heardBlock, secretBlock, romanceBlock,
+  coveredBlock, coveredGround, lifeBlock, momentBlock, personaSystem, promiseBlock, quizBlock, romanceAllowed, anchorBlock, awayBlock, bondBlock, callbackBlock, goodnightBlock, heardBlock, secretBlock, romanceBlock,
   sendBlock, sharedBlock, togetherBlock, withQuote, wornBlock, yesBlock, type Feelings,
 } from "@/lib/presence/persona";
 import { nowBlock, previousMoment, stampPauses, timeBlock } from "@/lib/presence/time";
@@ -102,28 +103,7 @@ const bodySchema = z.object({
      present it decides the prompt entirely -- the archetype, texture and mode
      blocks are the reason that build sounds like the person rather than like an
      assistant wearing their name. */
-  persona: z
-    .object({
-      them: z.string().max(60),
-      you: z.string().max(60),
-      relationship: z.string().max(120).default(""),
-      callsYou: z.string().max(60).optional(),
-      arch: z.string().max(30).default("other"),
-      texture: z.string().max(30).default("close"),
-      mode: z.string().max(30).default("memorial"),
-      samples: z.string().max(14000).optional(),
-      extra: z.string().max(4000).optional(),
-      metrics: z.string().max(4000).optional(),
-      brief: z.string().max(6000).optional(),
-      /* Whether samples are attested, or lines written in their register. Dropped
-         here, reconstructed lines were labelled "their actual messages". */
-      verbatim: z.boolean().optional(),
-      interests: z.string().optional().transform((s) => s?.slice(0, 400)),
-      minor: z.boolean().optional(),
-      traits: z.array(z.string().max(30)).max(8).optional(),
-      look: z.string().max(1200).optional(),
-    })
-    .nullish(),
+  persona: personaSchema("memorial").nullish(),
   /* People this Muse shares a circle with. Additive: absent on every request
      that does not involve circles, and the prompt is unchanged when it is. */
   knows: z
@@ -135,13 +115,7 @@ const bodySchema = z.object({
   register: z.string().max(20).optional(),
   /* Standing emotional state. Separate from `mood` above, which is this
      conversation only -- this one persists and the user sets it rarely. */
-  feelings: z
-    .object({
-      mood: z.string().max(20).default("any"),
-      warmth: z.string().max(20).default("normal"),
-      note: z.string().max(600).default(""),
-    })
-    .nullish(),
+  feelings: feelingsSchema.nullish(),
   memories: z.array(z.string().max(400)).max(12).default([]),
   /** Dated plans and events, each with the instant it is for. */
   plans: z.array(z.object({ what: z.string().max(420), at: z.string().max(40) })).max(8).default([]),
@@ -180,6 +154,8 @@ const bodySchema = z.object({
   callback: z.object({ what: z.string().max(300), days: z.number().int().min(0) }).nullish(),
   /** Back after days away: how many, and how close (awayBlock). */
   away: z.object({ days: z.number().int().min(2).max(3650), level: z.number().int().min(0).max(10) }).nullish(),
+  /** A long thread, so the character is restated at the end (anchorBlock). */
+  long: z.boolean().nullish(),
   /** A goodnight at night from someone close (goodnightBlock). */
   goodnight: z.boolean().nullish(),
   /** Something they have never told the user, and where it stands. */
@@ -204,7 +180,7 @@ export async function POST(req: Request) {
     return Response.json({ error: "Check the request and try again." }, { status: 400 });
   }
   const { muse, persona, knows, mood, topic, register, feelings, messages, memories, plans, userName, timezone, story, shared, worn, can,
-    life, promises, moment, together, score, bond, heard, callback, secret, away, goodnight } = parsed.data;
+    life, promises, moment, together, score, bond, heard, callback, secret, away, goodnight, long } = parsed.data;
   const tz = timezone ?? undefined;
   /* The server's clock, not the phone's: a phone set five minutes wrong should
      not move a meeting. Timestamps on messages are compared against it. */
@@ -334,6 +310,7 @@ You can react to their latest message with one emoji, the way people do in a cha
       momentBlock(moment, userName || "them") +
       awayBlock(away, userName || "them") +
       goodnightBlock(goodnight, userName || "them") +
+      (persona ? anchorBlock(persona, long) : "") +
       nowBlock(userName || "them", tz, now) +
       last
     : buildMuseSystemPrompt({

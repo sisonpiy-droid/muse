@@ -571,6 +571,8 @@ export function relevantMemories(
 
 /** Most memories the chat route accepts in one turn. */
 export const MEMORIES_PER_TURN = 12;
+/* Kinds of memory that do not go stale the way a plan, a job or a mood does. */
+const STABLE = new Set(["PERMANENT", "RELATIONSHIP"]);
 
 /* What someone has in mind when they reply to you.
  *
@@ -602,8 +604,14 @@ export function memoriesForTurn(
   const mine = state.memories.filter((m) => m.museId === museId && !isPlan(m, now) && m.type !== "SHARED" && m.type !== "PROMISE");
   if (!mine.length) return [];
   const byContent = new Map(mine.map((m) => [m.content, m]));
-  const label = (m: SoloMemory | undefined, c: string) =>
-    opts.room !== undefined && m?.circleId !== opts.room ? `(private) ${c}` : c;
+  /* Marked as private (learned outside this room) and, for anything that can go
+     stale, as told a while ago -- people change jobs, cities and minds, and the
+     character should hold an old fact loosely rather than state it as current. */
+  const label = (m: SoloMemory | undefined, c: string) => {
+    const old = m && !STABLE.has(m.type) ? Math.floor((now - Date.parse(m.createdAt)) / (30 * 86_400_000)) : 0;
+    const aged = old >= 3 ? `${c} (told about ${old} months ago; may have changed)` : c;
+    return opts.room !== undefined && m?.circleId !== opts.room ? `(private) ${aged}` : aged;
+  };
 
   const newest = [...mine].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   /* Who they are rather than what happened: events are what retrieval is for. */
@@ -621,7 +629,8 @@ export function memoriesForTurn(
     out.push(c);
   };
   for (const m of standing) add(m.content);
-  for (const m of newest.slice(0, 4)) add(m.content);
+  /* Only the two newest regardless of topic; the rest come in by relevance. */
+  for (const m of newest.slice(0, 2)) add(m.content);
   for (const c of relevantMemories(state, museId, query, queryEmbedding)) if (byContent.has(c)) add(c);
   return out.map((c) => label(byContent.get(c), c));
 }
