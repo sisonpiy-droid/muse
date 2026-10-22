@@ -1238,6 +1238,15 @@ button.tag:disabled { opacity: 0.45; cursor: not-allowed; }
 .scrap-text { margin: 0; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
 .scrap-text.muse { font-family: var(--serif); font-size: 1.02rem; }
 
+/* ---------------------------------------------------------------- keep it going */
+.blocked-sheet { margin-top: 1rem; padding: 0.9rem 1rem; border: 1px solid var(--edge-lit); border-radius: var(--r-md); background: var(--surface); animation: screen-in 220ms var(--ease) both; }
+.blocked-title { margin: 0; font-family: var(--serif); font-size: 1.05rem; }
+.blocked-options { display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 0.6rem; }
+.blocked-opt { text-align: left; font: inherit; cursor: pointer; color: var(--ink); padding: 0.65rem 0.8rem; border: 1px solid var(--edge); border-radius: var(--r-md); background: var(--bg); display: flex; flex-direction: column; gap: 0.15rem; }
+.blocked-opt:hover { border-color: var(--accent); }
+.blocked-opt b { font-weight: 600; font-size: 0.92rem; }
+.blocked-opt span { color: var(--muted); font-size: 0.8rem; }
+
 /* ---------------------------------------------------------------- visual pass */
 
 /* Screens move in rather than appear. Ends on `transform: none`, so a sticky

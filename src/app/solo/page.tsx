@@ -24,6 +24,7 @@ import { Story } from "@/components/Story";
 import { Look } from "@/components/Look";
 import { Scrapbook } from "@/components/Scrapbook";
 import { Welcome } from "@/components/Welcome";
+import { BlockedSheet } from "@/components/BlockedSheet";
 import { arrange, toggleArchive, togglePin } from "@/lib/solo/chatlist";
 import { clockTime, dayLabel, runOf } from "@/lib/solo/layout";
 import { VoiceNote } from "@/components/VoiceNote";
@@ -31,7 +32,7 @@ import { useFollow } from "@/components/useFollow";
 import { backgroundedSince, useReplyLoop } from "@/components/useReplyLoop";
 import { MADE_TAB, TABS } from "@/lib/personas";
 import {
-  DEFAULT_VIBE, PICKABLE_REGISTERS, REGISTERS, TOPICS, feelingsSummary, hasFeelings, moodsFor, romanceAllowed, splitBurst, storyPitches,
+  DEFAULT_VIBE, PICKABLE_REGISTERS, REGISTERS, TOPICS, feelingsSummary, HEATS, HEAT_LABEL, asHeat, hasFeelings, heatBelow, moodsFor, romanceAllowed, splitBurst, storyPitches,
   vibeSummary, type Vibe,
 } from "@/lib/presence/persona";
 import { safeFilename, transcriptMarkdown } from "@/lib/export";
@@ -1162,6 +1163,10 @@ function SoloChat({
   /* Some failures are worth another go and some are not. Offering "Try again"
      on a prompt-level block just runs the user into the same wall. */
   const [canRetry, setCanRetry] = useState(true);
+  /* A filter stopped the reply: the "keep it going" sheet shows instead of a bare error. */
+  const [blocked, setBlocked] = useState(false);
+  /* A milder heat for the next reply only, after a block. */
+  const heatOnce = useRef<string | undefined>(undefined);
   const [vibeOpen, setVibeOpen] = useState(false);
   const [replyTo, setReplyTo] = useState<SoloMessage | null>(null);
   const foot = useRef<HTMLDivElement>(null);
@@ -1185,6 +1190,8 @@ function SoloChat({
   });
 
   const vibe: Vibe = state.vibes?.[muse.id] ?? DEFAULT_VIBE;
+  /* Romantic is on here, and allowed for this character. */
+  const romanceOn = vibe.mood === "flirty" && !!muse.persona && romanceAllowed(muse.persona);
   const setVibe = (next: Vibe) =>
     update({ ...state, vibes: { ...(state.vibes ?? {}), [muse.id]: next } });
 
@@ -1293,10 +1300,13 @@ function SoloChat({
 
     setError(null);
     setCanRetry(true);
+    setBlocked(false);
+    const heatNow = heatOnce.current;
+    heatOnce.current = undefined;
 
     /* The request is built in lib/solo/turn.ts, shared with voice calls, so
        a call is exactly this character with exactly these memories. */
-    const prepared = await prepareTurn(s, muse.id, { signal, fallback: muse, canStore: canPhoto });
+    const prepared = await prepareTurn(s, muse.id, { signal, fallback: muse, canStore: canPhoto, heat: heatNow });
     if (!prepared || signal.aborted) return;
     const { person, vibe: vibeNow } = prepared;
 
@@ -1311,6 +1321,7 @@ function SoloChat({
       if (!outcome.ok) {
         setError(outcome.message);
         setCanRetry(outcome.retryable);
+        setBlocked(outcome.blocked === true);
         return;
       }
       if (signal.aborted) return;
@@ -1350,6 +1361,12 @@ function SoloChat({
       const burst = person.persona ? splitBurst(text, reg.burst) : [text];
       const can = (prepared.body.can as MediaAllowed | null) ?? { photo: false, voice: false, song: false };
       const answer = await deliver(burst, can, last.id, person, signal);
+      /* It only went through one step milder: said on the reply, not hidden. */
+      if (outcome.softened && answer[0]) {
+        const id = answer[0].id;
+        const to = outcome.softened;
+        update((cur) => ({ ...cur, conversations: { ...cur.conversations, [muse.id]: (cur.conversations[muse.id] ?? []).map((x) => (x.id === id ? { ...x, softened: to } : x)) } }));
+      }
       if (!answer.length) {
         if (!signal.aborted) {
           setError(`${muse.name} didn't answer that time. Try again?`);
@@ -1469,7 +1486,9 @@ function SoloChat({
     if (!opts.later) setStarting(true);
     try {
       const signal = new AbortController().signal;
-      const prepared = await prepareTurn(latest.current, muse.id, { fallback: muse, canStore: canPhoto });
+      const heatNow = heatOnce.current;
+      heatOnce.current = undefined;
+      const prepared = await prepareTurn(latest.current, muse.id, { fallback: muse, canStore: canPhoto, heat: heatNow });
       if (!prepared) return;
       withAppMessage(prepared, note);
       const out = await streamReply(prepared.body, signal, () => {});
@@ -1787,6 +1806,7 @@ function SoloChat({
                 : m.content}
               {m.edited && <span className="stamp"> · edited</span>}
               {m.interrupted && <span className="stamp"> · cut off</span>}
+              {m.softened && <span className="stamp"> · kept it {m.softened === "sweet" ? "sweeter" : "softer"}</span>}
               {m.point && <span className="stamp point"> · point to {m.point === "user" ? "you" : muse.name}</span>}
               <MessageActions
                 content={m.content}
@@ -1818,7 +1838,31 @@ function SoloChat({
           </p>
         )}
 
-        {error && (
+        {error && blocked && (
+          <BlockedSheet
+            name={muse.name}
+            nextHeat={romanceOn && heatBelow(asHeat(vibe.heat)) ? HEAT_LABEL[heatBelow(asHeat(vibe.heat))!] : null}
+            canReword={!!lastLine && lastLine.from === "user" && !lastLine.image && !lastLine.video && lastLine.content.trim().length > 0}
+            onSofter={() => {
+              heatOnce.current = romanceOn ? (heatBelow(asHeat(vibe.heat)) ?? undefined) : undefined;
+              setBlocked(false); setError(null); loop.schedule(0);
+            }}
+            onReword={() => {
+              if (!lastLine) return;
+              if (box.current) { box.current.value = lastLine.content; box.current.focus(); }
+              setHasDraft(true);
+              update(deleteMessage(state, muse.id, lastLine.id));
+              setBlocked(false); setError(null);
+            }}
+            onMoveOn={() => {
+              heatOnce.current = romanceOn ? (heatBelow(asHeat(vibe.heat)) ?? undefined) : undefined;
+              setBlocked(false); setError(null);
+              void appTurn("(That last reply did not come through, so skip ahead: carry on from a little later -- the next morning or the next scene -- without picking up exactly where it was cut off. One or two short texts, in your own voice.)");
+            }}
+            onClose={() => { setBlocked(false); setError(null); }}
+          />
+        )}
+        {error && !blocked && (
           <div style={{ marginTop: "1rem" }}>
             <p className="error" role="alert">{error}</p>
             {canRetry && lastLine?.from === "user" && (
@@ -1854,6 +1898,22 @@ function SoloChat({
                   ))}
                 </div>
               </div>
+
+              {romanceOn && (
+                <div>
+                  <label>How far should it go?</label>
+                  <div className="tags">
+                    {HEATS.map((h) => (
+                      <button key={h} className="tag" aria-pressed={asHeat(vibe.heat) === h}
+                        onClick={() => setVibe({ ...vibe, heat: h })}
+                        style={asHeat(vibe.heat) === h ? { borderColor: "var(--accent)", color: "var(--accent)" } : undefined}>
+                        {HEAT_LABEL[h]}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="fine" style={{ margin: "0.4rem 0 0" }}>Sweet is affection. Flirty teases. Steamy builds the tension. It always cuts away like a film, and if a reply is blocked it steps down on its own.</p>
+                </div>
+              )}
 
               <div>
                 <label>What do you want to talk about?</label>

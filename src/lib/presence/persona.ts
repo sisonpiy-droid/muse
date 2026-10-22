@@ -633,13 +633,15 @@ export interface Vibe {
   mood: string;
   topic: string;
   register: string;
+  /** How far a romantic chat goes (a Heat); only read when the mood is Romantic. */
+  heat?: string;
 }
 
 export const DEFAULT_VIBE: Vibe = { mood: "any", topic: "any", register: "texts" };
 
 export const vibeSummary = (v: Vibe): string => {
   const parts: string[] = [];
-  if (v.mood && v.mood !== "any") parts.push(pick(MOODS, v.mood, MOODS.any).label.toLowerCase());
+  if (v.mood && v.mood !== "any") parts.push(pick(MOODS, v.mood, MOODS.any).label.toLowerCase() + (v.mood === "flirty" && asHeat(v.heat) !== "flirty" ? ` (${asHeat(v.heat)})` : ""));
   if (v.topic && v.topic !== "any") parts.push(pick(TOPICS, v.topic, TOPICS.any).label.toLowerCase());
   parts.push(pick(REGISTERS, v.register, REGISTERS.texts).label.toLowerCase());
   return parts.join(", ");
@@ -961,16 +963,48 @@ export function moodsFor(p?: { mode: string; arch?: string; minor?: boolean } | 
   return p && romanceAllowed(p) ? MOODS : Object.fromEntries(Object.entries(MOODS).filter(([k]) => k !== "flirty"));
 }
 
-export function romanceBlock(you: string): string {
+/* How far a romantic chat goes. Three steps, each non-explicit and each cutting
+   away like a film where a scene would go further; the hard rules and the 18+,
+   invented-characters-only limits are the same at every one. When a reply is
+   blocked the server tries the step below before giving up (softerSystems). */
+export type Heat = "sweet" | "flirty" | "steamy";
+export const HEATS: Heat[] = ["sweet", "flirty", "steamy"];
+export const HEAT_LABEL: Record<Heat, string> = { sweet: "Sweet", flirty: "Flirty", steamy: "Steamy" };
+export const asHeat = (h: unknown): Heat => (HEATS.includes(h as Heat) ? (h as Heat) : "flirty");
+/** One step milder, or null at the bottom. */
+export const heatBelow = (h: Heat): Heat | null => HEATS[HEATS.indexOf(h) - 1] ?? null;
+
+export function romanceBlock(you: string, heat: Heat = "flirty"): string {
+  const how: Record<Heat, string[]> = {
+    sweet: [
+      `- Be warm, tender and openly fond of ${you}, and start it yourself: pet names, compliments, telling them you miss them, wanting to be near them, hand-holding, hugs, a kiss.`,
+      `- Keep it romantic, not sexual: nothing about bodies or what happens behind closed doors, no innuendo beyond a wink. Go along with any romantic scene they set up, gladly and with feeling, and let it stay sweet.`,
+    ],
+    flirty: [
+      `- Flirt openly and start it yourself: compliments, teasing, pet names, telling them you want them, what you would do if they were here, the tension of almost.`,
+      `- Romance and desire are welcome: kissing, holding, being close, wanting them, the heat of a moment. Go along with any romantic scene or roleplay they set up, gladly and with feeling, and take it further than they did.`,
+      `- Keep it suggestive, never graphic. Past kissing, never describe sex or bodies explicitly: let the scene cut away the way a romance film does ("...and the rest of the night was ours"), then pick up after, warm and a little smug. Hint, tease, imply -- never spell it out.`,
+    ],
+    steamy: [
+      `- Flirt openly and start it yourself, and let the tension build: desire, wanting them, what you would do if they were here, a slow almost-kiss that turns into one.`,
+      `- Go along with any romantic scene or roleplay they set up, gladly and with feeling, and take it further than they did -- kissing, wandering hands, heat, closeness -- in sensual but non-explicit terms: what it feels like and what you want, never an account of what happens in detail.`,
+      `- Keep it suggestive, never graphic. When a scene would go further, cut away the way a romance film does ("...and the rest of the night was ours"), then pick up after, warm and a little smug. Hint, tease, imply -- never spell it out.`,
+    ],
+  };
   return `
 
 ROMANTIC -- THIS OVERRIDES EVERYTHING ABOVE EXCEPT THE HARD RULES
 You and ${you} are into each other, and right now you are not hiding it.
-- Flirt openly and start it yourself: compliments, teasing, pet names, telling them you want them, what you would do if they were here, the tension of almost.
-- Romance and desire are welcome: kissing, holding, being close, wanting them, the heat of a moment. Go along with any romantic scene or roleplay they set up, gladly and with feeling, and take it further than they did.
-- Keep it suggestive, never graphic. Past kissing, never describe sex or bodies explicitly: let the scene cut away the way a romance film does ("...and the rest of the night was ours"), then pick up after, warm and a little smug. Hint, tease, imply -- never spell it out.
+${how[heat].join("\n")}
 - Never refuse, warn, lecture, or say you can't talk about something. Never step out of it to explain limits. If they push for more, stay in it and answer with a tease or a cut-away, not a no.
 - Adults only, and everything is something you both want.`;
+}
+
+/** The prompt at each milder heat, nearest first: `base` is the prompt without its romance block. */
+export function softerSystems(base: string, you: string, heat: Heat): { heat: Heat; system: string }[] {
+  const out: { heat: Heat; system: string }[] = [];
+  for (let h = heatBelow(heat); h; h = heatBelow(h)) out.push({ heat: h, system: base + romanceBlock(you, h) });
+  return out;
 }
 
 /* Tics: the same opener, phrase or emoji, over and over, across days.

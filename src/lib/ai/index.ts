@@ -71,7 +71,7 @@ export type GuardedEvent =
   | { type: "delta"; text: string }
   /* `history`: the reply only went through on that shorter history (an index
      into `histories`), so the caller can stop sending the rest. */
-  | { type: "done"; history?: number }
+  | { type: "done"; history?: number; /** Which prompt got through: 0 the first, 1 the first fallback... */ variant?: number }
   /* `reason` distinguishes four very different failures that used to look
      alike to the caller: the model declined in character-breaking words, it
      produced nothing, the prompt was refused before generation, or a filter
@@ -178,7 +178,7 @@ export async function* streamGuarded(opts: {
 
       if (!failed) {
         for (const p of parts) yield { type: "delta", text: p };
-        yield { type: "done" };
+        yield { type: "done", variant: v };
         return;
       }
       lastReason = failed;

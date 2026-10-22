@@ -65,6 +65,8 @@ export async function prepareTurn(
     embedWithinMs?: number;
     /** Whether this device can keep photos and voice notes. */
     canStore?: boolean;
+    /** A milder heat for this one reply only (after a block), over the chat's own. */
+    heat?: string;
   } = {}
 ): Promise<PreparedTurn | null> {
   const person = findMuse(s, museId) ?? opts.fallback;
@@ -209,6 +211,7 @@ export async function prepareTurn(
       : null,
     away,
     goodnight,
+    heat: opts.heat ?? vibe.heat,
     /* The weather where they are and the festival coming up. On a call only the
        festival: a weather lookup is a pause on the line. */
     world: await worldFor(opts.register === "live" ? undefined : s.place, Date.now(), tz),
@@ -288,8 +291,8 @@ const ROUTE_MAX_MESSAGES = 60;
 export type ReplyOutcome =
   /* `trimmed`: it only went through on part of the conversation -- the last
      `kept` messages sent, and without photos if `photos` is false. */
-  | { ok: true; text: string; trimmed?: { kept: number; photos: boolean } }
-  | { ok: false; message: string; retryable: boolean; partial: string };
+  | { ok: true; text: string; trimmed?: { kept: number; photos: boolean }; /** It went through at this milder heat. */ softened?: string }
+  | { ok: false; message: string; retryable: boolean; partial: string; /** A filter stopped it. */ blocked?: boolean };
 
 /* Reads /api/solo/chat's SSE stream, calling onDelta with the text so far. A
    reply that ended in an error is not a reply, however much of it arrived
@@ -314,7 +317,8 @@ export async function streamReply(
   const decoder = new TextDecoder();
   let buffer = "";
   let acc = "";
-  let failure: { message: string; retryable: boolean } | null = null;
+  let failure: { message: string; retryable: boolean; blocked?: boolean } | null = null;
+  let softened: string | undefined;
   let trimmed: { kept: number; photos: boolean } | undefined;
   while (true) {
     const { done, value } = await reader.read();
@@ -325,16 +329,17 @@ export async function streamReply(
     for (const frame of frames) {
       const line = frame.split(/\r?\n/).find((l) => l.startsWith("data:"));
       if (!line) continue;
-      let evt: { type?: string; text?: string; message?: string; retryable?: boolean; kept?: number; photos?: boolean };
+      let evt: { type?: string; text?: string; message?: string; retryable?: boolean; kept?: number; photos?: boolean; to?: string; blocked?: boolean };
       try { evt = JSON.parse(line.slice(5).trim()); } catch { continue; }
       if (evt.type === "delta" && evt.text) { acc += evt.text; onDelta(acc, evt.text); }
       else if (evt.type === "trimmed" && typeof evt.kept === "number") trimmed = { kept: evt.kept, photos: evt.photos !== false };
+      else if (evt.type === "softened" && typeof evt.to === "string") softened = evt.to;
       else if (evt.type === "error") {
-        failure = { message: evt.message ?? "Something went wrong.", retryable: evt.retryable !== false };
+        failure = { message: evt.message ?? "Something went wrong.", retryable: evt.retryable !== false, blocked: evt.blocked === true };
       }
     }
   }
-  return failure ? { ok: false, ...failure, partial: acc } : { ok: true, text: acc, ...(trimmed ? { trimmed } : {}) };
+  return failure ? { ok: false, ...failure, partial: acc } : { ok: true, text: acc, ...(trimmed ? { trimmed } : {}), ...(softened ? { softened } : {}) };
 }
 
 /** The cutoff a trimmed reply implies, for the state. Null when nothing changes. */

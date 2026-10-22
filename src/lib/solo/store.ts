@@ -88,6 +88,8 @@ export interface SoloMessage {
   nudge?: boolean;
   /** A photo of theirs sent blurred, until it is tapped. */
   veiled?: boolean;
+  /** The reply only went through one step milder (a Heat), so it is marked as such. */
+  softened?: string;
   /* A video they sent. The file and a few frames from through it are in
      IndexedDB, never here; the model is sent the frames. */
   video?: { id: string; w: number; h: number; seconds: number; frames: string[] };

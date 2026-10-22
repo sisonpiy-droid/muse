@@ -5,7 +5,7 @@ import { looksLikeRefusal } from "@/lib/ai/refusal";
 import { feelingsSchema, personaSchema } from "@/lib/presence/schema";
 import { buildMuseSystemPrompt } from "@/lib/muse/prompt";
 import {
-  coveredBlock, coveredGround, lifeBlock, momentBlock, personaSystem, promiseBlock, quizBlock, romanceAllowed, anchorBlock, awayBlock, worldBlock, bondBlock, callbackBlock, goodnightBlock, heardBlock, secretBlock, romanceBlock,
+  asHeat, softerSystems, coveredBlock, coveredGround, lifeBlock, momentBlock, personaSystem, promiseBlock, quizBlock, romanceAllowed, anchorBlock, awayBlock, worldBlock, bondBlock, callbackBlock, goodnightBlock, heardBlock, secretBlock, romanceBlock,
   sendBlock, sharedBlock, togetherBlock, withQuote, wornBlock, yesBlock, type Feelings,
 } from "@/lib/presence/persona";
 import { nowBlock, previousMoment, stampPauses, timeBlock } from "@/lib/presence/time";
@@ -156,6 +156,8 @@ const bodySchema = z.object({
   away: z.object({ days: z.number().int().min(2).max(3650), level: z.number().int().min(0).max(10) }).nullish(),
   /** The weather where they are and a festival coming up (worldBlock). */
   world: z.object({ place: z.string().max(80).optional(), weather: z.string().max(60).optional(), festivals: z.array(z.string().max(80)).max(2).default([]) }).nullish(),
+  /** How far a romantic chat goes; honoured only for someone allowed Romantic. */
+  heat: z.enum(["sweet", "flirty", "steamy"]).optional(),
   /** A long thread, so the character is restated at the end (anchorBlock). */
   long: z.boolean().nullish(),
   /** A goodnight at night from someone close (goodnightBlock). */
@@ -182,7 +184,7 @@ export async function POST(req: Request) {
     return Response.json({ error: "Check the request and try again." }, { status: 400 });
   }
   const { muse, persona, knows, mood, topic, register, feelings, messages, memories, plans, userName, timezone, story, shared, worn, can,
-    life, promises, moment, together, score, bond, heard, callback, secret, away, goodnight, long, world } = parsed.data;
+    life, promises, moment, together, score, bond, heard, callback, secret, away, goodnight, long, world, heat: wantedHeat } = parsed.data;
   const tz = timezone ?? undefined;
   /* The server's clock, not the phone's: a phone set five minutes wrong should
      not move a meeting. Timestamps on messages are compared against it. */
@@ -194,8 +196,10 @@ export async function POST(req: Request) {
   /* Said last, after everything else, so it wins. "Romantic" also works as a
      standing mood, which applies when today's mood is left alone. */
   const romantic = mood === "flirty" || ((!mood || mood === "any") && standing?.mood === "flirty");
+  const heat = asHeat(wantedHeat);
+  const romanceOn = mood !== "yes" && !!(romantic && persona && romanceAllowed(persona));
   const last = mood === "yes" ? yesBlock(userName || "them")
-    : romantic && persona && romanceAllowed(persona) ? romanceBlock(userName || "them") : "";
+    : romanceOn ? romanceBlock(userName || "them", heat) : "";
 
   /* Drop the model's own past refusals from the history. Once "I cannot
      roleplay this persona" is in the transcript the model continues in that
@@ -361,6 +365,16 @@ ${timeBlock({ you: userName || "them", timeZone: tz, ...clock })}` + bondBlock(b
      prompt did. So: first drop the measured statistics and the user's notes and
      cut the samples hard, then drop the samples entirely and run on the brief
      alone. A blander version of someone is worth having. Silence is not. */
+  /* A block steps the heat down before anything else is tried: the same prompt
+     with the next milder romance block, and the one below that. Reached only
+     when the reply was refused, so a normal turn never pays for it, and each step
+     is milder than the last -- nothing here asks the model for more. */
+  const steps = romanceOn && last && system.endsWith(last)
+    ? softerSystems(system.slice(0, system.length - last.length), userName || "them", heat)
+    : [];
+  /* Rungs that drop parts of the profile are also run at the mildest heat. */
+  const floor = steps.length ? romanceBlock(userName || "them", steps[steps.length - 1].heat) : last;
+
   const variant = (p: NonNullable<typeof persona>) =>
     personaSystem(
       p,
@@ -369,12 +383,13 @@ ${timeBlock({ you: userName || "them", timeZone: tz, ...clock })}` + bondBlock(b
       { mood: mood || "any", topic: topic || "any", register: register || "texts" },
       timezone ?? undefined,
       standing
-    ) + awayBlock(away, userName || "them") + goodnightBlock(goodnight, userName || "them") + nowBlock(userName || "them", tz, now) + last;
+    ) + awayBlock(away, userName || "them") + goodnightBlock(goodnight, userName || "them") + nowBlock(userName || "them", tz, now) + floor;
 
   const bare = { ...persona, samples: undefined, metrics: undefined, extra: undefined };
 
   const fallbacks = persona
     ? [
+        ...steps.map((s) => s.system),
         variant({ ...persona, samples: persona.samples?.slice(0, 300), metrics: undefined, extra: undefined }),
         variant(bare as NonNullable<typeof persona>),
         /* Last rung. The relationship blocks are written material too, and the
@@ -418,6 +433,11 @@ ${timeBlock({ you: userName || "them", timeZone: tz, ...clock })}` + bondBlock(b
           histories: shorter.map((h) => h.messages),
         })) {
           if (evt.type === "delta") send({ type: "delta", text: evt.text });
+          else if (evt.type === "done" && evt.variant && evt.variant <= steps.length) {
+            /* It went through one step milder. Said, so the reply can be marked. */
+            send({ type: "softened", to: steps[evt.variant - 1].heat });
+            send({ type: "done" });
+          }
           else if (evt.type === "done" && evt.history !== undefined) {
             /* It only went through with less of the conversation. Tell the app
                how much, so it leaves the rest out from now on instead of every
@@ -450,6 +470,8 @@ ${timeBlock({ you: userName || "them", timeZone: tz, ...clock })}` + bondBlock(b
                     ? `Google's safety filter kept stopping ${who}'s reply partway through, so nothing half-finished was sent. Try again — it usually goes through.`
                     : `${who} didn't come to the phone. Try saying it differently.`,
               retryable: evt.reason !== "blocked",
+              /* A filter stopped it: the app offers ways to keep going. */
+              blocked: evt.reason === "blocked" || evt.reason === "stopped",
             });
           } else send({ type: "done" });
         }
