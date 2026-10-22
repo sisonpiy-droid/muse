@@ -1,6 +1,7 @@
 "use client";
 
 import { KEY, STORAGE_BUDGET, parseState, serialiseState, type SaveResult, type SoloState } from "./store";
+import { mergeSet } from "./chatlist";
 import { chooseBackend, localBackend, storageUse, type Backend } from "./backend";
 
 /* Keeping one browser's copy of everything consistent when more than one copy
@@ -88,6 +89,8 @@ export function mergeStates(base: SoloState, theirs: SoloState, ours: SoloState)
     ...ours,
     userName: same(ours.userName, base.userName) ? theirs.userName : ours.userName,
     place: same(ours.place, base.place) ? theirs.place : ours.place,
+    pinned: mergeSet(base.pinned, theirs.pinned, ours.pinned),
+    archived: mergeSet(base.archived, theirs.archived, ours.archived),
     muses: mergeList(base.muses, theirs.muses, ours.muses),
     memories: mergeList(base.memories, theirs.memories, ours.memories),
     circles: mergeList(base.circles ?? [], theirs.circles ?? [], ours.circles ?? []),

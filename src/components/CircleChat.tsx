@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { Avatar } from "@/components/Avatar";
 import { Menu } from "@/components/Menu";
+import { clockTime, dayLabel, runOf } from "@/lib/solo/layout";
 import { QuoteBubble, ReplyBar, jumpTo } from "@/components/Quote";
 import { TraitEditor } from "@/components/TraitEditor";
 import { useFollow } from "@/components/useFollow";
@@ -56,6 +57,7 @@ export function CircleChat({
 }) {
   const members = membersOf(state, circle);
   const log = state.conversations[circle.id] ?? [];
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
   /* The text lives in the textarea: setting state per keystroke re-rendered the whole room. */
   const [hasDraft, setHasDraft] = useState(false);
   const [speaking, setSpeaking] = useState<{ name: string; text: string } | null>(null);
@@ -423,12 +425,21 @@ export function CircleChat({
           </div>
         )}
 
-        {shown.map((m) => {
+        {shown.map((m, i) => {
           const q = quoteOf(log, m);
+          const run = runOf(shown, i, tz);
+          const speaker = m.from === "muse" ? members.find((x) => x.id === m.speakerId) : undefined;
           const replyHere = () => { setReplyTo(m); setPicked(null); box.current?.focus(); };
           return (
-            <Turn key={m.id} id={m.id} mine={m.from === "user"} picked={picked === m.id} onPick={setPicked} onReply={replyHere}>
-              {m.from === "muse" && <span className="who">{nameOf(m.speakerId ?? "")}</span>}
+            <Fragment key={m.id}>
+            {run.newDay && <div className="day-divider" role="separator"><span>{dayLabel(m.at, clock, tz)}</span></div>}
+            <Turn id={m.id} mine={m.from === "user"} picked={picked === m.id} onPick={setPicked} onReply={replyHere}>
+              {m.from === "muse" && run.first && (
+                <span className="who">
+                  <Avatar small name={nameOf(m.speakerId ?? "")} image={speaker?.avatar?.id} />
+                  {nameOf(m.speakerId ?? "")}
+                </span>
+              )}
               {m.replyTo && (
                 <QuoteBubble who={q ? whoSaid(q) : ""} text={q?.content} onJump={q ? () => jumpTo(q.id) : undefined} />
               )}
@@ -449,12 +460,15 @@ export function CircleChat({
                 onDone={() => setPicked(null)}
               />
             </Turn>
+            {run.last && <span className={`turn-time turn-time-${m.from === "user" ? "user" : "muse"}`}>{clockTime(m.at, tz)}</span>}
+            </Fragment>
           );
         })}
 
         {(speaking || nextUp || loop.busy) && (
-          <p className="typing">
-            {nextUp ? nameOf(nextUp.speakerId ?? "") : speaking ? speaking.name : "someone"} is typing<i>.</i><i>.</i><i>.</i>
+          <p className="typing" role="status">
+            <span className="typing-dots" aria-hidden><i /><i /><i /></span>
+            <span>{nextUp ? nameOf(nextUp.speakerId ?? "") : speaking ? speaking.name : "someone"} is typing</span>
           </p>
         )}
         {error && <p className="error" role="alert">{error}</p>}

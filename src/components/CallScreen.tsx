@@ -93,6 +93,7 @@ export function CallScreen({
         </div>
         <h1>{muse.name}</h1>
         <p className="call-state" role="status" aria-live="polite">{status}</p>
+        <div className="call-wave" aria-hidden>{[0, 1, 2, 3, 4, 5, 6].map((i) => <i key={i} style={{ animationDelay: `${i * 90}ms` }} />)}</div>
       </div>
 
       <div className="call-words" aria-live="polite">

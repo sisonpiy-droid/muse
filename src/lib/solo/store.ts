@@ -278,6 +278,9 @@ export interface SoloState {
   bank?: Record<string, number>;
   /** Things kept from a chat, keyed by Muse (scrapbook.ts). */
   scrapbook?: Record<string, Kept[]>;
+  /** Chats kept at the top of the list, and chats put away (chatlist.ts), by id. */
+  pinned?: string[];
+  archived?: string[];
   /** Where the user is, if they said, so characters can know their weather (world.ts). */
   place?: { name: string; lat: number; lon: number };
   /* Plans made together that have been started, by the memory id of the plan,
@@ -405,6 +408,8 @@ export function parseState(raw: string | null | undefined): SoloState {
       scores: parsed.scores ?? {},
       bank: parsed.bank ?? {},
       scrapbook: parsed.scrapbook ?? {},
+      ...(Array.isArray(parsed.pinned) ? { pinned: parsed.pinned } : {}),
+      ...(Array.isArray(parsed.archived) ? { archived: parsed.archived } : {}),
       ...(parsed.place && typeof parsed.place === "object" ? { place: parsed.place } : {}),
       started: parsed.started ?? {},
       cutoffs: parsed.cutoffs ?? {},
@@ -1124,6 +1129,7 @@ export function parseBackup(text: string): RestoreResult {
     if (v && typeof v === "object" && !Array.isArray(v)) (state as unknown as Record<string, unknown>)[k] = v;
   }
   if (p.place && typeof p.place === "object") state.place = p.place as SoloState["place"];
+  for (const k of ["pinned", "archived"] as const) if (Array.isArray(p[k])) state[k] = (p[k] as unknown[]).filter((x): x is string => typeof x === "string");
 
   return {
     ok: true,

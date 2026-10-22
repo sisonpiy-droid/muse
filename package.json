@@ -7,7 +7,7 @@
     "build": "prisma generate && next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "tsx tests/sse.test.mjs && tsx tests/rank.test.mjs && tsx tests/prompt.test.mjs && tsx tests/chat-import.test.mjs && tsx tests/refusal.test.mjs && tsx tests/persona-edit.test.mjs && tsx tests/guard.test.mjs && tsx tests/memory-store.test.mjs && tsx tests/participant.test.mjs && tsx tests/transcript.test.mjs && tsx tests/conversation.test.mjs && tsx tests/threads.test.mjs && tsx tests/research.test.mjs && tsx tests/sync-time.test.mjs && tsx tests/voice.test.mjs && tsx tests/outreach.test.mjs && tsx tests/features.test.mjs && tsx tests/life.test.mjs && tsx tests/cloud.test.mjs && tsx tests/recovery.test.mjs && tsx tests/personality.test.mjs && tsx tests/together.test.mjs",
+    "test": "tsx tests/sse.test.mjs && tsx tests/rank.test.mjs && tsx tests/prompt.test.mjs && tsx tests/chat-import.test.mjs && tsx tests/refusal.test.mjs && tsx tests/persona-edit.test.mjs && tsx tests/guard.test.mjs && tsx tests/memory-store.test.mjs && tsx tests/participant.test.mjs && tsx tests/transcript.test.mjs && tsx tests/conversation.test.mjs && tsx tests/threads.test.mjs && tsx tests/research.test.mjs && tsx tests/sync-time.test.mjs && tsx tests/voice.test.mjs && tsx tests/outreach.test.mjs && tsx tests/features.test.mjs && tsx tests/life.test.mjs && tsx tests/cloud.test.mjs && tsx tests/recovery.test.mjs && tsx tests/personality.test.mjs && tsx tests/together.test.mjs && tsx tests/ui.test.mjs",
     "typecheck": "tsc --noEmit",
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate dev",

@@ -16,7 +16,11 @@ function hueOf(seed: string): number {
   return h;
 }
 
-export function Avatar({ name, large = false, image }: { name: string; large?: boolean; image?: string | null }) {
+export function Avatar({ name, large = false, small = false, ring = false, image }: {
+  name: string; large?: boolean; small?: boolean; image?: string | null;
+  /** Something unread: a ring around the picture. */
+  ring?: boolean;
+}) {
   const hue = hueOf(name);
   const [url, setUrl] = useState<string | null>(null);
   useEffect(() => {
@@ -26,7 +30,7 @@ export function Avatar({ name, large = false, image }: { name: string; large?: b
   }, [image]);
   return (
     <div
-      className={large ? "avatar avatar-lg" : "avatar"}
+      className={`avatar${large ? " avatar-lg" : ""}${small ? " avatar-sm" : ""}${ring ? " avatar-ring" : ""}`}
       style={{
         background: `linear-gradient(140deg, hsl(${hue} 62% 74%), hsl(${(hue + 48) % 360} 58% 62%))`,
       }}
