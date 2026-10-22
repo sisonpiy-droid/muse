@@ -87,6 +87,7 @@ export function mergeStates(base: SoloState, theirs: SoloState, ours: SoloState)
   return {
     ...ours,
     userName: same(ours.userName, base.userName) ? theirs.userName : ours.userName,
+    place: same(ours.place, base.place) ? theirs.place : ours.place,
     muses: mergeList(base.muses, theirs.muses, ours.muses),
     memories: mergeList(base.memories, theirs.memories, ours.memories),
     circles: mergeList(base.circles ?? [], theirs.circles ?? [], ours.circles ?? []),
@@ -110,6 +111,7 @@ export function mergeStates(base: SoloState, theirs: SoloState, ours: SoloState)
     started: { ...(theirs.started ?? {}), ...(ours.started ?? {}) },
     cutoffs: mergeRecord(base.cutoffs, theirs.cutoffs, ours.cutoffs),
     digests: mergeRecord(base.digests, theirs.digests, ours.digests),
+    scrapbook: mergeRecord(base.scrapbook, theirs.scrapbook, ours.scrapbook, (b, t, o) => mergeList(b ?? [], t ?? [], o ?? [])),
     edits: mergeRecord(base.edits, theirs.edits, ours.edits),
     feelings: mergeRecord(base.feelings, theirs.feelings, ours.feelings),
     /* Tombstones only ever grow: something forgotten in either copy stays forgotten. */

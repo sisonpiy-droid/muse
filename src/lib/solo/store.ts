@@ -240,6 +240,19 @@ export interface SoloMuse
   avatar?: MuseAvatar | null;
 }
 
+/** Something kept in a scrapbook: a copy, so it survives clearing the chat. */
+export interface Kept {
+  id: string;
+  from: "user" | "muse";
+  text: string;
+  /** When it was said. */
+  at: string;
+  keptAt: string;
+  /** A photo, copied under its own id so deleting the message does not take it. */
+  image?: { id: string; w: number; h: number };
+  song?: { title: string; artist: string };
+}
+
 export interface SoloState {
   userName: string | null;
   muses: SoloMuse[];
@@ -263,6 +276,10 @@ export interface SoloState {
   scores?: Record<string, Score>;
   /** Closeness points banked when a chat was cleared, keyed by Muse, so the level survives it. */
   bank?: Record<string, number>;
+  /** Things kept from a chat, keyed by Muse (scrapbook.ts). */
+  scrapbook?: Record<string, Kept[]>;
+  /** Where the user is, if they said, so characters can know their weather (world.ts). */
+  place?: { name: string; lat: number; lon: number };
   /* Plans made together that have been started, by the memory id of the plan,
      so a movie night begins once. */
   started?: Record<string, string>;
@@ -387,6 +404,8 @@ export function parseState(raw: string | null | undefined): SoloState {
       unlocked: parsed.unlocked ?? {},
       scores: parsed.scores ?? {},
       bank: parsed.bank ?? {},
+      scrapbook: parsed.scrapbook ?? {},
+      ...(parsed.place && typeof parsed.place === "object" ? { place: parsed.place } : {}),
       started: parsed.started ?? {},
       cutoffs: parsed.cutoffs ?? {},
       digests: parsed.digests ?? {},
@@ -1096,6 +1115,15 @@ export function parseBackup(text: string): RestoreResult {
     edits: (p.edits as SoloState["edits"]) ?? {},
     feelings: (p.feelings as SoloState["feelings"]) ?? {},
   };
+  /* Everything added since -- closeness, their life, secrets, the scrapbook,
+     what was forgotten -- comes back too. Restoring used to keep only the above and
+     quietly lose the rest, including the record that stops a deleted memory
+     being learned again. */
+  for (const k of ["forgotten", "lives", "unlocked", "scores", "started", "cutoffs", "digests", "bank", "scrapbook", "stories"] as const) {
+    const v = p[k];
+    if (v && typeof v === "object" && !Array.isArray(v)) (state as unknown as Record<string, unknown>)[k] = v;
+  }
+  if (p.place && typeof p.place === "object") state.place = p.place as SoloState["place"];
 
   return {
     ok: true,
@@ -1241,6 +1269,9 @@ export function deleteConversation(
   /* Clearing a chat keeps how close you are: its points are banked first. Clearing
      chat and memories forgets that too. (Calls stay counted on their own.) */
   const bank = { ...(state.bank ?? {}) };
+  /* Clearing chat and memories forgets the scrapbook too; clearing the chat keeps it. */
+  const scrapbook = { ...(state.scrapbook ?? {}) };
+  if (alsoForget) delete scrapbook[threadId];
   if (alsoForget) delete bank[threadId];
   else if (findMuse(state, threadId)) {
     const st = storyOf(state, threadId, Date.now(), Intl.DateTimeFormat().resolvedOptions().timeZone);
@@ -1250,6 +1281,7 @@ export function deleteConversation(
     ...state,
     conversations,
     bank,
+    scrapbook,
     memories: alsoForget ? state.memories.filter((m) => m.museId !== threadId) : state.memories,
   };
 }
@@ -1265,6 +1297,7 @@ export function deleteMuse(state: SoloState, museId: string): SoloState {
     conversations,
     memories: state.memories.filter((m) => m.museId !== museId),
     vibes: Object.fromEntries(Object.entries(state.vibes ?? {}).filter(([k]) => k !== museId)),
+    scrapbook: Object.fromEntries(Object.entries(state.scrapbook ?? {}).filter(([k]) => k !== museId)),
     feelings: Object.fromEntries(Object.entries(state.feelings ?? {}).filter(([k]) => k !== museId)),
     edits: Object.fromEntries(Object.entries(state.edits ?? {}).filter(([k]) => k !== museId)),
     forgotten: Object.fromEntries(Object.entries(state.forgotten ?? {}).filter(([k]) => k !== museId)),

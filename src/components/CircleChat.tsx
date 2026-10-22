@@ -24,6 +24,7 @@ import {
   type SoloCircle, type SoloMessage, type SoloMuse, type SoloState,
 } from "@/lib/solo/store";
 import { embedTexts, learnFrom, refreshDigests } from "@/lib/solo/learn";
+import { banterDelay, banterWanted, pickBanterer } from "@/lib/solo/banter";
 import { MessageActions } from "./MessageActions";
 import { Turn } from "./Turn";
 
@@ -74,80 +75,31 @@ export function CircleChat({
     latest.current = state;
   });
 
-  /* Owed a reply when the room ends on something the user said. */
-  const loop = useReplyLoop(circle.id, turn, () => (latest.current.conversations[circle.id] ?? []).at(-1)?.from === "user");
-
-  /* Texts still being "typed" are saved but not shown until their time. */
-  const [clock, setClock] = useState(() => Date.now());
-  const shown = log.filter((m) => !m.showAt || Date.parse(m.showAt) <= clock);
-  const typingNext = shown.length < log.length;
-  const nextUp = typingNext ? log.find((m) => m.showAt && Date.parse(m.showAt) > clock) : undefined;
-  useEffect(() => {
-    const due = log.map((m) => (m.showAt ? Date.parse(m.showAt) : 0)).filter((t) => t > clock);
-    if (!due.length) return;
-    const t = setTimeout(() => setClock(Date.now()), Math.max(30, Math.min(...due) - Date.now() + 20));
-    return () => clearTimeout(t);
-    // Reschedules when a message arrives or the clock moves; that is all that changes when.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [log.length, clock]);
-
-  /* Each member's one-to-one, digested, brought up to date as the group opens. */
-  useEffect(() => {
-    void refreshDigests(latest.current, membersOf(latest.current, circle).map((m) => m.id), update);
-    // Once per group opened; reads the latest state through the ref.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [circle.id]);
-
-  useFollow(shown.length * 2 + (speaking || typingNext || loop.busy ? 1 : 0), speaking?.text, shown.at(-1)?.from === "user");
-
-  const nameOf = (id: string) => members.find((m) => m.id === id)?.name ?? "Someone";
-  const whoSaid = (m: SoloMessage) => (m.from === "user" ? "You" : nameOf(m.speakerId ?? ""));
-
-  async function sendDraft() {
-    const content = (box.current?.value ?? "").trim();
-    if ((!content && !attach.draft) || members.length < 2) return;
-    const file = attach.take();
-    let msg = newMessage("user", content || (file?.kind === "video" ? VIDEO_ONLY : PHOTO_ONLY), { replyTo: replyTo?.id });
-    if (file) {
-      /* The file first, then the message that points at it. */
-      const kept = await keepAttachment(file, msg.id);
-      URL.revokeObjectURL(file.url);
-      if (!kept) { setError(`Couldn't keep that ${file.kind} on this device. Try again.`); return; }
-      msg = { ...msg, ...kept };
-    }
-    update((cur) => ({
-      ...cur,
-      conversations: { ...cur.conversations, [circle.id]: [...(cur.conversations[circle.id] ?? []), msg] },
-    }));
-    if (box.current) box.current.value = "";
-    setHasDraft(false);
-    setReplyTo(null);
-    setError(null);
-    if (box.current) box.current.style.height = "auto";
-    loop.schedule();
-  }
-
   /* One round of the room, answering everything the user has said since anyone
      last spoke -- one message or several. */
-  async function turn(signal: AbortSignal) {
+  async function turn(signal: AbortSignal, banter?: boolean) {
     const startedAt = Date.now();
     const s = latest.current;
     const room = circleOf(s, circle.id) ?? circle;
     const people = membersOf(s, room);
     let running = s.conversations[room.id] ?? [];
     const last = running[running.length - 1];
-    if (!last || last.from !== "user" || people.length < 2) return;
+    if (!last || people.length < 2 || (!banter && last.from !== "user")) return;
 
     setError(null);
 
+    /* Banter answers nobody: one of them says something to another unprompted. */
     const unanswered: SoloMessage[] = [];
-    for (let i = running.length - 1; i >= 0 && running[i].from === "user"; i--) unanswered.unshift(running[i]);
+    if (!banter) for (let i = running.length - 1; i >= 0 && running[i].from === "user"; i--) unanswered.unshift(running[i]);
+    const query = banter ? running.slice(-4).map((x) => x.content).join("\n") : unanswered.map((u) => u.content).join("\n");
     /* Replying to someone's line is addressing them, as surely as naming them. */
     const repliedTo = unanswered
       .map((m) => quoteOf(running, m))
       .filter((q): q is SoloMessage => Boolean(q && q.from === "muse" && q.speakerId))
       .map((q) => q.speakerId as string);
-    const speakers = chooseSpeakers(people, unanswered.map((m) => m.content).join("\n"), running, repliedTo);
+    const speakers = banter
+      ? [pickBanterer(people, running)].filter((x): x is SoloMuse => !!x)
+      : chooseSpeakers(people, unanswered.map((m) => m.content).join("\n"), running, repliedTo);
 
     /* The room's recent photos and the latest video's frames, read once for
        the whole round: everyone in the room sees the same pictures. */
@@ -155,7 +107,7 @@ export function CircleChat({
 
     /* Recall by meaning, once for the round, as in one-to-one chats: word
        overlap alone missed most of what someone remembered. */
-    const [queryVector] = (await embedTexts([unanswered.map((u) => u.content).join("\n")])) ?? [null];
+    const [queryVector] = (await embedTexts([query])) ?? [null];
 
     let anchor = last.id;
     for (const m of speakers) {
@@ -205,7 +157,8 @@ export function CircleChat({
             /* So nobody in the room asks what you already told them. */
             /* Their own memories, wherever learned. Anything from outside this
                room is marked private; see circleBlock for what that means. */
-            memories: memoriesForTurn(s, m.id, unanswered.map((u) => u.content).join("\n"), queryVector, { room: room.id })
+            ...(banter ? { banter: true } : {}),
+            memories: memoriesForTurn(s, m.id, query, queryVector, { room: room.id })
               .map((x) => x.slice(0, 420)),
             /* A plan with the user that is on right now goes as `together`, as in
                their one-to-one: the plan list would call it "passed, outcome unknown". */
@@ -284,8 +237,9 @@ export function CircleChat({
     setSpeaking(null);
 
     /* What the user said in the room becomes memory for everyone in it -- they
-       all heard it. Learned here, so marked as known to this room. */
-    if (!signal.aborted) {
+       all heard it. Learned here, so marked as known to this room. Not from
+       banter: nobody told them anything new. */
+    if (!signal.aborted && !banter) {
       const nameById = new Map(people.map((p) => [p.id, p.name]));
       void learnFrom({
         museIds: people.map((p) => p.id),
@@ -300,6 +254,91 @@ export function CircleChat({
 
   /* Same rule as one to one: an edit to your latest message redoes the room's
      answer to it, further up it asks first. */
+
+  /* Owed a reply when the room ends on something the user said. */
+  const loop = useReplyLoop(circle.id, turn, () => (latest.current.conversations[circle.id] ?? []).at(-1)?.from === "user");
+
+  /* Texts still being "typed" are saved but not shown until their time. */
+  const [clock, setClock] = useState(() => Date.now());
+  const shown = log.filter((m) => !m.showAt || Date.parse(m.showAt) <= clock);
+  const typingNext = shown.length < log.length;
+  const nextUp = typingNext ? log.find((m) => m.showAt && Date.parse(m.showAt) > clock) : undefined;
+  useEffect(() => {
+    const due = log.map((m) => (m.showAt ? Date.parse(m.showAt) : 0)).filter((t) => t > clock);
+    if (!due.length) return;
+    const t = setTimeout(() => setClock(Date.now()), Math.max(30, Math.min(...due) - Date.now() + 20));
+    return () => clearTimeout(t);
+    // Reschedules when a message arrives or the clock moves; that is all that changes when.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [log.length, clock]);
+
+  /* Each member's one-to-one, digested, brought up to date as the group opens. */
+  useEffect(() => {
+    void refreshDigests(latest.current, membersOf(latest.current, circle).map((m) => m.id), update);
+    // Once per group opened; reads the latest state through the ref.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [circle.id]);
+
+  useFollow(shown.length * 2 + (speaking || typingNext || loop.busy ? 1 : 0), speaking?.text, shown.at(-1)?.from === "user");
+
+  /* Unprompted talk between them, while the group sits open and quiet (see
+     lib/solo/banter.ts for the limits). */
+  const banterSent = useRef<number[]>([]);
+  const sinceUser = useRef(0);
+  const banterCtl = useRef<AbortController | null>(null);
+  const lastId = shown.at(-1)?.id;
+  useEffect(() => {
+    const check = () => {
+      const s = latest.current;
+      const thread = s.conversations[circle.id] ?? [];
+      if (banterCtl.current || !banterWanted(thread, {
+        now: Date.now(), members: members.length, sinceUser: sinceUser.current, recent: banterSent.current,
+        typing: !!box.current?.value.trim(), busy: loop.busy, visible: document.visibilityState === "visible",
+      })) return;
+      const ctl = new AbortController();
+      banterCtl.current = ctl;
+      sinceUser.current += 1;
+      banterSent.current = [...banterSent.current.filter((t) => Date.now() - t < 3_600_000), Date.now()];
+      void turn(ctl.signal, true).finally(() => { if (banterCtl.current === ctl) banterCtl.current = null; });
+    };
+    const t = setTimeout(check, banterDelay());
+    return () => clearTimeout(t);
+    // Re-armed each time the room changes, and when a reply finishes or starts.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastId, loop.busy, members.length]);
+  /* Whatever was being said to nobody stops the moment the user speaks. */
+  useEffect(() => () => banterCtl.current?.abort(), []);
+
+  const nameOf = (id: string) => members.find((m) => m.id === id)?.name ?? "Someone";
+  const whoSaid = (m: SoloMessage) => (m.from === "user" ? "You" : nameOf(m.speakerId ?? ""));
+
+  async function sendDraft() {
+    const content = (box.current?.value ?? "").trim();
+    if ((!content && !attach.draft) || members.length < 2) return;
+    const file = attach.take();
+    let msg = newMessage("user", content || (file?.kind === "video" ? VIDEO_ONLY : PHOTO_ONLY), { replyTo: replyTo?.id });
+    if (file) {
+      /* The file first, then the message that points at it. */
+      const kept = await keepAttachment(file, msg.id);
+      URL.revokeObjectURL(file.url);
+      if (!kept) { setError(`Couldn't keep that ${file.kind} on this device. Try again.`); return; }
+      msg = { ...msg, ...kept };
+    }
+    update((cur) => ({
+      ...cur,
+      conversations: { ...cur.conversations, [circle.id]: [...(cur.conversations[circle.id] ?? []), msg] },
+    }));
+    if (box.current) box.current.value = "";
+    setHasDraft(false);
+    setReplyTo(null);
+    setError(null);
+    if (box.current) box.current.style.height = "auto";
+    banterCtl.current?.abort();
+    banterCtl.current = null;
+    sinceUser.current = 0;
+    loop.schedule();
+  }
+
   function editLine(m: SoloMessage, text: string) {
     const at = log.findIndex((x) => x.id === m.id);
     const after = log.slice(at + 1);

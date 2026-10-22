@@ -22,6 +22,8 @@ import { Video } from "@/components/Video";
 import { SongCard } from "@/components/SongCard";
 import { Story } from "@/components/Story";
 import { Look } from "@/components/Look";
+import { Scrapbook } from "@/components/Scrapbook";
+import { addKept, copyForKeeping, isKept } from "@/lib/solo/scrapbook";
 import { VoiceNote } from "@/components/VoiceNote";
 import { useFollow } from "@/components/useFollow";
 import { backgroundedSince, useReplyLoop } from "@/components/useReplyLoop";
@@ -88,6 +90,7 @@ type View =
   | { kind: "memories"; museId: string }
   | { kind: "story"; museId: string }
   | { kind: "look"; museId: string }
+  | { kind: "scrapbook"; museId: string }
   | { kind: "account" }
   /* `tab` is where the new person goes when they were made from inside one. */
   | { kind: "import"; tab?: string }
@@ -523,9 +526,17 @@ export default function SoloPage() {
         onSignedIn={(email) => setCloud({ email, status: "idle", at: null })}
         onSignedOut={() => setCloud({ email: null, status: "idle", at: null })}
         onSync={() => void syncCloud()}
+        place={state.place}
+        onPlace={(place) => update((cur) => ({ ...cur, place: place ?? undefined }))}
         onBack={() => back()}
       />
     );
+  }
+
+  if (view.kind === "scrapbook") {
+    const muse = findMuse(state, view.museId);
+    if (!muse) { setView({ kind: "home" }); return null; }
+    return shell(<Scrapbook muse={muse} state={state} update={update} onBack={() => back()} />);
   }
 
   if (view.kind === "look") {
@@ -585,6 +596,7 @@ export default function SoloPage() {
         onMemories={() => go({ kind: "memories", museId: muse.id })}
         onStory={() => go({ kind: "story", museId: muse.id })}
         onLook={() => go({ kind: "look", museId: muse.id })}
+        onScrapbook={() => go({ kind: "scrapbook", museId: muse.id })}
         onCall={() => {
           /* Inside the tap, before anything is awaited: mobile browsers only
              allow sound that a gesture started. */
@@ -1056,7 +1068,7 @@ function MuseCard({
 /* ------------------------------------------------------------------ chat */
 
 function SoloChat({
-  muse, state, update, onBack, onEdit, onMemories, onCall, onStory, onLook,
+  muse, state, update, onBack, onEdit, onMemories, onCall, onStory, onLook, onScrapbook,
 }: {
   muse: SoloMuse;
   state: SoloState;
@@ -1067,6 +1079,7 @@ function SoloChat({
   onCall: () => void;
   onStory: () => void;
   onLook: () => void;
+  onScrapbook: () => void;
 }) {
   const log = state.conversations[muse.id] ?? [];
   /* The message whose actions are open. One at a time, like any chat app. */
@@ -1612,6 +1625,7 @@ function SoloChat({
               },
             }] : []),
             { label: `What ${muse.name} remembers`, onSelect: onMemories },
+            { label: `Scrapbook with ${muse.name}`, onSelect: onScrapbook },
             /* Someone in public life, or someone made up: photos to take a look and vibe from. */
             ...(!muse.builtin && (muse.persona?.mode === "figure" || muse.persona?.mode === "character")
               ? [{ label: muse.persona.look ? `Photos of ${muse.name} (added)` : `Add photos of ${muse.name}`, onSelect: onLook }]
@@ -1724,6 +1738,8 @@ function SoloChat({
                 }}
                 onDeleteFrom={() => update(deleteFrom(state, muse.id, m.id))}
                 onDone={() => setPicked(null)}
+                onKeep={() => { void copyForKeeping(m).then((k) => { if (k) update((cur) => addKept(cur, muse.id, k)); else setError("Couldn't keep that photo on this device."); }); }}
+                kept={isKept(state, muse.id, m.id)}
                 {...(m.from === "muse" ? { onReact: (e: string) => update((cur) => react(cur, muse.id, m.id, "user", e)), reacted: m.reactions?.user } : {})}
               />
               {m.reactions && (

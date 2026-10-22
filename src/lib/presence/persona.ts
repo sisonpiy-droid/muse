@@ -1235,6 +1235,21 @@ ${you} has not texted you for ${away.days} days. Open this reply by reacting to 
 Never guilt-trip about anything real, never imply they owe you their time, never ask whether they are angry with you, and let it go after a couple of lines -- it is a bit of drama, not a grievance.`;
 }
 
+/* The weather where they are and the festival coming up (solo/world.ts), for
+   characters who live in the same world. Mentioned only when it fits. */
+export function worldBlock(w: { place?: string; weather?: string; festivals?: string[] } | null | undefined, you: string): string {
+  if (!w || (!w.weather && !w.festivals?.length)) return "";
+  const lines = [
+    w.weather ? `Where ${you} is${w.place ? ` (${w.place})` : ""}, right now: ${w.weather}.` : "",
+    ...(w.festivals ?? []).map((f) => `${f}.`),
+  ].filter(Boolean);
+  return `
+
+THE REAL WORLD, RIGHT NOW
+${lines.join("\n")}
+You live in this same world. Notice the weather or the festival the way a friend would, only when it fits what you are talking about -- never recite it, and not in more than the odd message. Never claim to be in the same place as ${you} unless your own life says you are. A line about the rain when they say they are heading out is natural; a weather report is not. A festival: a greeting on the day, a bit of anticipation before it, in keeping with who you are and how you would mark it.`;
+}
+
 /* A goodnight, at night, from someone close: a voice note, the way people do. */
 export function goodnightBlock(on: boolean | null | undefined, you: string): string {
   if (!on) return "";

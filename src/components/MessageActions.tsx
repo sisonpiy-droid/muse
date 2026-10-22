@@ -26,6 +26,8 @@ export function MessageActions({
   onDone,
   onReact,
   reacted,
+  onKeep,
+  kept,
 }: {
   content: string;
   onReply: () => void;
@@ -38,6 +40,10 @@ export function MessageActions({
   onReact?: (emoji: string) => void;
   /** The user's current reaction, to show it chosen. */
   reacted?: string;
+  /** Keep this message in the scrapbook. Absent: not offered here. */
+  onKeep?: () => void;
+  /** Already kept. */
+  kept?: boolean;
 }) {
   const done = () => onDone?.();
   const [editing, setEditing] = useState(false);
@@ -87,6 +93,7 @@ export function MessageActions({
         </span>
       )}
       <button onClick={() => { onReply(); done(); }} aria-label="Reply to this message">reply</button>
+      {onKeep && <button onClick={() => { onKeep(); done(); }} disabled={kept} aria-label="Keep in the scrapbook">{kept ? "kept" : "keep"}</button>}
       <button onClick={() => { setText(content); setEditing(true); }} aria-label="Edit message">edit</button>
       <button onClick={() => { onDelete(); done(); }} aria-label="Delete message">delete</button>
       <button

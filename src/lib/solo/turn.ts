@@ -10,6 +10,7 @@ import { photoBase64 } from "./photos";
 import { VIDEO_ONLY, clipLength, framesBase64 } from "./attach";
 import { storyLine, storyOf } from "./story";
 import { embedTexts } from "./learn";
+import { worldFor } from "./world";
 
 /* One reply's request to /api/solo/chat, and reading its stream.
  *
@@ -208,6 +209,9 @@ export async function prepareTurn(
       : null,
     away,
     goodnight,
+    /* The weather where they are and the festival coming up. On a call only the
+       festival: a weather lookup is a pause on the line. */
+    world: await worldFor(opts.register === "live" ? undefined : s.place, Date.now(), tz),
     /* A long thread: the character is put back in front of the model (anchorBlock). */
     long: thread.length > 40,
   };

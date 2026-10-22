@@ -5,7 +5,7 @@ import { looksLikeRefusal } from "@/lib/ai/refusal";
 import { feelingsSchema, personaSchema } from "@/lib/presence/schema";
 import { buildMuseSystemPrompt } from "@/lib/muse/prompt";
 import {
-  coveredBlock, coveredGround, lifeBlock, momentBlock, personaSystem, promiseBlock, quizBlock, romanceAllowed, anchorBlock, awayBlock, bondBlock, callbackBlock, goodnightBlock, heardBlock, secretBlock, romanceBlock,
+  coveredBlock, coveredGround, lifeBlock, momentBlock, personaSystem, promiseBlock, quizBlock, romanceAllowed, anchorBlock, awayBlock, worldBlock, bondBlock, callbackBlock, goodnightBlock, heardBlock, secretBlock, romanceBlock,
   sendBlock, sharedBlock, togetherBlock, withQuote, wornBlock, yesBlock, type Feelings,
 } from "@/lib/presence/persona";
 import { nowBlock, previousMoment, stampPauses, timeBlock } from "@/lib/presence/time";
@@ -154,6 +154,8 @@ const bodySchema = z.object({
   callback: z.object({ what: z.string().max(300), days: z.number().int().min(0) }).nullish(),
   /** Back after days away: how many, and how close (awayBlock). */
   away: z.object({ days: z.number().int().min(2).max(3650), level: z.number().int().min(0).max(10) }).nullish(),
+  /** The weather where they are and a festival coming up (worldBlock). */
+  world: z.object({ place: z.string().max(80).optional(), weather: z.string().max(60).optional(), festivals: z.array(z.string().max(80)).max(2).default([]) }).nullish(),
   /** A long thread, so the character is restated at the end (anchorBlock). */
   long: z.boolean().nullish(),
   /** A goodnight at night from someone close (goodnightBlock). */
@@ -180,7 +182,7 @@ export async function POST(req: Request) {
     return Response.json({ error: "Check the request and try again." }, { status: 400 });
   }
   const { muse, persona, knows, mood, topic, register, feelings, messages, memories, plans, userName, timezone, story, shared, worn, can,
-    life, promises, moment, together, score, bond, heard, callback, secret, away, goodnight, long } = parsed.data;
+    life, promises, moment, together, score, bond, heard, callback, secret, away, goodnight, long, world } = parsed.data;
   const tz = timezone ?? undefined;
   /* The server's clock, not the phone's: a phone set five minutes wrong should
      not move a meeting. Timestamps on messages are compared against it. */
@@ -311,6 +313,7 @@ You can react to their latest message with one emoji, the way people do in a cha
       awayBlock(away, userName || "them") +
       goodnightBlock(goodnight, userName || "them") +
       (persona ? anchorBlock(persona, long) : "") +
+      worldBlock(world, userName || "them") +
       nowBlock(userName || "them", tz, now) +
       last
     : buildMuseSystemPrompt({

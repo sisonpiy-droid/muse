@@ -4,6 +4,7 @@ import { signIn, signOut } from "next-auth/react";
 import { useState } from "react";
 
 import { forgetBase, rememberSignIn } from "@/lib/solo/cloud";
+import { findPlace, type Place } from "@/lib/solo/world";
 
 /* Sign in to keep your chats on every device.
  *
@@ -29,6 +30,8 @@ export function Account({
   onSignedIn,
   onSignedOut,
   onSync,
+  place,
+  onPlace,
   onBack,
 }: {
   email: string | null;
@@ -37,6 +40,9 @@ export function Account({
   onSignedIn: (email: string) => void;
   onSignedOut: () => void;
   onSync: () => void;
+  /** Where they are, if they said (world.ts), and how to change it. */
+  place?: Place;
+  onPlace: (place: Place | null) => void;
   onBack: () => void;
 }) {
   const [mode, setMode] = useState<Mode>("signup");
@@ -48,6 +54,44 @@ export function Account({
   /* A recovery code, shown once: nothing moves on until it has been seen. */
   const [shown, setShown] = useState<{ code: string; then: () => void } | null>(null);
   const [copied, setCopied] = useState(false);
+  const [city, setCity] = useState("");
+  const [placeBusy, setPlaceBusy] = useState(false);
+  const [placeError, setPlaceError] = useState<string | null>(null);
+
+  async function savePlace() {
+    if (!city.trim() || placeBusy) return;
+    setPlaceBusy(true);
+    setPlaceError(null);
+    const found = await findPlace(city);
+    setPlaceBusy(false);
+    if (!found) { setPlaceError("Couldn't find that place. Try the city name."); return; }
+    onPlace(found);
+    setCity("");
+  }
+
+  /* Where they are, so a character can know their weather. The coordinates stay
+     on this device; only the weather, in words, goes to the model. */
+  const where = (
+    <div style={{ marginTop: "2rem", maxWidth: "26rem" }}>
+      <h2 className="section-title">Where you are</h2>
+      <p className="fine" style={{ marginTop: 0 }}>
+        Optional. So they can notice your weather (&ldquo;pouring there, right?&rdquo;). Only the weather, in words, is shared with the model; your location stays on this device.
+      </p>
+      {place ? (
+        <p>
+          {place.name}{" "}
+          <button className="link-btn" onClick={() => onPlace(null)}>remove</button>
+        </p>
+      ) : (
+        <div className="row" style={{ gap: "0.5rem" }}>
+          <input className="input" value={city} placeholder="Your city" maxLength={60} aria-label="Your city"
+            onChange={(e) => setCity(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void savePlace(); }} />
+          <button className="btn-ghost" disabled={placeBusy || !city.trim()} onClick={() => void savePlace()}>{placeBusy ? "…" : "Save"}</button>
+        </div>
+      )}
+      {placeError && <p className="look-error" role="alert">{placeError}</p>}
+    </div>
+  );
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -171,6 +215,7 @@ export function Account({
             <button className="link-btn" onClick={() => void newRecoveryCode()}>Make a new recovery code</button>
             <button className="link-btn" onClick={() => void remove()}>Delete my account</button>
           </div>
+          {where}
         </>
       ) : (
         <>
@@ -228,6 +273,7 @@ export function Account({
             Signing in means a copy of your chats is stored on the server. Photos, voice notes and videos
             stay on the device that made them, so on another device they show as placeholders.
           </p>
+          {where}
         </>
       )}
     </main>
