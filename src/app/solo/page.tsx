@@ -26,7 +26,6 @@ import { Scrapbook } from "@/components/Scrapbook";
 import { Welcome } from "@/components/Welcome";
 import { arrange, toggleArchive, togglePin } from "@/lib/solo/chatlist";
 import { clockTime, dayLabel, runOf } from "@/lib/solo/layout";
-import { addKept, copyForKeeping, isKept } from "@/lib/solo/scrapbook";
 import { VoiceNote } from "@/components/VoiceNote";
 import { useFollow } from "@/components/useFollow";
 import { backgroundedSince, useReplyLoop } from "@/components/useReplyLoop";
@@ -1800,8 +1799,6 @@ function SoloChat({
                 }}
                 onDeleteFrom={() => update(deleteFrom(state, muse.id, m.id))}
                 onDone={() => setPicked(null)}
-                onKeep={() => { void copyForKeeping(m).then((k) => { if (k) update((cur) => addKept(cur, muse.id, k)); else setError("Couldn't keep that photo on this device."); }); }}
-                kept={isKept(state, muse.id, m.id)}
                 {...(m.from === "muse" ? { onReact: (e: string) => update((cur) => react(cur, muse.id, m.id, "user", e)), reacted: m.reactions?.user } : {})}
               />
               {m.reactions && (

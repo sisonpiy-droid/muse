@@ -34,7 +34,7 @@ export function Scrapbook({
         <div style={{ minWidth: 0 }}>
           <h1 className="display" style={{ fontSize: "1.6rem", margin: 0 }}>You &amp; {muse.name}</h1>
           <p className="fine" style={{ margin: 0 }}>
-            Tap <b>keep</b> on any message to put it here. It stays even if you clear the chat.
+            Inside jokes, and the photos and songs {muse.name} shares, gather here.
           </p>
         </div>
       </div>
@@ -42,7 +42,7 @@ export function Scrapbook({
       {empty && (
         <div className="empty" style={{ marginTop: "2.5rem" }}>
           <p style={{ fontFamily: "var(--serif)", fontSize: "1.05rem" }}>Nothing here yet.</p>
-          <p className="fine">Keep a line that made you laugh, a photo, a song. Inside jokes and what {muse.name} shares will gather here too.</p>
+          <p className="fine">Inside jokes and what {muse.name} shares will gather here as you talk.</p>
         </div>
       )}
 
