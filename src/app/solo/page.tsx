@@ -329,7 +329,9 @@ export default function SoloPage() {
         {saveIssue === "unavailable" && (
           <>
             <strong>This browser is refusing to store anything.</strong> Private browsing does
-            this. Nothing said here will survive closing the tab.
+            this, and so can a shield or cookie setting that blocks site data (in Brave: tap
+            the lion, turn Shields off for this site, or open the page in a normal tab).
+            Until then nothing said here will survive closing the tab.
           </>
         )}
         {saveIssue === "corrupt" && (

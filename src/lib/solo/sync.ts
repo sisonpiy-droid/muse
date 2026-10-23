@@ -202,6 +202,20 @@ export class Persister {
         const name = err instanceof Error ? err.name : (err as { name?: string })?.name ?? "";
         const quota = /quota/i.test(name) || name === "NS_ERROR_DOM_QUOTA_REACHED";
         console.error("solo save failed", name);
+        /* IndexedDB opened but will not write (some phone browsers with shields on):
+           keep the data in localStorage rather than telling them nothing is saved.
+           Its rev stays ahead of IndexedDB's, so the next load folds it back in. */
+        if (!quota && this.backend !== localBackend) {
+          try {
+            const there = (await localBackend.revision()) ?? 0;
+            if ((await localBackend.write(raw, rev, there)) === "ok") {
+              this.base = next;
+              this.rev = rev;
+              this.persisted = next;
+              return { result: { ok: true, bytes: raw.length, nearlyFull: false }, state: next };
+            }
+          } catch { /* localStorage refuses too: fall through */ }
+        }
         return { result: { ok: false, reason: quota ? "quota" : "unavailable", bytes: raw.length }, state: next };
       }
       /* Someone else wrote first: take theirs, put ours on top, try again. */
