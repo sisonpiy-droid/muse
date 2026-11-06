@@ -28,6 +28,17 @@ check("a stream cut before done is a retryable failure, not a short reply", asyn
   assert.equal(out.partial, "hi th");
 });
 
+check("a reply that never starts is given up on, not typed at forever", async () => {
+  const realSetTimeout = globalThis.setTimeout;
+  globalThis.setTimeout = (f, ms, ...r) => realSetTimeout(f, ms >= 60_000 ? 5 : ms, ...r);
+  globalThis.fetch = (_u, init) => new Promise((_res, rej) => init.signal.addEventListener("abort", () => rej(new DOMException("aborted", "AbortError"))));
+  try {
+    const out = await ask();
+    assert.equal(out.ok, false);
+    assert.equal(out.retryable, true);
+  } finally { globalThis.setTimeout = realSetTimeout; }
+});
+
 let pass = 0, fail = 0;
 for (const [n, f] of results) {
   try { await f(); console.log(`  PASS  ${n}`); pass++; }

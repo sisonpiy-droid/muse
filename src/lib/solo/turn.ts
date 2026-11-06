@@ -109,9 +109,8 @@ export async function prepareTurn(
      nothing to recall against, and a vector for filler still lands nearest to
      something. Also where most of the half-second goes. */
   const embedding = worthRecalling(query) ? recall(query) : Promise.resolve(null);
-  const timed = opts.embedWithinMs
-    ? Promise.race([embedding, new Promise<null>((r) => setTimeout(() => r(null), opts.embedWithinMs))])
-    : embedding;
+  /* Never wait on it for long: a stalled call here used to leave "typing" on forever. */
+  const timed = Promise.race([embedding, new Promise<null>((r) => setTimeout(() => r(null), opts.embedWithinMs ?? 5000))]);
   const [queryVector] = (await timed) ?? [null];
   if (opts.signal?.aborted) return null;
   const memories = memoriesForTurn(s, museId, query, queryVector);
@@ -302,12 +301,46 @@ export async function streamReply(
   signal: AbortSignal,
   onDelta: (soFar: string, delta: string) => void
 ): Promise<ReplyOutcome> {
+  /* A reply that goes quiet is not "still typing": stop waiting and say so. The
+     clock restarts with every chunk, so a long reply that keeps arriving is fine. */
+  const inner = new AbortController();
+  const forward = () => inner.abort();
+  if (signal.aborted) inner.abort(); else signal.addEventListener("abort", forward, { once: true });
+  let stalled = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const watch = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => { stalled = true; inner.abort(); }, STALL_MS);
+  };
+  const stalledOut = (): ReplyOutcome => ({ ok: false, message: "The reply took too long and was stopped. Try again.", retryable: true, partial: "" });
+  watch();
+  try {
+    return await readReply(body, inner.signal, onDelta, watch);
+  } catch (err) {
+    if (stalled && !signal.aborted) return stalledOut();
+    throw err;
+  } finally {
+    clearTimeout(timer);
+    signal.removeEventListener("abort", forward);
+  }
+}
+
+/** How long a reply may go without a single byte before it is given up on. */
+const STALL_MS = 60_000;
+
+async function readReply(
+  body: Record<string, unknown>,
+  signal: AbortSignal,
+  onDelta: (soFar: string, delta: string) => void,
+  alive: () => void
+): Promise<ReplyOutcome> {
   const res = await fetch("/api/solo/chat", {
     method: "POST",
     signal,
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
+  alive();
   if (!res.ok || !res.body) {
     const data = await res.json().catch(() => ({}));
     return { ok: false, message: data.error ?? "Something went wrong. Try again.", retryable: true, partial: "" };
@@ -324,6 +357,7 @@ export async function streamReply(
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
+    alive();
     buffer += decoder.decode(value, { stream: true });
     const frames = buffer.split(/\r?\n\r?\n/);
     buffer = frames.pop() ?? "";
