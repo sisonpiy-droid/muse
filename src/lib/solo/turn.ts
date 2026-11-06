@@ -319,6 +319,7 @@ export async function streamReply(
   let acc = "";
   let failure: { message: string; retryable: boolean; blocked?: boolean } | null = null;
   let softened: string | undefined;
+  let finished = false;
   let trimmed: { kept: number; photos: boolean } | undefined;
   while (true) {
     const { done, value } = await reader.read();
@@ -332,6 +333,7 @@ export async function streamReply(
       let evt: { type?: string; text?: string; message?: string; retryable?: boolean; kept?: number; photos?: boolean; to?: string; blocked?: boolean };
       try { evt = JSON.parse(line.slice(5).trim()); } catch { continue; }
       if (evt.type === "delta" && evt.text) { acc += evt.text; onDelta(acc, evt.text); }
+      else if (evt.type === "done") finished = true;
       else if (evt.type === "trimmed" && typeof evt.kept === "number") trimmed = { kept: evt.kept, photos: evt.photos !== false };
       else if (evt.type === "softened" && typeof evt.to === "string") softened = evt.to;
       else if (evt.type === "error") {
@@ -339,6 +341,9 @@ export async function streamReply(
       }
     }
   }
+  /* The server always ends a good reply with "done". A stream that closes without
+     it was cut -- the phone backgrounded the tab -- and half a reply is not a reply. */
+  if (!failure && !finished) failure = { message: "The connection dropped before the reply finished.", retryable: true };
   return failure ? { ok: false, ...failure, partial: acc } : { ok: true, text: acc, ...(trimmed ? { trimmed } : {}), ...(softened ? { softened } : {}) };
 }
 
