@@ -270,9 +270,11 @@ export default function SoloPage() {
   useOutreach(state, latestState, update, (museId) => go({ kind: "chat", museId }));
 
   /* Signed in: the same people and chats on every device (lib/solo/cloud.ts).
-     Syncs when the app opens, a few seconds after something changes, and when
+     Syncs when the app opens, a minute after something changes (each push is
+     the whole state, so quick pushes burn Vercel transfer), and when
      you come back to it. Signed out, none of this does anything. */
   const [cloud, setCloud] = useState<{ email: string | null; status: CloudStatus; at: number | null }>({ email: null, status: "idle", at: null });
+  const PUSH_DELAY_MS = 60_000;
   const syncing = useRef(false);
   const syncAgain = useRef(false);
   async function syncCloud() {
@@ -303,7 +305,7 @@ export default function SoloPage() {
   useEffect(() => { setCloud((c) => ({ ...c, email: signedInEmail() })); }, []);
   useEffect(() => {
     if (!cloud.email || !ready) return;
-    const t = setTimeout(() => void syncCloud(), state === persist.current?.persisted ? 0 : 5000);
+    const t = setTimeout(() => void syncCloud(), state === persist.current?.persisted ? 0 : PUSH_DELAY_MS);
     return () => clearTimeout(t);
     // Again whenever the state changes; syncCloud reads the latest through refs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
