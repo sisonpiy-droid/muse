@@ -357,15 +357,22 @@ export class CallSession {
 
     let outcome;
     try {
-      outcome = await streamReply(prepared.body, signal, (_soFar, delta) => {
-        gotWord = true;
-        buffer += delta;
-        const { pieces, rest } = takeSpeakable(buffer, first);
-        buffer = rest;
-        for (const p of pieces) { this.speak(turn, p); first = false; }
-      });
-    } catch {
-      outcome = null;
+      /* A hiccup before the first word is retried once without the user noticing;
+         once a word has been spoken it cannot be, and the error shows as before. */
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          outcome = await streamReply(prepared.body, signal, (_soFar, delta) => {
+            gotWord = true;
+            buffer += delta;
+            const { pieces, rest } = takeSpeakable(buffer, first);
+            buffer = rest;
+            for (const p of pieces) { this.speak(turn, p); first = false; }
+          });
+        } catch {
+          outcome = null;
+        }
+        if (gotWord || signal.aborted || outcome?.ok || (outcome && !outcome.retryable)) break;
+      }
     } finally {
       clearTimeout(timer);
     }
@@ -401,12 +408,23 @@ export class CallSession {
     const piece: Piece = { text };
     turn.pieces.push(piece);
     const signal = turn.abort.signal;
-    const audio = fetch("/api/solo/speak", {
-      method: "POST",
-      signal,
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text, voice: this.voice || undefined }),
-    }).catch(() => null);
+    /* One retry on a server hiccup or rate limit: a failed piece is a silent gap. */
+    const ask = async (): Promise<Response | null> => {
+      for (let attempt = 0; ; attempt++) {
+        let res: Response | null = null;
+        try {
+          res = await fetch("/api/solo/speak", {
+            method: "POST",
+            signal,
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ text, voice: this.voice || undefined }),
+          });
+        } catch { res = null; }
+        const transient = !res || res.status === 429 || (res.status >= 500 && res.status !== 501);
+        if (!transient || signal.aborted || attempt >= 1) return res;
+      }
+    };
+    const audio = ask();
 
     turn.chain = turn.chain.then(async () => {
       if (signal.aborted) return;
