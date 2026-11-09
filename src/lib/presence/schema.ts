@@ -28,6 +28,8 @@ export const personaFields = {
   traits: z.array(z.string().max(30)).max(8).optional(),
   /** How they look and the vibe, read from photos the user gave. */
   look: z.string().max(1200).optional(),
+  /** The mood of photos of the two of them, or of anything the user chose, read the same way. */
+  scene: z.string().max(1200).optional(),
   /** "male" | "female" | "nonbinary": theirs, and the user's. */
   gender: z.string().max(20).optional(),
   youGender: z.string().max(20).optional(),

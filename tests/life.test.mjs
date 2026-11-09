@@ -355,6 +355,19 @@ check("a look read from photos reaches the prompt, survives saving and editing, 
   assert.equal(edited.muses[0].persona.look, "Looks: x", "editing them keeps the look");
 });
 
+check("a mood read from photos of the two of you reaches the prompt, survives saving and editing, and is absent without one", () => {
+  const draft = { them: "Aanya", you: "Piyush", relationship: "friend", arch: "friend", texture: "close", mode: "character", brief: "Warm and chaotic." };
+  const ctx = { mood: "any", topic: "any", register: "texts" };
+  const withScene = persona.personaSystem({ ...draft, scene: "feels like a rainy rooftop at dusk, chai and string lights" }, [], false, ctx);
+  assert.match(withScene, /THE MOOD BETWEEN YOU[\s\S]*rainy rooftop[\s\S]*do not mention photos/);
+  assert.doesNotMatch(persona.personaSystem(draft, [], false, ctx), /THE MOOD BETWEEN YOU/);
+  const m = { id: "a", name: "Aanya", description: "d", relationshipType: "friend", persona: { ...draft, scene: "feels like x" } };
+  const back = store.parseState(JSON.stringify({ userName: "P", muses: [m], conversations: {}, memories: [] }));
+  assert.equal(back.muses[0].persona.scene, "feels like x");
+  const edited = store.editMuse({ ...blank(), muses: [m] }, "a", { brief: "New brief" });
+  assert.equal(edited.muses[0].persona.scene, "feels like x", "editing them keeps the mood");
+});
+
 check("clearing a chat keeps how close you are; clearing chat and memories forgets it", () => {
   const msgs = (n, days) => Array.from({ length: n }, (_, i) => ({ id: `k${i}`, from: i % 2 ? "muse" : "user", content: "hi", at: new Date(Date.now() - (i % days) * 864e5).toISOString() }));
   const s = { ...blank(), conversations: { [RHEA]: msgs(600, 20) } };

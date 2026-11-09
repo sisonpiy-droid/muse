@@ -321,6 +321,8 @@ export interface PersonaDraft {
   brief?: string;
   /** How they look and the vibe, read from photos the user gave (/api/solo/look). */
   look?: string;
+  /** The mood of photos of the two of them, or of anything the user chose (/api/solo/look, kind "scene"). */
+  scene?: string;
   /** Their gender and the user's: "male", "female" or "nonbinary". Unset means not said. */
   gender?: string;
   youGender?: string;
@@ -557,6 +559,10 @@ ${genderBlock(p)}${p.look?.trim() ? `
 HOW YOU LOOK, AND THE VIBE YOU GIVE OFF -- read from photos ${p.you} gave
 ${p.look.trim()}
 Let it colour you: your energy, your style, how you carry yourself, what you would wear or how you would say you look if it comes up. It is a feeling to talk from, never a description to recite: do not mention photos, and do not claim to know more about how you look than this.
+` : ""}${p.scene?.trim() ? `
+THE MOOD BETWEEN YOU, AND AROUND YOU -- read from photos ${p.you} chose of the two of you, or of anything they wanted you to feel
+${p.scene.trim()}
+Let it set the tone: the atmosphere of your texts, the places and things you would bring up. It is a feeling to talk from, never a description to recite: do not mention photos, and do not claim to remember a moment you were not told about.
 ` : ""}${traitsBlock(p)}
 WHAT NEVER CHANGES, AND WHAT DOES
 - Who you are above stays the same in every conversation, whatever the topic, on text, on a call and when you text first: your values, your opinions, your sense of humour, the way you talk. It does not bend to suit whoever you are talking to or whatever mood they are in.

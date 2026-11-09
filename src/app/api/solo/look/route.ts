@@ -19,7 +19,9 @@ export const maxDuration = 60;
 
 const bodySchema = z.object({
   name: z.string().trim().min(1).max(60),
-  mode: z.enum(["character", "figure"]),
+  /** "them": how they look. "scene": photos of the two of them, or anything else, for the mood. */
+  kind: z.enum(["them", "scene"]).default("them"),
+  mode: z.string().max(30).optional(),
   photos: z.array(z.object({ mime: z.enum(["image/jpeg", "image/png", "image/webp"]), data: z.string().max(450_000) })).min(1).max(5),
 });
 
@@ -28,11 +30,19 @@ export async function POST(req: Request) {
   try { raw = await req.json(); } catch { return Response.json({ error: "Invalid request." }, { status: 400 }); }
   const parsed = bodySchema.safeParse(raw);
   if (!parsed.success) return Response.json({ error: "Pick between 1 and 5 photos." }, { status: 400 });
-  const { name, mode, photos } = parsed.data;
+  const { name, mode, kind, photos } = parsed.data;
 
-  const system = `You read photos to give a character a look and a vibe.
+  const system = kind === "scene" ? `You read photos to give a chat its mood.
 
-These photos were given as pictures of ${name}${mode === "figure" ? ", someone in public life" : ", a character the user made up"}. Take that as given. Describe only what you can see. Never say who anyone is, never guess an identity, and do not mention that a face looks like anyone.
+These photos were chosen by the person chatting with ${name}: pictures of the two of them together, or of anything they want the chat to feel like. Describe only what you can see. Never say who anyone is, never guess an identity, and never claim anything about the relationship that the photos do not show.
+
+Write, from all of the photos together, "vibe": the atmosphere -- the places, light, things, weather, the energy and mood, what it feels like to be there, and what it says about their taste. Say "feels like" rather than stating facts about people. Under 600 characters.
+
+Never describe or guess race, ethnicity, religion, health, disability, sexuality or exact age. If a person in the photos looks under eighteen, set "tooYoung": true and leave the rest empty.
+
+Return ONLY JSON, no prose, no code fence: {"tooYoung": boolean, "vibe": string}` : `You read photos to give a character a look and a vibe.
+
+These photos were given as pictures of ${name}${mode === "figure" ? ", someone in public life" : mode === "character" ? ", a character the user made up" : ", someone the user knows"}. Take that as given. Describe only what you can see. Never say who anyone is, never guess an identity, and do not mention that a face looks like anyone.
 
 Write, from all of the photos together:
 - "look": how they look, in plain concrete words -- hair, build, features, usual clothes and style, expression, how they carry themselves. What is visible, not guessed. Under 450 characters.
@@ -45,7 +55,7 @@ Return ONLY JSON, no prose, no code fence: {"tooYoung": boolean, "look": string,
   try {
     const { text } = await getProvider().generateResponse({
       system,
-      messages: [{ role: "user", content: `Here are the photos of ${name}.`, images: photos }],
+      messages: [{ role: "user", content: kind === "scene" ? `Here are the photos for the chat with ${name}.` : `Here are the photos of ${name}.`, images: photos }],
       temperature: 0.4,
       thinking: "low",
       signal: req.signal,
@@ -57,7 +67,9 @@ Return ONLY JSON, no prose, no code fence: {"tooYoung": boolean, "look": string,
     if (out.tooYoung === true) {
       return Response.json({ error: "Someone in these photos looks under eighteen, so they can't be used." }, { status: 422 });
     }
-    const look = [typeof out.look === "string" ? `Looks: ${out.look.trim()}` : "", typeof out.vibe === "string" ? `Vibe: ${out.vibe.trim()}` : ""]
+    const look = kind === "scene"
+      ? (typeof out.vibe === "string" ? out.vibe.trim().slice(0, 1000) : "")
+      : [typeof out.look === "string" ? `Looks: ${out.look.trim()}` : "", typeof out.vibe === "string" ? `Vibe: ${out.vibe.trim()}` : ""]
       .filter((x) => x.length > 7).join("\n").slice(0, 1000);
     if (!look) return Response.json({ error: "Couldn't read those photos. Try different ones." }, { status: 422 });
     return Response.json({ look }, { headers: { "cache-control": "no-store" } });

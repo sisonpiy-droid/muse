@@ -92,7 +92,7 @@ type View =
   | { kind: "edit"; museId: string }
   | { kind: "memories"; museId: string }
   | { kind: "story"; museId: string }
-  | { kind: "look"; museId: string }
+  | { kind: "look"; museId: string; scene?: boolean }
   | { kind: "scrapbook"; museId: string }
   | { kind: "account" }
   /* `tab` is where the new person goes when they were made from inside one. */
@@ -562,11 +562,12 @@ export default function SoloPage() {
     if (!muse) { setView({ kind: "home" }); return null; }
     return shell(
       <Look
-        key={muse.id}
+        key={`${muse.id}-${view.scene ? "scene" : "them"}`}
         muse={muse}
-        onSave={(look) => update((cur) => ({
+        scene={view.scene}
+        onSave={(text) => update((cur) => ({
           ...cur,
-          muses: cur.muses.map((m) => (m.id === muse.id && m.persona ? { ...m, persona: { ...m.persona, look: look ?? undefined } } : m)),
+          muses: cur.muses.map((m) => (m.id === muse.id && m.persona ? { ...m, persona: { ...m.persona, [view.scene ? "scene" : "look"]: text ?? undefined } } : m)),
         }))}
         onBack={() => back()}
       />
@@ -614,6 +615,7 @@ export default function SoloPage() {
         onMemories={() => go({ kind: "memories", museId: muse.id })}
         onStory={() => go({ kind: "story", museId: muse.id })}
         onLook={() => go({ kind: "look", museId: muse.id })}
+        onScene={() => go({ kind: "look", museId: muse.id, scene: true })}
         onScrapbook={() => go({ kind: "scrapbook", museId: muse.id })}
         onCall={() => {
           /* Inside the tap, before anything is awaited: mobile browsers only
@@ -1132,7 +1134,7 @@ function MuseCard({
 /* ------------------------------------------------------------------ chat */
 
 function SoloChat({
-  muse, state, update, onBack, onEdit, onMemories, onCall, onStory, onLook, onScrapbook,
+  muse, state, update, onBack, onEdit, onMemories, onCall, onStory, onLook, onScene, onScrapbook,
 }: {
   muse: SoloMuse;
   state: SoloState;
@@ -1143,6 +1145,7 @@ function SoloChat({
   onCall: () => void;
   onStory: () => void;
   onLook: () => void;
+  onScene: () => void;
   onScrapbook: () => void;
 }) {
   const log = state.conversations[muse.id] ?? [];
@@ -1709,8 +1712,11 @@ function SoloChat({
             { label: `What ${muse.name} remembers`, onSelect: onMemories },
             { label: `Scrapbook with ${muse.name}`, onSelect: onScrapbook },
             /* Someone in public life, or someone made up: photos to take a look and vibe from. */
-            ...(!muse.builtin && (muse.persona?.mode === "figure" || muse.persona?.mode === "character")
-              ? [{ label: muse.persona.look ? `Photos of ${muse.name} (added)` : `Add photos of ${muse.name}`, onSelect: onLook }]
+            ...(!muse.builtin && muse.persona
+              ? [
+                  { label: muse.persona.look ? `Photos of ${muse.name} (added)` : `Add photos of ${muse.name}`, onSelect: onLook },
+                  { label: muse.persona.scene ? `Photos of us and the mood (added)` : `Add photos of us, or the mood`, onSelect: onScene },
+                ]
               : []),
             {
               label: settingsOf(state).proactiveEnabled && settingsOf(state).allowedMuseIds.includes(muse.id)

@@ -18,15 +18,18 @@ const SIDE = 800;
 
 export function Look({
   muse,
+  scene = false,
   onSave,
   onBack,
 }: {
   muse: SoloMuse;
+  /** Photos of the two of you, or anything random, for the mood; not of them. */
+  scene?: boolean;
   /** The description to keep; null to remove it. */
   onSave: (look: string | null) => void;
   onBack: () => void;
 }) {
-  const saved = muse.persona?.look?.trim() ?? "";
+  const saved = (scene ? muse.persona?.scene : muse.persona?.look)?.trim() ?? "";
   const [files, setFiles] = useState<{ file: File; url: string }[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -67,7 +70,7 @@ export function Look({
       const res = await fetch("/api/solo/look", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name: muse.name, mode: muse.persona?.mode, photos }),
+        body: JSON.stringify({ name: muse.name, mode: muse.persona?.mode, kind: scene ? "scene" : "them", photos }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.look) throw new Error(data.error ?? "Couldn't read those photos. Try again.");
@@ -83,16 +86,18 @@ export function Look({
   return (
     <main className="shell">
       <header className="row" style={{ justifyContent: "space-between" }}>
-        <p className="mark">Look &amp; vibe</p>
+        <p className="mark">{scene ? "Us & the mood" : "Look & vibe"}</p>
         <button className="link-btn" onClick={onBack}>Back</button>
       </header>
 
       <div className="row" style={{ gap: "0.75rem", marginTop: "1.5rem", alignItems: "center" }}>
         <Avatar name={muse.name} image={muse.avatar?.id} />
         <div style={{ minWidth: 0 }}>
-          <h1 className="display" style={{ fontSize: "1.6rem", margin: 0 }}>Photos of {muse.name}</h1>
+          <h1 className="display" style={{ fontSize: "1.6rem", margin: 0 }}>{scene ? `Photos for you and ${muse.name}` : `Photos of ${muse.name}`}</h1>
           <p className="fine" style={{ margin: 0 }}>
-            Add {MIN_PHOTOS} to {MAX_PHOTOS} photos. {muse.name} will pick up how they look and the vibe, and the chat will feel like that.
+            {scene
+              ? `Add ${MIN_PHOTOS} to ${MAX_PHOTOS} photos of the two of you, or anything random. ${muse.name} will pick up the mood, and the chat will feel like that.`
+              : `Add ${MIN_PHOTOS} to ${MAX_PHOTOS} photos. ${muse.name} will pick up how they look and the vibe, and the chat will feel like that.`}
           </p>
         </div>
       </div>
@@ -101,7 +106,7 @@ export function Look({
         <div className="look-card">
           <p className="fine" style={{ margin: 0 }}>What {muse.name} goes by now</p>
           <p style={{ whiteSpace: "pre-wrap", margin: "0.4rem 0 0" }}>{saved}</p>
-          <button className="link-btn" onClick={() => { if (confirm("Remove this look? The chat goes back to how it was.")) onSave(null); }}>
+          <button className="link-btn" onClick={() => { if (confirm("Remove this? The chat goes back to how it was.")) onSave(null); }}>
             Remove
           </button>
         </div>
