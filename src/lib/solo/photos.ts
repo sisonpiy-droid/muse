@@ -64,7 +64,8 @@ const urls = new Map<string, Promise<string | null>>();
 export function photoUrl(id: string): Promise<string | null> {
   let u = urls.get(id);
   if (!u) {
-    u = getImage(id).then((b) => (b ? URL.createObjectURL(b) : null));
+    /* "static:<name>" is a photo that ships with the app; anything else is on this device. */
+    u = id.startsWith("static:") ? Promise.resolve(`/avatars/${id.slice(7)}.jpg`) : getImage(id).then((b) => (b ? URL.createObjectURL(b) : null));
     urls.set(id, u);
   }
   return u;

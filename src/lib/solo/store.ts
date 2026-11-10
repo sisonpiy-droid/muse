@@ -325,6 +325,9 @@ export interface SoloState {
   rev?: number;
 }
 
+/** An avatar id with this prefix is a file in public/avatars, not a photo kept on the device. */
+export const STATIC_PHOTO = "static:";
+
 const slug = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 
 export function builtinMuses(): SoloMuse[] {
@@ -332,6 +335,9 @@ export function builtinMuses(): SoloMuse[] {
     ...p,
     id: `builtin-${slug(p.name)}`,
     builtin: true,
+    /* A display photo that ships with the app (public/avatars). One the user
+       picks or removes on the edit screen replaces it, as with any other field. */
+    avatar: { id: `${STATIC_PHOTO}builtin-${slug(p.name)}`, made: true },
     /* `you` is left empty and filled at send time from whatever the user
        called themselves -- it is the one field that cannot be authored here. */
     persona: {
