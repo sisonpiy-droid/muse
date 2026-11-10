@@ -10,7 +10,7 @@ import { photoUrl } from "@/lib/solo/photos";
    the picture; the initial stays underneath until it loads, and if it never
    does. */
 
-function hueOf(seed: string): number {
+export function hueOf(seed: string): number {
   let h = 0;
   for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) % 360;
   return h;

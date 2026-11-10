@@ -20,20 +20,20 @@ export function Welcome({ count, onStart }: { count: number; onStart: (name: str
     <section className="welcome" aria-labelledby="welcome-title">
       <svg className="welcome-art" viewBox="0 0 260 170" role="img" aria-label="Three chat bubbles with friendly faces">
         <defs>
-          <linearGradient id="wa" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#B79CFF" /><stop offset="1" stopColor="#7FD1C7" /></linearGradient>
-          <linearGradient id="wb" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#FFB3A7" /><stop offset="1" stopColor="#F6D186" /></linearGradient>
+          <linearGradient id="wa" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#F2B84B" /><stop offset="1" stopColor="#F08A6B" /></linearGradient>
+          <linearGradient id="wb" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#F5F0EA" /><stop offset="1" stopColor="#D9CBB8" /></linearGradient>
         </defs>
         {/* her */}
         <path d="M30 28h104a16 16 0 0 1 16 16v38a16 16 0 0 1-16 16H64l-22 18v-18h-12a16 16 0 0 1-16-16V44a16 16 0 0 1 16-16z" fill="url(#wa)" />
-        <circle cx="64" cy="62" r="4.5" fill="#16121D" /><circle cx="100" cy="62" r="4.5" fill="#16121D" />
-        <path d="M70 78q12 10 24 0" stroke="#16121D" strokeWidth="3.5" strokeLinecap="round" fill="none" />
+        <circle cx="64" cy="62" r="4.5" fill="#1B1613" /><circle cx="100" cy="62" r="4.5" fill="#1B1613" />
+        <path d="M70 78q12 10 24 0" stroke="#1B1613" strokeWidth="3.5" strokeLinecap="round" fill="none" />
         {/* him */}
         <path d="M130 84h96a16 16 0 0 1 16 16v30a16 16 0 0 1-16 16h-8v18l-22-18h-66a16 16 0 0 1-16-16v-30a16 16 0 0 1 16-16z" fill="url(#wb)" />
-        <circle cx="160" cy="112" r="4" fill="#16121D" /><circle cx="194" cy="112" r="4" fill="#16121D" />
-        <path d="M166 125q11 8 22 0" stroke="#16121D" strokeWidth="3.2" strokeLinecap="round" fill="none" />
+        <circle cx="160" cy="112" r="4" fill="#1B1613" /><circle cx="194" cy="112" r="4" fill="#1B1613" />
+        <path d="M166 125q11 8 22 0" stroke="#1B1613" strokeWidth="3.2" strokeLinecap="round" fill="none" />
         {/* a spark of remembering */}
-        <path d="M214 30l4 10 10 4-10 4-4 10-4-10-10-4 10-4z" fill="var(--accent, #B79CFF)" />
-        <circle cx="236" cy="62" r="3" fill="var(--accent, #B79CFF)" opacity=".6" />
+        <path d="M214 30l4 10 10 4-10 4-4 10-4-10-10-4 10-4z" fill="var(--accent, #F2B84B)" />
+        <circle cx="236" cy="62" r="3" fill="var(--accent, #F2B84B)" opacity=".6" />
       </svg>
 
       <h1 id="welcome-title" className="display">Meet people who<br />remember you.</h1>

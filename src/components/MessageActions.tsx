@@ -26,7 +26,10 @@ export function MessageActions({
   onDone,
   onReact,
   reacted,
+  onRedo,
 }: {
+  /** Ask for this reply again. Only offered on the latest reply. */
+  onRedo?: () => void;
   content: string;
   onReply: () => void;
   onEdit: (text: string) => void;
@@ -42,6 +45,7 @@ export function MessageActions({
   const done = () => onDone?.();
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(content);
+  const [copied, setCopied] = useState(false);
 
   if (editing) {
     return (
@@ -87,6 +91,15 @@ export function MessageActions({
         </span>
       )}
       <button onClick={() => { onReply(); done(); }} aria-label="Reply to this message">reply</button>
+      <button
+        onClick={() => {
+          void navigator.clipboard?.writeText(content).then(() => { setCopied(true); setTimeout(() => { setCopied(false); done(); }, 900); }).catch(() => {});
+        }}
+        aria-label="Copy message"
+      >
+        {copied ? "copied" : "copy"}
+      </button>
+      {onRedo && <button onClick={() => { onRedo(); done(); }} aria-label="Ask for this reply again">again</button>}
       <button onClick={() => { setText(content); setEditing(true); }} aria-label="Edit message">edit</button>
       <button onClick={() => { onDelete(); done(); }} aria-label="Delete message">delete</button>
       <button

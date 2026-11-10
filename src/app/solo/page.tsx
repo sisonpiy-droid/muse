@@ -5,7 +5,7 @@ import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Avatar } from "@/components/Avatar";
 import { BuildFigure } from "@/components/BuildFigure";
 import { CallScreen } from "@/components/CallScreen";
-import { OutreachPanel, applyOutreach } from "@/components/OutreachPanel";
+import { applyOutreach } from "@/components/OutreachPanel";
 import { useOutreach } from "@/components/useOutreach";
 import { CircleChat } from "@/components/CircleChat";
 import { EditMuse } from "@/components/EditMuse";
@@ -23,24 +23,22 @@ import { SongCard } from "@/components/SongCard";
 import { Story } from "@/components/Story";
 import { Look } from "@/components/Look";
 import { Scrapbook } from "@/components/Scrapbook";
-import { Welcome } from "@/components/Welcome";
+import { ToLatest } from "@/components/ToLatest";
 import { BlockedSheet } from "@/components/BlockedSheet";
-import { arrange, toggleArchive, togglePin } from "@/lib/solo/chatlist";
 import { clockTime, dayLabel, runOf } from "@/lib/solo/layout";
 import { VoiceNote } from "@/components/VoiceNote";
 import { useFollow } from "@/components/useFollow";
 import { backgroundedSince, useReplyLoop } from "@/components/useReplyLoop";
-import { MADE_TAB, TABS } from "@/lib/personas";
 import {
   DEFAULT_VIBE, PICKABLE_REGISTERS, REGISTERS, TOPICS, feelingsSummary, HEATS, HEAT_LABEL, asHeat, hasFeelings, heatBelow, moodsFor, romanceAllowed, splitBurst, storyPitches,
   vibeSummary, type Vibe,
 } from "@/lib/presence/persona";
 import { safeFilename, transcriptMarkdown } from "@/lib/export";
 import {
-  allMuses, attachEmbeddings, circleOf, deleteCircle, deleteConversation,
+  allMuses, attachEmbeddings, circleOf, deleteConversation,
   deleteFrom, deleteMemory, deleteMessage, deleteMuse, download, editMemory, editMessage,
-  editMuse, feelingsOf, findMuse, forgetAll, inTab, insertAfter, isEdited, isMediaCaption,
-  membersOf, memoriesOf, needsEmbedding, newMessage, paced, parseBackup, quoteOf, react, readMedia, readReaction,
+  editMuse, feelingsOf, findMuse, forgetAll, insertAfter, isEdited, isMediaCaption,
+  memoriesOf, needsEmbedding, newMessage, paced, quoteOf, react, readMedia, readReaction,
   resetMuse, rewindTo, sentPhoto, sentSong, splitMediaLines,
   setFeelings, typingMs,
   type MediaAllowed, type SoloCircle, type SoloMessage, type SoloMuse, type SoloState,
@@ -59,8 +57,7 @@ import { canListen } from "@/lib/voice/listener";
 import { settingsOf } from "@/lib/proactive/client";
 import { speaker } from "@/lib/voice/speaker";
 
-/** The circles live under the tabs too, as their own. */
-const CIRCLES_TAB = "Circles";
+import { AppNav, Chats, Create, Discover, Home, Profile, YourData, markSeen, type Nav, type Place } from "./screens";
 
 /* Solo MUSE — the whole product with no database and no account.
  *
@@ -83,7 +80,12 @@ export type Update = (next: SoloState | ((cur: SoloState) => SoloState)) => void
 
 type View =
   | { kind: "home" }
-  | { kind: "tab"; tab: string }
+  /* The places you browse from, and one person's profile. `cat` is the
+     category Discover is showing, kept here so back and reload return to it. */
+  | { kind: "discover"; cat?: string }
+  | { kind: "chats" }
+  | { kind: "create" }
+  | { kind: "profile"; museId: string }
   | { kind: "chat"; museId: string }
   /* A live call. Never restored by a reload or by forward: a call needs the
      tap that unlocks audio and the mic, so arriving here any other way lands
@@ -116,16 +118,6 @@ const settled = (v: View): View => (v.kind === "call" ? { kind: "chat", museId: 
 
 const depthNow = () => asEntry(window.history.state)?.depth ?? 0;
 
-/* Unread, the way a chat list counts it: texts of theirs since you last had
-   that chat open. Kept per device. */
-const seenKey = (id: string) => `muse-seen-${id}`;
-function markSeen(id: string) {
-  try { localStorage.setItem(seenKey(id), String(Date.now())); } catch { /* the count just stays */ }
-}
-function seenAt(id: string): number | null {
-  try { const v = localStorage.getItem(seenKey(id)); return v ? Number(v) : null; } catch { return null; }
-}
-
 export default function SoloPage() {
   const [state, setState] = useState<SoloState | null>(null);
   const [view, setView] = useState<View>({ kind: "home" });
@@ -133,10 +125,14 @@ export default function SoloPage() {
      were in it is not unread. */
   const thread = view.kind === "chat" ? view.museId : view.kind === "circle" ? view.circleId : null;
   const lastThread = useRef<string | null>(null);
+  /* Bumped when a chat is left, so the list drawn next counts it as read. */
+  const [, setSeenTick] = useState(0);
   useEffect(() => {
-    if (lastThread.current && lastThread.current !== thread) markSeen(lastThread.current);
+    const left = lastThread.current && lastThread.current !== thread;
+    if (left) markSeen(lastThread.current!);
     if (thread) markSeen(thread);
     lastThread.current = thread;
+    if (left) setSeenTick((n) => n + 1);
   }, [thread]);
 
   /* Every screen is a history entry.
@@ -171,6 +167,12 @@ export default function SoloPage() {
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, []);
+  /* A new screen starts at its top. A conversation looks after its own scroll
+     (it opens at the newest message). */
+  const screenKey = view.kind === "discover" ? `discover-${view.cat ?? ""}` : view.kind === "profile" ? `profile-${view.museId}` : view.kind;
+  useEffect(() => {
+    if (!screenKey.startsWith("chat") && screenKey !== "circle") window.scrollTo(0, 0);
+  }, [screenKey]);
   /* Whether the last write actually landed. Everything in here is one
      localStorage key that only grows, and when the browser finally refuses it
      the app carries on working perfectly for the rest of the session and loses
@@ -367,8 +369,6 @@ export default function SoloPage() {
   /* The banner has to ride above whichever view is showing -- running out of
      room mid-conversation is exactly when it matters and exactly when the user
      is not on the home screen. */
-  const shell = (node: React.ReactNode) => (<>{banner}{node}</>);
-
   // Nothing renders until localStorage has been read, so the first paint is
   // never a wrong empty state that flips a tick later.
   if (!state) {
@@ -381,6 +381,81 @@ export default function SoloPage() {
           ))}
         </div>
       </main>
+    );
+  }
+
+  /* Moving between the places is sideways: back from any of them is home. */
+  const place = (next: View) => (view.kind === "home" ? go(next) : swap(next));
+  const inThread = view.kind === "chat" || view.kind === "circle";
+  const nav: Nav = {
+    onHome: () => { if (depthNow() > 0) window.history.go(-depthNow()); else swap({ kind: "home" }); },
+    onDiscover: (cat) => place({ kind: "discover", cat }),
+    onChats: () => place({ kind: "chats" }),
+    onCreate: () => place({ kind: "create" }),
+    onAccount: () => { if (view.kind !== "account") go({ kind: "account" }); },
+    /* From one conversation straight to another (the sidebar): sideways too. */
+    onOpen: (id) => (inThread ? swap : go)({ kind: "chat", museId: id }),
+    onOpenCircle: (id) => (inThread ? swap : go)({ kind: "circle", circleId: id }),
+    onProfile: (id) => go({ kind: "profile", museId: id }),
+    onCall: (id) => {
+      /* Inside the tap, before anything is awaited: mobile browsers only
+         allow sound that a gesture started. */
+      speaker.unlock();
+      go({ kind: "call", museId: id });
+    },
+    onEdit: (id) => go({ kind: "edit", museId: id }),
+    onImport: (tab) => go({ kind: "import", tab }),
+    onInvent: (tab) => go({ kind: "invent", tab }),
+    onFigure: (tab) => go({ kind: "figure", tab }),
+    onNewCircle: () => go({ kind: "new-circle" }),
+    cloudEmail: cloud.email,
+  };
+
+  /* Every screen sits in the same frame: the sidebar (wide screens), the tab
+     bar (phones, on the places only -- a conversation's composer owns the
+     bottom edge), and the storage banner, which has to ride above whichever
+     view is showing: running out of room mid-conversation is exactly when it
+     matters. A call takes the whole screen. */
+  const PLACE: Partial<Record<View["kind"], Place>> = {
+    home: "home", discover: "discover", profile: "discover", chats: "chats", chat: "chats", circle: "chats", create: "create", account: "you",
+  };
+  const shell = (node: React.ReactNode, chrome: "full" | "side" | "none" = "side") => {
+    const withNav = chrome !== "none" && !!state.userName;
+    return (
+      <div className={`app${withNav ? " has-nav" : ""}${withNav && chrome === "full" ? " has-tabs" : ""}`}>
+        {withNav && <AppNav state={state} current={PLACE[view.kind] ?? null} nav={nav} tabs={chrome === "full"} openId={thread} />}
+        <div className="app-main">{banner}{node}</div>
+      </div>
+    );
+  };
+
+  if (view.kind === "discover") {
+    return shell(<Discover state={state} update={update} nav={nav} cat={view.cat} />, "full");
+  }
+
+  if (view.kind === "chats") {
+    return shell(<Chats state={state} update={update} nav={nav} />, "full");
+  }
+
+  if (view.kind === "create") {
+    return shell(<Create state={state} nav={nav} />, "full");
+  }
+
+  if (view.kind === "profile") {
+    const muse = findMuse(state, view.museId);
+    if (!muse) { setView({ kind: "home" }); return null; }
+    return shell(
+      <Profile
+        key={muse.id}
+        muse={muse}
+        state={state}
+        nav={nav}
+        onBack={back}
+        onStory={() => go({ kind: "story", museId: muse.id })}
+        onMemories={() => go({ kind: "memories", museId: muse.id })}
+        onShown={() => void ensureAvatar(latestState.current ?? state, muse.id, update)}
+      />,
+      "full"
     );
   }
 
@@ -547,7 +622,10 @@ export default function SoloPage() {
         place={state.place}
         onPlace={(place) => update((cur) => ({ ...cur, place: place ?? undefined }))}
         onBack={() => back()}
-      />
+      >
+        {state.userName && <YourData state={state} update={update} cloudEmail={cloud.email} />}
+      </Account>,
+      "full"
     );
   }
 
@@ -598,7 +676,8 @@ export default function SoloPage() {
         getState={() => latestState.current ?? state}
         update={update}
         onClose={back}
-      />
+      />,
+      "none"
     );
   }
 
@@ -617,384 +696,13 @@ export default function SoloPage() {
         onLook={() => go({ kind: "look", museId: muse.id })}
         onScene={() => go({ kind: "look", museId: muse.id, scene: true })}
         onScrapbook={() => go({ kind: "scrapbook", museId: muse.id })}
-        onCall={() => {
-          /* Inside the tap, before anything is awaited: mobile browsers only
-             allow sound that a gesture started. */
-          speaker.unlock();
-          go({ kind: "call", museId: muse.id });
-        }}
+        onProfile={() => go({ kind: "profile", museId: muse.id })}
+        onCall={() => nav.onCall(muse.id)}
       />
     );
   }
 
-  const nav = {
-    onOpen: (id: string) => go({ kind: "chat", museId: id }),
-    onEdit: (id: string) => go({ kind: "edit", museId: id }),
-    onImport: (tab?: string) => go({ kind: "import", tab }),
-    onInvent: (tab?: string) => go({ kind: "invent", tab }),
-    onFigure: (tab?: string) => go({ kind: "figure", tab }),
-    onOpenCircle: (id: string) => go({ kind: "circle", circleId: id }),
-    onNewCircle: () => go({ kind: "new-circle" }),
-    onTab: (tab: string) => go({ kind: "tab", tab }),
-    onAccount: () => go({ kind: "account" }),
-    cloudEmail: cloud.email,
-  };
-
-  if (view.kind === "tab") {
-    return shell(<SoloTab
-        state={state} update={update} tab={view.tab} onHome={back} {...nav}
-        /* Sideways, so back from any tab is one step to home. */
-        onTab={(tab) => swap({ kind: "tab", tab })}
-      />);
-  }
-
-  return shell(<SoloHome state={state} update={update} {...nav} />);
-}
-
-/* ------------------------------------------------------------------ home */
-
-type Nav = {
-  onOpen: (id: string) => void;
-  onEdit: (id: string) => void;
-  /** With a tab, whoever is made goes straight into it. */
-  onImport: (tab?: string) => void;
-  onInvent: (tab?: string) => void;
-  onFigure: (tab?: string) => void;
-  onOpenCircle: (id: string) => void;
-  onNewCircle: () => void;
-  onTab: (tab: string) => void;
-  onAccount: () => void;
-  /** Set when this device is signed in and syncing. */
-  cloudEmail: string | null;
-};
-
-const MADE_BLURB = "Built from your chats, from public life, or made up";
-const CIRCLES_BLURB = "Group chats, with whoever you put in the room";
-
-function blurbOf(tab: string): string {
-  if (tab === MADE_TAB) return MADE_BLURB;
-  if (tab === CIRCLES_TAB) return CIRCLES_BLURB;
-  return TABS.find((t) => t.id === tab)?.blurb ?? "";
-}
-
-/* The home screen is doors, not people.
- *
- * It used to lay every starter out in three long sections -- twenty cards
- * reads as a list to get through rather than people you know. Now each group
- * is a tile, and the people are inside it. The only faces here are the few you
- * were talking to most recently, because opening a tab to carry on a
- * conversation you had an hour ago is a tap too many. */
-function SoloHome({
-  state, update, onOpen, onImport, onInvent, onFigure, onOpenCircle, onNewCircle, onTab, onAccount, cloudEmail,
-}: { state: SoloState; update: Update } & Nav) {
-  const muses = allMuses(state);
-  const circles = state.circles ?? [];
-
-  /* Every conversation, people and groups together: pinned first, then the most
-     recent; searchable; and an archive for what is put away (lib/solo/chatlist.ts). */
-  const [query, setQuery] = useState("");
-  const [showArchived, setShowArchived] = useState(false);
-  const chats = [
-    ...muses.filter((m) => (state.conversations[m.id]?.length ?? 0) > 0).map((m) => ({ id: m.id, circle: undefined as SoloCircle | undefined, muse: m })),
-    ...circles.filter((c) => (state.conversations[c.id]?.length ?? 0) > 0).map((c) => ({ id: c.id, circle: c, muse: undefined as SoloMuse | undefined })),
-  ];
-  const infos = chats.flatMap((c) => {
-    const info = chatInfo(state, c.id, c.circle);
-    return info ? [{ id: c.id, name: c.circle ? c.circle.name : c.muse!.name, preview: info.preview, at: Date.parse(info.last.at), unread: info.unread }] : [];
-  });
-  const { main, archived } = arrange(infos, { pinned: state.pinned, archived: state.archived, query });
-  const rowFor = (id: string) => chats.find((c) => c.id === id)!;
-  const renderRow = (id: string) => {
-    const c = rowFor(id);
-    return (
-      <ChatRow key={id} state={state} id={id} muse={c.muse} circle={c.circle}
-        pinned={!!state.pinned?.includes(id)} archived={!!state.archived?.includes(id)}
-        onOpen={c.circle ? onOpenCircle : onOpen}
-        onPin={() => update((cur) => togglePin(cur, id))}
-        onArchive={() => update((cur) => toggleArchive(cur, id))} />
-    );
-  };
-
-  const inCircles = [...new Set(circles.flatMap((c) => c.memberIds))]
-    .map((id) => findMuse(state, id))
-    .filter((m): m is SoloMuse => Boolean(m));
-
-  const tiles = [
-    ...TABS.map((t) => ({ id: t.id, people: inTab(state, t.id), count: `${inTab(state, t.id).length} people` })),
-    { id: MADE_TAB, people: inTab(state, MADE_TAB), count: countOf(inTab(state, MADE_TAB).length, "person", "people") },
-    { id: CIRCLES_TAB, people: inCircles, count: countOf(circles.length, "circle", "circles") },
-  ];
-
-  return (
-    <main className="shell">
-      <header className="row" style={{ justifyContent: "space-between" }}>
-        <p className="mark">Muse</p>
-        <button className="link-btn" onClick={onAccount} style={{ textDecoration: "none", fontSize: "0.78rem" }}>
-          {cloudEmail ? `synced · ${cloudEmail}` : "this browser only · sign in to sync"}
-        </button>
-      </header>
-
-      {!state.userName && <Welcome count={muses.length} onStart={(name) => update({ ...state, userName: name })} />}
-
-      {state.userName && (
-        <>
-          {/* The people you are already talking to come first. Making someone
-              new is the rarer thing, and four full-width panels of it pushed
-              your own chats below the fold on a phone. */}
-          {chats.length > 0 && (
-            <>
-              <h2 className="section-title">Chats</h2>
-              {chats.length >= 3 && (
-                <input type="search" className="input chat-search" value={query} placeholder="Search chats" aria-label="Search chats"
-                  onChange={(e) => setQuery(e.target.value)} />
-              )}
-              <ul className="chat-list">{main.map((r) => renderRow(r.id))}</ul>
-              {query && !main.length && !archived.length && <p className="fine">Nothing matches &ldquo;{query}&rdquo;.</p>}
-              {archived.length > 0 && (
-                <>
-                  <button className="link-btn archived-toggle" onClick={() => setShowArchived((v) => !v)} aria-expanded={showArchived}>
-                    Archived ({archived.length}) {showArchived ? "\u25b4" : "\u25be"}
-                  </button>
-                  {showArchived && <ul className="chat-list">{archived.map((r) => renderRow(r.id))}</ul>}
-                </>
-              )}
-            </>
-          )}
-
-          <h2 className="section-title">Make someone new</h2>
-          <MakeRow onImport={() => onImport()} onFigure={() => onFigure()} onInvent={() => onInvent()} onNewCircle={onNewCircle} />
-
-          <h2 className="section-title">Your people</h2>
-          <div className="tab-tiles">
-            {tiles.map((t) => (
-              <button key={t.id} className="tab-tile" onClick={() => onTab(t.id)}>
-                <div className="stack-avatars" aria-hidden>
-                  {t.people.slice(0, 3).map((p) => <Avatar key={p.id} name={p.name} image={p.avatar?.id} />)}
-                </div>
-                <div className="tab-tile-text">
-                  <b>{t.id}</b>
-                  <span>{blurbOf(t.id)}</span>
-                </div>
-                <em>{t.count}</em>
-              </button>
-            ))}
-          </div>
-
-          <h2 className="section-title">Texts from them</h2>
-          <OutreachPanel state={state} update={update} />
-
-          <div className="row" style={{ marginTop: "2.5rem", gap: "0.75rem", flexWrap: "wrap" }}>
-            <button
-              className="btn-ghost"
-              onClick={() => download(
-                safeFilename("muse-solo", "json"),
-                JSON.stringify(state, null, 2),
-                "application/json"
-              )}
-            >
-              Export everything
-            </button>
-
-            {/* The other half of that button. Without it the export was a file
-                nobody could use, and a cleared browser was total loss even for
-                someone who had backed up. */}
-            <label className="btn-ghost" style={{ cursor: "pointer" }}>
-              Restore a backup
-              <input
-                type="file"
-                accept=".json,application/json"
-                className="sr-only"
-                onChange={async (e) => {
-                  const file = e.target.files?.[0];
-                  e.target.value = "";
-                  if (!file) return;
-                  const result = parseBackup(await file.text());
-                  if (!result.ok) { alert(result.error); return; }
-                  const { people, messages, memories, circles } = result.summary;
-                  const has = (state.muses.length || Object.keys(state.conversations).length);
-                  const warning = has
-                    ? "\n\nThis REPLACES everything currently in this browser. Export first if you are not sure."
-                    : "";
-                  if (!confirm(
-                    `Restore ${people} ${people === 1 ? "person" : "people"}, ${messages} messages, ` +
-                    `${memories} memories and ${circles} ${circles === 1 ? "circle" : "circles"}?${warning}`
-                  )) return;
-                  update(result.state);
-                }}
-              />
-            </label>
-            <button
-              className="link-btn"
-              onClick={() => {
-                /* It also deletes every character the user built from an
-                   export, which the old wording never mentioned. */
-                const built = state.muses.length;
-                const msg = built
-                  ? `Delete everything in this browser?\n\nThat includes the ${built} ${built === 1 ? "character" : "characters"} you built from a chat export, every conversation, and everything they remember. It cannot be undone.`
-                  : "Delete every conversation and memory in this browser? This cannot be undone.";
-                if (!confirm(msg)) return;
-                update({ userName: state.userName, muses: [], conversations: {}, memories: [] });
-              }}
-            >
-              Delete everything
-            </button>
-          </div>
-        </>
-      )}
-
-      <p className="fine" style={{ marginTop: "2.5rem" }}>
-        Every Muse is an AI.{" "}
-        {cloudEmail
-          ? "You're signed in, so a copy of your people, chats and memories is stored on the server to sync between your devices. Photos, voice notes and videos stay on the device that made them."
-          : "Your people, conversations and memories are never stored on a server — clearing this browser's data deletes them all, and there is no way to get them back."}
-        {settingsOf(state).proactiveEnabled &&
-          " The one exception: a text someone has scheduled to send you waits on the server until it is sent."}
-      </p>
-    </main>
-  );
-}
-
-/* One tab's people. The strip across the top switches tabs without going back
- * through home, which is how people actually browse -- "who's in family,
- * actually who's in close friends". */
-function SoloTab({
-  state, update, tab, onHome, onOpen, onImport, onInvent, onFigure, onOpenCircle, onNewCircle, onTab,
-}: { state: SoloState; update: Update; tab: string; onHome: () => void } & Nav) {
-  const all = [...TABS.map((t) => t.id as string), MADE_TAB, CIRCLES_TAB];
-  const people = tab === CIRCLES_TAB ? [] : inTab(state, tab);
-  const circles = state.circles ?? [];
-
-  return (
-    <main className="shell">
-      <header className="row" style={{ justifyContent: "space-between" }}>
-        <button className="link-btn" onClick={onHome} style={{ textDecoration: "none" }}>← Home</button>
-        <span className="fine">no account · this browser only</span>
-      </header>
-
-      <nav className="tab-strip" aria-label="Your people">
-        {all.map((t) => (
-          <button key={t} className="tab-pill" aria-current={t === tab ? "page" : undefined} onClick={() => onTab(t)}>
-            {t}
-          </button>
-        ))}
-      </nav>
-
-      <h1 className="display" style={{ fontSize: "1.9rem", marginTop: "1.75rem" }}>{tab}</h1>
-      <p className="lede">{blurbOf(tab)}</p>
-
-      {tab === CIRCLES_TAB ? (
-        <>
-          {circles.length ? (
-            <div className="card-grid">
-              {circles.map((c) => (
-                <CircleCard key={c.id} circle={c} state={state} update={update} onOpen={onOpenCircle} />
-              ))}
-            </div>
-          ) : (
-            <div className="empty"><p>No circles yet. Put two or more people in a room and they talk to each other, not just to you.</p></div>
-          )}
-          <div className="make-row" style={{ marginTop: "1rem" }}>
-            <button className="make" onClick={onNewCircle}>
-              <b>Start a circle</b>
-              <span>Two or more, in a room together</span>
-            </button>
-          </div>
-        </>
-      ) : (
-        <>
-          {people.length ? (
-            <div className="card-grid">
-              {people.map((m) => (
-                <MuseCard key={m.id} muse={m} state={state} onOpen={onOpen} />
-              ))}
-            </div>
-          ) : (
-            <div className="empty"><p>Nobody here yet.</p></div>
-          )}
-          {/* Made from here, they land here. Made from the home screen they go
-              under your own tab, and either way they can be moved later. */}
-          <h2 className="section-title">{tab === MADE_TAB ? "Make someone new" : `Add someone to ${tab}`}</h2>
-          {tab === MADE_TAB ? (
-            <MakeRow onImport={() => onImport()} onFigure={() => onFigure()} onInvent={() => onInvent()} />
-          ) : (
-            <MakeRow onImport={() => onImport(tab)} onFigure={() => onFigure(tab)} onInvent={() => onInvent(tab)} />
-          )}
-          <p className="fine" style={{ marginTop: "1rem" }}>
-            Move anyone to a different tab from their edit screen.
-          </p>
-        </>
-      )}
-    </main>
-  );
-}
-
-/* A strip, not the three full-height panels this used to be. Those pushed the
-   people you actually talk to 1,329px down on a phone. */
-function MakeRow({
-  onImport, onFigure, onInvent, onNewCircle,
-}: { onImport: () => void; onFigure: () => void; onInvent: () => void; onNewCircle?: () => void }) {
-  return (
-    <div className="make-row">
-      <button className="make" onClick={onImport}>
-        <b>From a chat export</b>
-        <span>Reads how they actually wrote</span>
-      </button>
-      <button className="make" onClick={onFigure}>
-        <b>Someone in public life</b>
-        <span>Any celebrity, creator or character</span>
-      </button>
-      {/* This was always possible and had no door. You had to open "From a chat
-          export", get to the second question, and pick "Someone I made up" --
-          behind a button that promises a file upload. */}
-      <button className="make" onClick={onInvent}>
-        <b>Someone you make up</b>
-        <span>Invent them — no export needed</span>
-      </button>
-      {onNewCircle && (
-        <button className="make" onClick={onNewCircle}>
-          <b>A circle</b>
-          <span>Two or more, in a room together</span>
-        </button>
-      )}
-    </div>
-  );
-}
-
-function CircleCard({
-  circle, state, update, onOpen,
-}: { circle: SoloCircle; state: SoloState; update: Update; onOpen: (id: string) => void }) {
-  const members = membersOf(state, circle);
-  return (
-    <div className="card-wrap">
-      <button className="muse-card" onClick={() => onOpen(circle.id)}>
-        <div className="stack-avatars">
-          {members.slice(0, 3).map((m) => <Avatar key={m.id} name={m.name} image={m.avatar?.id} />)}
-        </div>
-        <div style={{ minWidth: 0, flex: 1 }}>
-          <h3>{circle.name}</h3>
-          <span className="rel">{members.map((m) => m.name).join(", ")}</span>
-          <p>
-            {circle.topic?.trim() ? `About ${circle.topic.trim()} · ` : ""}
-            {state.conversations[circle.id]?.length ?? 0} messages
-          </p>
-        </div>
-      </button>
-      {/* Attached to its own card rather than pooled underneath the whole grid,
-          where "delete The Group Chat" sat next to a card it had no visible
-          relationship to. */}
-      <div className="card-actions">
-        <button
-          onClick={() => {
-            if (confirm(`Delete the circle "${circle.name}" and its conversation? The people in it are kept.`)) {
-              update((cur) => deleteCircle(cur, circle.id));
-            }
-          }}
-        >
-          delete
-        </button>
-      </div>
-    </div>
-  );
+  return shell(<Home state={state} nav={nav} onName={(name) => update({ ...state, userName: name })} />, "full");
 }
 
 /* Timing inside a reply, which runs long after any render. Kept out here so the
@@ -1011,131 +719,12 @@ async function untilShown(at: number, signal: AbortSignal): Promise<void> {
   while (Date.now() < at && !signal.aborted) await new Promise((r) => setTimeout(r, Math.min(400, at - Date.now())));
 }
 
-function countOf(n: number, one: string, many: string): string {
-  return n === 0 ? "none yet" : `${n} ${n === 1 ? one : many}`;
-}
-
-/* No edit or delete links under the card any more: they sat one mis-tap from
-   "delete chat" on a phone, and they are all in the chat's ⋯ menu now. */
-/* What a row says: the last line as a preview, and how many of theirs you have
-   not seen. Null for a conversation with nothing shown yet. */
-function chatInfo(state: SoloState, id: string, circle?: SoloCircle) {
-  const now = clockNow();
-  const shown = (state.conversations[id] ?? []).filter((m) => !m.showAt || Date.parse(m.showAt) <= now);
-  const last = shown.at(-1);
-  if (!last) return null;
-  const label = last.voiceNote ? "\u{1F3A4} Voice message" : last.video ? "\u{1F3A5} Video" : last.image ? "\u{1F4F7} Photo" : last.song ? `\u{1F3B5} ${last.song.title}` : last.content;
-  const who = last.from === "user" ? "You: " : circle && last.speakerId ? `${findMuse(state, last.speakerId)?.name.split(" ")[0] ?? ""}: ` : "";
-  /* Never opened since this was added: only what they said after your last text counts. */
-  const seen = seenAt(id) ?? Date.parse(shown.findLast((m) => m.from === "user")?.at ?? "") ?? 0;
-  const unread = Math.min(99, shown.filter((m) => m.from !== "user" && Date.parse(m.at) > (Number.isFinite(seen) ? seen : 0)).length);
-  return { last, preview: `${who}${label}`, unread };
-}
-
-/* One line of the chat list: who, the last thing said, when, and how many of
-   theirs you have not seen. Swipe it left on a phone (or hover it on a computer)
-   to pin it or put it away. */
-const SWIPE_OPEN = -152;
-function ChatRow({
-  state, id, muse, circle, pinned, archived, onOpen, onPin, onArchive,
-}: {
-  state: SoloState; id: string; muse?: SoloMuse; circle?: SoloCircle;
-  pinned: boolean; archived: boolean;
-  onOpen: (id: string) => void; onPin: () => void; onArchive: () => void;
-}) {
-  const [dx, setDx] = useState(0);
-  const [dragging, setDragging] = useState(false);
-  const start = useRef<{ x: number; y: number; from: number; sideways: boolean | null } | null>(null);
-  const info = chatInfo(state, id, circle);
-  if (!info) return null;
-  const { last, preview, unread } = info;
-  const members = circle ? membersOf(state, circle) : [];
-
-  const touchStart = (e: React.TouchEvent) => { start.current = { x: e.touches[0].clientX, y: e.touches[0].clientY, from: dx, sideways: null }; };
-  const touchMove = (e: React.TouchEvent) => {
-    const s = start.current;
-    if (!s) return;
-    const mx = e.touches[0].clientX - s.x, my = e.touches[0].clientY - s.y;
-    /* A drag that turns out to be a scroll is a scroll. */
-    if (s.sideways === null && (Math.abs(mx) > 8 || Math.abs(my) > 8)) s.sideways = Math.abs(mx) > Math.abs(my);
-    if (!s.sideways) return;
-    setDragging(true);
-    setDx(Math.max(SWIPE_OPEN, Math.min(0, s.from + mx)));
-  };
-  const touchEnd = () => {
-    const was = start.current?.sideways;
-    start.current = null;
-    setDragging(false);
-    if (was) setDx((cur) => (cur < SWIPE_OPEN / 2 ? SWIPE_OPEN : 0));
-  };
-
-  return (
-    <li className="chat-swipe" data-open={dx ? "1" : undefined} onTouchStart={touchStart} onTouchMove={touchMove} onTouchEnd={touchEnd}>
-      <div className="chat-actions">
-        <button className="chat-action pin" onClick={() => { setDx(0); onPin(); }} tabIndex={-1}>{pinned ? "Unpin" : "Pin"}</button>
-        <button className="chat-action archive" onClick={() => { setDx(0); onArchive(); }} tabIndex={-1}>{archived ? "Unarchive" : "Archive"}</button>
-      </div>
-      <button className={dragging ? "chat-row dragging" : "chat-row"} style={{ transform: dx ? `translateX(${dx}px)` : undefined }}
-        onClick={() => { if (dx) setDx(0); else onOpen(id); }}>
-        {circle
-          ? <div className="stack-avatars" aria-hidden>{members.slice(0, 2).map((m) => <Avatar key={m.id} name={m.name} image={m.avatar?.id} />)}</div>
-          : <Avatar name={muse!.name} image={muse!.avatar?.id} ring={unread > 0} />}
-        <div className="chat-row-text">
-          <div className="chat-row-top">
-            <b>{pinned && <span className="chat-row-pin" role="img" aria-label="Pinned">{"\u{1F4CC}"} </span>}{circle ? circle.name : muse!.name}</b>
-            <span className={unread ? "chat-row-time unread" : "chat-row-time"}>{ago(Date.parse(last.at))}</span>
-          </div>
-          <div className="chat-row-bottom">
-            <span className="chat-row-preview">{preview}</span>
-            {unread > 0 && <span className="chat-row-badge" aria-label={`${unread} unread`}>{unread}</span>}
-          </div>
-        </div>
-      </button>
-    </li>
-  );
-}
-
-function MuseCard({
-  muse, state, onOpen,
-}: {
-  muse: SoloMuse;
-  state: SoloState;
-  onOpen: (id: string) => void;
-}) {
-  const log = state.conversations[muse.id] ?? [];
-  const last = log[log.length - 1];
-  const when = last ? ago(new Date(last.at).getTime()) : "";
-
-  return (
-    <div className="card-wrap">
-    <button className="muse-card" onClick={() => onOpen(muse.id)}>
-      <Avatar name={muse.name} image={muse.avatar?.id} />
-      <div style={{ minWidth: 0, flex: 1 }}>
-        <div className="row" style={{ gap: "0.5rem", justifyContent: "space-between" }}>
-          <h3>{muse.name}</h3>
-          {when && <span className="stamp">{when}</span>}
-        </div>
-        <span className="rel">{muse.relationshipType}</span>
-        <p style={last ? { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } : undefined}>
-          {last ? `${last.from === "user" ? "You: " : ""}${last.content}` : muse.description}
-        </p>
-        {!last && muse.traits?.length ? (
-          <div className="tags">
-            {muse.traits.slice(0, 4).map((t) => <span className="tag" key={t}>{t}</span>)}
-          </div>
-        ) : null}
-      </div>
-    </button>
-
-    </div>
-  );
-}
-
 /* ------------------------------------------------------------------ chat */
 
 function SoloChat({
-  muse, state, update, onBack, onEdit, onMemories, onCall, onStory, onLook, onScene, onScrapbook,
+  muse, state, update, onBack, onEdit, onMemories, onCall, onStory, onLook, onScene, onScrapbook, onProfile,
 }: {
+  onProfile: () => void;
   muse: SoloMuse;
   state: SoloState;
   update: Update;
@@ -1178,6 +767,21 @@ function SoloChat({
   const [replyTo, setReplyTo] = useState<SoloMessage | null>(null);
   const foot = useRef<HTMLDivElement>(null);
   const box = useRef<HTMLTextAreaElement>(null);
+  /* What you were writing is still there when you come back: kept per chat,
+     for as long as the tab is open. */
+  const draftKey = `muse-draft-${muse.id}`;
+  const keepDraft = (text: string) => {
+    try { if (text) sessionStorage.setItem(draftKey, text); else sessionStorage.removeItem(draftKey); } catch { /* it is just not kept */ }
+  };
+  useEffect(() => {
+    let saved = "";
+    try { saved = sessionStorage.getItem(draftKey) ?? ""; } catch { /* none */ }
+    if (!saved || !box.current || box.current.value) return;
+    box.current.value = saved;
+    setHasDraft(true);
+    // Once, when the chat opens.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   /* A reply can start seconds after the send that asked for it, and a second
      text may have landed in between. It reads the state as it is when it
@@ -1287,6 +891,7 @@ function SoloChat({
       conversations: { ...cur.conversations, [muse.id]: [...(cur.conversations[muse.id] ?? []), msg] },
     }));
     if (box.current) box.current.value = "";
+    keepDraft("");
     setHasDraft(false);
     setReplyTo(null);
     setError(null);
@@ -1651,12 +1256,24 @@ function SoloChat({
   }
 
   const lastLine = log[log.length - 1];
+  /* The reply to your latest message can be asked for again: the thread goes
+     back to that message and it is answered afresh. */
+  const lastMine = log.findLastIndex((m) => m.from === "user");
+  const askAgain = () => {
+    const mine = log[lastMine];
+    if (!mine) return;
+    update((cur) => rewindTo(cur, muse.id, mine.id));
+    setError(null);
+    loop.restart();
+  };
 
   return (
     <main className="shell" style={{ display: "flex", flexDirection: "column", minHeight: "100dvh" }}>
       <header className="chat-head">
         <button className="link-btn" onClick={onBack} aria-label="Back" style={{ textDecoration: "none" }}>←</button>
-        <Avatar name={muse.name} image={muse.avatar?.id} />
+        <button className="chat-face" onClick={onProfile} aria-label={`${muse.name}’s profile`}>
+          <Avatar name={muse.name} image={muse.avatar?.id} />
+        </button>
         <div className="chat-who">
           <h1>{muse.name}</h1>
           <div className="rel">
@@ -1695,6 +1312,7 @@ function SoloChat({
         <Menu
           label={`More for ${muse.name}`}
           items={[
+            { label: `${muse.name}’s profile`, onSelect: onProfile },
             { label: `Edit ${muse.name}`, onSelect: onEdit },
             { label: `You & ${muse.name}`, onSelect: onStory },
             /* A story played out together: "Up for anything", and she pitches three. */
@@ -1829,6 +1447,7 @@ function SoloChat({
                 }}
                 onDeleteFrom={() => update(deleteFrom(state, muse.id, m.id))}
                 onDone={() => setPicked(null)}
+                onRedo={m.from === "muse" && lastMine >= 0 && i > lastMine && !loop.busy ? askAgain : undefined}
                 {...(m.from === "muse" ? { onReact: (e: string) => update((cur) => react(cur, muse.id, m.id, "user", e)), reacted: m.reactions?.user } : {})}
               />
               {m.reactions && (
@@ -1985,6 +1604,7 @@ function SoloChat({
       )}
 
       <div className="composer">
+        <ToLatest />
         {replyTo && (
           <ReplyBar who={replyTo.from === "user" ? "yourself" : muse.name} text={replyTo.content} onCancel={() => setReplyTo(null)} />
         )}
@@ -1999,6 +1619,7 @@ function SoloChat({
           placeholder={`Write to ${muse.name}`}
           onChange={(e) => {
             setHasDraft(e.target.value.trim().length > 0);
+            keepDraft(e.target.value);
             loop.hold();
             const el = box.current;
             if (el) { el.style.height = "auto"; el.style.height = `${Math.min(el.scrollHeight, 128)}px`; }
@@ -2010,7 +1631,9 @@ function SoloChat({
         />
         {/* Never disabled while they are typing back: a second text is how
             people talk, and it gets answered with the first. */}
-        <button className="send" onClick={() => void sendDraft()} disabled={!hasDraft && !attach.draft}>Send</button>
+        <button className="send" aria-label="Send" onClick={() => void sendDraft()} disabled={!hasDraft && !attach.draft}>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M12 19V5M5.5 11.5 12 5l6.5 6.5" /></svg>
+        </button>
       </div>
     </main>
   );
@@ -2137,18 +1760,4 @@ function isDefaultVibe(v: Vibe): boolean {
 function callLength(seconds: number): string {
   const h = Math.floor(seconds / 3600), m = Math.floor((seconds % 3600) / 60), sec = String(seconds % 60).padStart(2, "0");
   return h ? `${h}:${String(m).padStart(2, "0")}:${sec}` : `${m}:${sec}`;
-}
-
-/** When you last talked, the way a chat list says it: "now", "14m", "3h", "Mon", "12 Sep". */
-function ago(ts: number): string {
-  const s = (Date.now() - ts) / 1000;
-  if (s < 60) return "now";
-  if (s < 3600) return `${Math.floor(s / 60)}m`;
-  const d = new Date(ts);
-  const today = new Date();
-  if (d.toDateString() === today.toDateString()) return `${Math.floor(s / 3600)}h`;
-  const yesterday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1);
-  if (d.toDateString() === yesterday.toDateString()) return "yesterday";
-  if (s < 6 * 86400) return d.toLocaleDateString(undefined, { weekday: "short" });
-  return d.toLocaleDateString(undefined, { day: "numeric", month: "short" });
 }

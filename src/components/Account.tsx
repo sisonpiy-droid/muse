@@ -33,7 +33,10 @@ export function Account({
   place,
   onPlace,
   onBack,
+  children,
 }: {
+  /** More of this screen, under the account: this device's data. */
+  children?: React.ReactNode;
   email: string | null;
   status: CloudStatus;
   syncedAt: number | null;
@@ -276,6 +279,7 @@ export function Account({
           {where}
         </>
       )}
+      {children}
     </main>
   );
 }
