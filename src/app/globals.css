@@ -9,25 +9,28 @@
  */
 
 :root {
-  /* Warm ink and amber. Ratios are against --bg unless said otherwise. */
-  --bg: #0D0B0A;
-  --surface: #171412;
-  --surface-2: #211D1A;
-  --edge: #2D2824;
-  --edge-lit: #473F38;
+  /* Dark slate and one green, the palette of a messenger. Ratios are against --bg. */
+  --bg: #0B141A;
+  --surface: #111B21;
+  --surface-2: #202C33;
+  --edge: #222D34;
+  --edge-lit: #3B4A54;
 
-  --ink: #F5F0EA;      /* 17.4:1 */
-  --muted: #B9AFA4;    /*  9.0:1 */
-  --faint: #91877C;    /*  5.5:1, 5.1:1 on surface — AA at small sizes */
+  --ink: #E9EDEF;      /* 15.5:1 */
+  --muted: #AEBAC1;    /*  9.2:1 */
+  --faint: #8696A0;    /*  6.0:1, 5.6:1 on surface — AA at small sizes */
 
-  --accent: #F2B84B;   /* 10.9:1 — amber */
-  --accent-hi: #F8CB75;
-  --accent-ink: #1E1503; /* text on the accent: 10.4:1 */
-  --accent-warm: #F08A6B;
-  --danger: #F58A8A;
+  --accent: #00A884;   /*  6.3:1 */
+  --accent-hi: #06CF9C;
+  --accent-ink: #0B141A; /* text on the accent */
+  --accent-tint: #103529; /* a chosen tab or filter */
+  --accent-warm: #53BDEB;
+  --danger: #F15C6D;
+  --bubble-out: #005C4B; /* your messages; --ink on it is 6.9:1 */
 
   --sans: var(--font-sans), ui-sans-serif, system-ui, -apple-system, sans-serif;
-  --serif: var(--font-serif), ui-serif, Georgia, serif;
+  /* One face: what was the serif is the same sans. */
+  --serif: var(--sans);
 
   --r-sm: 8px;
   --r-md: 12px;
@@ -430,7 +433,7 @@ a { color: inherit; }
 }
 
 @media (prefers-contrast: more) {
-  :root { --faint: #B9AFA4; --edge: #574E46; }
+  :root { --faint: #AEBAC1; --edge: #4A5A64; }
 }
 
 /* Two fields side by side — names, relationship — as Presence laid them out. */
@@ -1741,3 +1744,124 @@ button.fact:disabled { cursor: default; }
 .make-banner div { display: flex; flex-direction: column; gap: 0.2rem; min-width: 0; flex: 1 1 16rem; }
 .make-banner b { font-family: var(--serif); font-weight: 400; font-size: 1.2rem; }
 .make-banner span { color: var(--muted); font-size: 0.86rem; }
+
+/* ============================================================== messenger
+ *
+ * The look of a chat app people already know: dark slate, one green, a single
+ * plain typeface, bubbles with tails, a solid bar across the top of a chat.
+ * Overrides the redesign section above; the layout there is unchanged.
+ */
+
+html { overflow-x: clip; }
+body { background-image: none; }
+
+/* One face everywhere, so headings carry weight instead of a serif. */
+.display { font-weight: 700; letter-spacing: -0.025em; }
+.page-head .display { font-size: clamp(1.6rem, 4.6vw, 2.2rem); }
+.welcome .display { font-size: clamp(2rem, 8vw, 2.8rem); }
+.profile-id .display { font-size: clamp(2rem, 7vw, 2.8rem); }
+.section-title { font-size: 1.1rem; font-weight: 600; letter-spacing: 0; }
+.brand { font-weight: 700; font-size: 1.45rem; color: var(--accent); }
+.brand::after { content: none; }
+.pcard-body b { font-weight: 600; font-size: 1.1rem; }
+.pcard-new b, .cat b, .way b, .make-banner b { font-weight: 600; font-size: 1.02rem; }
+.feature-text h3 { font-weight: 700; font-size: 1.6rem; }
+.fact b { font-weight: 600; font-size: 1rem; }
+.profile-desc { font-size: 1.02rem; color: var(--muted); }
+.portrait-initial { font-weight: 500; }
+.avatar { font-weight: 600; }
+.call-who h1 { font-weight: 500; }
+.blocked-title, .call-caption, .story-note p, .scrap-text.muse, .vnote-text { font-size: 0.98rem; }
+
+/* Filters and tabs: the chosen one is a green tint, not a filled pill. */
+.chip { background: var(--surface-2); border-color: transparent; }
+.chip[aria-current="true"] { background: var(--accent-tint); border-color: transparent; color: var(--accent-hi); }
+.tab-item { color: var(--muted); }
+.tab-item .nav-icon { padding: 0.2rem 1.05rem; border-radius: var(--r-full); transition: background-color 160ms var(--ease); }
+.tab-item[aria-current="page"] { color: var(--ink); font-weight: 600; }
+.tab-item[aria-current="page"] .nav-icon { background: var(--accent-tint); color: var(--accent-hi); }
+.app.has-tabs .tabbar { background: var(--surface); backdrop-filter: none; -webkit-backdrop-filter: none; }
+.side-item[aria-current="page"] { background: var(--accent-tint); }
+.sidenav { background: var(--surface) !important; }
+.search { background: var(--surface-2); border-color: transparent; }
+
+/* The chat list. */
+.chat-row { border-bottom: 0; padding: 0.65rem 0.5rem; border-radius: var(--r-md); }
+.chat-row .avatar { width: 50px; height: 50px; font-size: 1.2rem; }
+.chat-row .stack-avatars { width: 50px; height: 50px; }
+.chat-row-top b { font-weight: 500; font-size: 1.02rem; }
+.chat-swipe .chat-row { border-radius: 0; }
+.avatar-ring { box-shadow: none; }
+
+/* ---- a conversation */
+
+/* The bar across the top: solid, edge to edge of the pane. */
+.chat-head { border-bottom: 0; padding: 0.55rem 0; }
+.chat-head::before { inset: 0 -100vw; background: var(--surface-2); backdrop-filter: none; -webkit-backdrop-filter: none; }
+.chat-head h1 { font-weight: 600; font-size: 1.05rem; }
+.chat-head .rel { color: var(--muted); font-size: 0.76rem; }
+.chat-head .link-btn, .chat-head .menu-btn { color: var(--ink); }
+
+.thread { gap: 0.15rem; padding-top: 0.75rem; }
+.turn { max-width: min(82%, 32rem); }
+.turn-muse, .turn-user {
+  font-family: var(--sans);
+  font-size: 0.95rem;
+  line-height: 1.42;
+  border: 0;
+  border-radius: 8px;
+  padding: 0.4rem 0.6rem 0.45rem;
+  margin-top: 0.6rem;
+  box-shadow: 0 1px 0.5px rgb(0 0 0 / 0.3);
+}
+.turn-muse { background: var(--surface-2); color: var(--ink); border-top-left-radius: 0; }
+.turn-user { background: var(--bubble-out); color: var(--ink); border-top-right-radius: 0; }
+.turn-muse + .turn-muse, .turn-user + .turn-user { margin-top: 0.15rem; border-radius: 8px; }
+
+/* The tail, on the first bubble of a run. */
+.turn-muse::after, .turn-user::after {
+  content: ""; position: absolute; top: 0; width: 8px; height: 13px; pointer-events: none;
+}
+.turn-muse::after { left: -8px; background: var(--surface-2); clip-path: polygon(0 0, 100% 0, 100% 100%); }
+.turn-user::after { right: -8px; background: var(--bubble-out); clip-path: polygon(0 0, 100% 0, 0 100%); }
+.turn-muse + .turn-muse::after, .turn-user + .turn-user::after { content: none; }
+
+.turn-muse.is-picked { background: color-mix(in srgb, var(--ink) 8%, var(--surface-2)); }
+.turn-muse.is-picked::after { background: color-mix(in srgb, var(--ink) 8%, var(--surface-2)); }
+.turn-user.is-picked { background: color-mix(in srgb, var(--ink) 8%, var(--bubble-out)); border: 0; }
+.turn-user.is-picked::after { background: color-mix(in srgb, var(--ink) 8%, var(--bubble-out)); }
+.turn-user .stamp { color: rgb(233 237 239 / 0.6); }
+.turn-user .quote { background: rgb(0 0 0 / 0.22); color: rgb(233 237 239 / 0.8); }
+.turn-user .quote b { color: var(--accent-hi); }
+.turn-muse .quote { background: rgb(0 0 0 / 0.22); }
+.turn-time { font-size: 0.66rem; margin-top: 0.1rem; }
+
+.day-divider { align-self: center; margin: 0.9rem 0 0.3rem; }
+.day-divider::before, .day-divider::after { content: none; }
+.day-divider span {
+  background: var(--surface-2); color: var(--muted); border-radius: 8px; padding: 0.3rem 0.75rem;
+  font-size: 0.74rem; letter-spacing: 0; box-shadow: 0 1px 0.5px rgb(0 0 0 / 0.3);
+}
+.call-row { background: var(--surface-2); border: 0; border-radius: 8px; color: var(--muted); letter-spacing: 0; padding: 0.3rem 0.75rem; }
+
+.typing { color: var(--accent); letter-spacing: 0; }
+.typing-dots { border: 0; border-radius: 8px; }
+
+.composer { background: var(--bg); padding-top: 0.5rem; gap: 0.4rem; }
+.composer textarea { background: var(--surface-2); border-color: transparent; border-radius: 24px; padding: 0.62rem 1rem; }
+.composer textarea:focus { background: var(--surface-2); border-color: transparent; }
+.attach { background: none; border: 0; color: var(--muted); }
+.send { width: 46px; height: 46px; }
+.send:disabled { background: var(--surface-2); color: var(--faint); }
+.vibe { border-top: 0; margin-top: 0.25rem; padding-top: 0; }
+
+.lately-line { font-family: var(--sans); font-size: 0.9rem; border-radius: 8px 8px 8px 0; }
+.lately-line.mine { background: var(--bubble-out); color: var(--ink); border-radius: 8px 8px 0 8px; }
+
+/* Unread: green count, green time. */
+.chat-row-badge { min-width: 1.3rem; height: 1.3rem; font-weight: 600; }
+.nav-dot { border-color: var(--surface); }
+
+.call { background: var(--bg); }
+.btn { font-weight: 600; }
+.pcard-chat { box-shadow: none; }
