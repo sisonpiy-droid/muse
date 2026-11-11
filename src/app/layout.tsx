@@ -29,7 +29,7 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#0B141A",
+  themeColor: "#0D0B0A",
   // viewport-fit lets the safe-area insets in globals.css actually apply.
   viewportFit: "cover",
 };
