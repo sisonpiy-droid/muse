@@ -129,7 +129,16 @@ export function useReplyLoop(
       if (!flights.has(key) && !timer.current && owedRef.current()) schedule(RESUME_MS);
     };
     resume();
-    const onVisible = () => { if (document.visibilityState === "visible") resume(); };
+    const onVisible = () => {
+      if (document.visibilityState === "visible") { resume(); return; }
+      /* Leaving in the pause before a reply: ask now, while the page can still
+         send it. A suspended tab's timer would not fire until they are back. */
+      if (timer.current) {
+        clearTimeout(timer.current);
+        timer.current = null;
+        void fire();
+      }
+    };
     document.addEventListener("visibilitychange", onVisible);
     return () => {
       mounted.current = false;
@@ -153,6 +162,8 @@ export function useReplyLoop(
 
   /** Drop whatever is being written and answer the thread as it is now. */
   function restart(delay = 250) {
+    /* A reply kept for a page that went away answers the old thread: drop it. */
+    if (typeof caches !== "undefined") void caches.delete("muse-replies").catch(() => {});
     flights.get(key)?.abort();
     flights.delete(key);
     notify(key);

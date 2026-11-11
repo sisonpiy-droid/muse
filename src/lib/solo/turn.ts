@@ -299,7 +299,10 @@ export type ReplyOutcome =
 export async function streamReply(
   body: Record<string, unknown>,
   signal: AbortSignal,
-  onDelta: (soFar: string, delta: string) => void
+  onDelta: (soFar: string, delta: string) => void,
+  /** The message being answered. With it, a reply cut off by the page going to the
+   *  background is finished by the service worker and picked up on return (public/sw.js). */
+  replyId?: string
 ): Promise<ReplyOutcome> {
   /* A reply that goes quiet is not "still typing": stop waiting and say so. The
      clock restarts with every chunk, so a long reply that keeps arriving is fine. */
@@ -315,7 +318,7 @@ export async function streamReply(
   const stalledOut = (): ReplyOutcome => ({ ok: false, message: "The reply took too long and was stopped. Try again.", retryable: true, partial: "" });
   watch();
   try {
-    return await readReply(body, inner.signal, onDelta, watch);
+    return await readReply(body, inner.signal, onDelta, watch, replyId);
   } catch (err) {
     if (stalled && !signal.aborted) return stalledOut();
     throw err;
@@ -332,12 +335,13 @@ async function readReply(
   body: Record<string, unknown>,
   signal: AbortSignal,
   onDelta: (soFar: string, delta: string) => void,
-  alive: () => void
+  alive: () => void,
+  replyId?: string
 ): Promise<ReplyOutcome> {
   const res = await fetch("/api/solo/chat", {
     method: "POST",
     signal,
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...(replyId ? { "x-reply-id": replyId } : {}) },
     body: JSON.stringify(body),
   });
   alive();

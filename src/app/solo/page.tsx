@@ -54,7 +54,7 @@ import { VIDEO_ONLY, filesOf, keepAttachment } from "@/lib/solo/attach";
 import { canStoreImages, deleteImages } from "@/lib/solo/backend";
 import { MAX_MESSAGE, cutoffFrom, prepareTurn, primeRecall, streamReply, withAppMessage } from "@/lib/solo/turn";
 import { canListen } from "@/lib/voice/listener";
-import { settingsOf } from "@/lib/proactive/client";
+import { registerWorker, settingsOf } from "@/lib/proactive/client";
 import { speaker } from "@/lib/voice/speaker";
 
 import { AppNav, Chats, Create, Discover, Home, Profile, YourData, markSeen, type Nav, type Place } from "./screens";
@@ -192,6 +192,10 @@ export default function SoloPage() {
      -- otherwise hydration sees different markup from the two passes. */
   /* A reload keeps the screen it was on: the entry survives it, and so do the
      ones behind it, so back still works afterwards. */
+  /* The service worker, for everyone: it is what finishes a reply while the
+     page is in the background (public/sw.js). */
+  useEffect(registerWorker, []);
+
   useEffect(() => {
     const p = new Persister();
     persist.current = p;
@@ -926,7 +930,7 @@ function SoloChat({
       /* A burst of texts appears text by text once it is in, so it is not also
          streamed in as one block first. A letter or a voice note still is. */
       const regNow = REGISTERS[vibeNow.register as keyof typeof REGISTERS] ?? REGISTERS.texts;
-      const outcome = await streamReply(prepared.body, signal, (soFar) => { if (!regNow.burst) setStreaming(soFar); });
+      const outcome = await streamReply(prepared.body, signal, (soFar) => { if (!regNow.burst) setStreaming(soFar); }, last.id);
       /* A reply that ended in an error is not a reply, however much of it
          arrived first. Saving the fragment is how half-sentences got into the
          thread. */
