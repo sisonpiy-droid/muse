@@ -173,12 +173,19 @@ check("once a reply only went through on the end of the chat, later turns send o
   let s = { ...blank(), conversations: { [RHEA]: log } };
   const prepared = await prepareTurn(s, RHEA);
   assert.equal(prepared.sent.length, 12);
-  assert.deepEqual(cutoffFrom(prepared, { kept: 4, photos: true }), { from: "c8" });
+  const cut = cutoffFrom(prepared, { kept: 4, photos: true });
+  assert.equal(cut.from, "c8");
+  assert.ok(cut.at, "dated, so it can lapse");
   assert.equal(cutoffFrom(prepared, { kept: 12, photos: true }), null, "nothing left out, nothing to change");
   assert.ok(cutoffFrom(prepared, { kept: 12, photos: false }).photosAfter, "photos alone");
-  s = { ...s, cutoffs: { [RHEA]: { from: "c8" } } };
+  s = { ...s, cutoffs: { [RHEA]: cut } };
   const next = await prepareTurn(s, RHEA);
   assert.deepEqual(next.body.messages.map((m) => m.content), ["line 8", "line 9", "line 10", "line 11"]);
+  /* ...but not for ever: a later turn tries the whole conversation again. */
+  const later = await prepareTurn({ ...s, cutoffs: { [RHEA]: { from: "c8", at: new Date(Date.now() - 31 * 60_000).toISOString() } } }, RHEA);
+  assert.equal(later.body.messages.length, 12, "lapsed after half an hour");
+  const old = await prepareTurn({ ...s, cutoffs: { [RHEA]: { from: "c8" } } }, RHEA);
+  assert.equal(old.body.messages.length, 12, "one saved before it was dated lapses at once");
   assert.equal(s.conversations[RHEA].length, 12, "the thread itself is untouched");
 });
 

@@ -76,7 +76,15 @@ export async function prepareTurn(
      everything before it. Everything else -- tics, the story -- still reads
      the whole thread. */
   const cut = s.cutoffs?.[museId];
-  const from = cut?.from ? thread.findIndex((m) => m.id === cut.from) : -1;
+  /* A cutoff is a way past one bad message, not a permanent loss of memory. It
+     used to last for ever, and each later block moved it forward, so a chat the
+     filter kept stopping ended up showing the character only the last message
+     or two -- while the facts it had learned days ago, which are not part of
+     the history, were still there. That is "remembers last week, has no idea
+     what we said five minutes ago". Now it lapses, and the full conversation is
+     tried again. One saved without a time (before this) lapses at once. */
+  const cutLive = !!cut?.at && Date.now() - Date.parse(cut.at) < CUTOFF_MS;
+  const from = cutLive && cut?.from ? thread.findIndex((m) => m.id === cut.from) : -1;
   const visible = from > 0 ? thread.slice(from) : thread;
   const stored: Vibe = s.vibes?.[museId] ?? DEFAULT_VIBE;
   const vibe: Vibe = opts.register ? { ...stored, register: opts.register } : stored;
@@ -386,14 +394,16 @@ async function readReply(
 }
 
 /** The cutoff a trimmed reply implies, for the state. Null when nothing changes. */
+export const CUTOFF_MS = 30 * 60_000;
+
 export function cutoffFrom(
   prepared: PreparedTurn,
   trimmed: { kept: number; photos: boolean },
   now = Date.now()
-): { from?: string; photosAfter?: string } | null {
+): { from?: string; photosAfter?: string; at?: string } | null {
   const first = trimmed.kept < prepared.sent.length ? prepared.sent[prepared.sent.length - trimmed.kept] : undefined;
   const out = {
-    ...(first ? { from: first } : {}),
+    ...(first ? { from: first, at: new Date(now).toISOString() } : {}),
     ...(trimmed.photos ? {} : { photosAfter: new Date(now).toISOString() }),
   };
   return out.from || out.photosAfter ? out : null;

@@ -292,7 +292,7 @@ export interface SoloState {
      the provider refused everything before it (PROHIBITED_CONTENT on an old
      message or photo). `from`: the first message still sent. `photosAfter`:
      photos before this go as words only. The thread itself is untouched. */
-  cutoffs?: Record<string, { from?: string; photosAfter?: string }>;
+  cutoffs?: Record<string, { from?: string; photosAfter?: string; /** When `from` was set; it lapses (see CUTOFF_MS). */ at?: string }>;
   /* What each character and the user have talked about one to one, before
      the stretch a group gets word for word. See refreshDigests. */
   digests?: Record<string, { text: string; upTo: string; at: string }>;

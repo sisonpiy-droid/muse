@@ -248,7 +248,10 @@ export async function POST(req: Request) {
   const keptOf = (k: number) => messages.length - sendIdx[sendIdx.length - k];
   const shorter: { kept: number; photos: boolean; messages: ReturnType<typeof toModel> }[] = [
     ...(hasPhoto ? [{ kept: messages.length, photos: false, messages: toModel(sendable, false) }] : []),
-    ...(sendable.length > 8 ? [{ kept: keptOf(8), photos: false, messages: toModel(sendable.slice(-8), false) }] : []),
+    /* Graded: as much of the conversation as still goes through. Jumping
+       straight to eight messages left the character with no idea what had just
+       been said whenever the filter stopped a long chat. */
+    ...[30, 16, 8].filter((k) => sendable.length > k).map((k) => ({ kept: keptOf(k), photos: false, messages: toModel(sendable.slice(-k), false) })),
     ...(theirTurn && theirTurn < sendable.length ? [{ kept: keptOf(theirTurn), photos: false, messages: toModel(sendable.slice(-theirTurn), false) }] : []),
   ].filter((h) => h.messages[0]?.role === "user");
 
