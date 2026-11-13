@@ -252,7 +252,11 @@ export default function SoloPage() {
     };
     const flush = () => {
       const cur = latestState.current;
-      if (cur && cur !== p.persisted) void p.save(cur);
+      if (!cur || cur === p.persisted) return;
+      /* A phone may freeze the page before the database write lands: this copy
+         is written before the next line runs. */
+      p.backup(cur);
+      void p.save(cur);
     };
     const offOther = onOtherTabWrite(pull);
     const onVisibility = () => (document.visibilityState === "visible" ? pull() : flush());

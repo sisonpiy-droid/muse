@@ -132,6 +132,19 @@ export function mergeStates(base: SoloState, theirs: SoloState, ours: SoloState)
  * there first, the two are merged and the merge is written instead. */
 export type Saved = { result: SaveResult; state: SoloState };
 
+/* A copy written synchronously on the way into the background.
+ *
+ * Saving to IndexedDB is asynchronous, and a phone freezes a tab the instant it
+ * is left -- sometimes before a write that was started a moment earlier lands.
+ * localStorage is the one thing that is written before the next line runs, so
+ * what has not reached the database yet is also put here, with the revision it
+ * was built on. The next time the app opens it is folded back in and the
+ * ordinary save writes it properly. Skipped when it would not fit: it is a
+ * safety net, and the database stays the source of truth. */
+export const PENDING = "muse.solo.pending/1";
+const PENDING_MAX = 2_500_000;
+type Pending = { base: number; raw: string };
+
 export class Persister {
   private backend: Backend = localBackend;
   /** What this tab last read from or wrote to disk: the merge base. */
@@ -140,6 +153,8 @@ export class Persister {
   /** The in-memory object that matches disk, so an unchanged state is never rewritten. */
   persisted: SoloState | null = null;
   private queue: Promise<unknown> = Promise.resolve();
+  /** The state last put in the pending copy, so a save of exactly that clears it. */
+  private backedUp: SoloState | null = null;
 
   constructor(backend?: Backend) {
     if (backend) this.backend = backend;
@@ -167,7 +182,39 @@ export class Persister {
     this.base = s;
     this.rev = s.rev ?? 0;
     this.persisted = s;
-    return s;
+    return s.corrupt ? s : this.recover(s);
+  }
+
+  /** Writes what is not saved yet, synchronously. Call it as the page is hidden. */
+  backup(state: SoloState): void {
+    try {
+      if (state.corrupt || state === this.persisted) return;
+      const raw = serialiseState({ ...state, rev: this.rev + 1 });
+      if (raw.length > PENDING_MAX) return;
+      localStorage.setItem(PENDING, JSON.stringify({ base: this.rev, raw } satisfies Pending));
+      this.backedUp = state;
+    } catch { /* no room, or no storage: the ordinary save is all there is */ }
+  }
+
+  /* A pending copy from a page that was frozen before it could save. Built on
+     the revision now on disk: it is strictly newer, so take it. Built on an
+     older one, another copy saved since: combine, keeping what either has. The
+     result is returned as unsaved, so the ordinary save writes it. */
+  private recover(onDisk: SoloState): SoloState {
+    try {
+      const text = localStorage.getItem(PENDING);
+      if (!text) return onDisk;
+      const p = JSON.parse(text) as Pending;
+      const mine = parseState(p.raw);
+      if (typeof p.base !== "number" || mine.corrupt) { localStorage.removeItem(PENDING); return onDisk; }
+      const merged = p.base >= this.rev ? mine : parseState(combineRaw(p.raw, serialiseState(onDisk), this.rev + 1));
+      /* Cleared once it has been saved properly (write below), not before. */
+      const out = { ...merged, rev: this.rev };
+      this.backedUp = out;
+      return out;
+    } catch {
+      return onDisk;
+    }
   }
 
   /* Write `state`, merging with anything another copy wrote first. Resolves
@@ -195,6 +242,7 @@ export class Persister {
           this.base = next;
           this.rev = rev;
           this.persisted = next;
+          if (next === this.backedUp) { try { localStorage.removeItem(PENDING); } catch { /* merged again next time, harmlessly */ } }
           announce(rev);
           return { result: { ok: true, bytes: raw.length, nearlyFull: await nearlyFull(this.backend, raw.length) }, state: next };
         }
