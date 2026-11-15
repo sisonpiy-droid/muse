@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { jsonResponse, readJson } from "@/lib/http";
+
 import { auth } from "@/lib/auth";
 import { errorResponse, requireUserId } from "@/lib/authorize";
 import { prisma } from "@/lib/db";
@@ -49,8 +51,10 @@ export async function GET(req: Request) {
       where: { userId: me.id },
       select: peek ? { rev: true } : { rev: true, data: true },
     });
-    return Response.json(
+    /* The whole stored copy, compressed: it is the biggest thing this app sends. */
+    return jsonResponse(
       { email: me.email, rev: row?.rev ?? 0, ...(peek ? {} : { data: (row as { data?: string } | null)?.data ?? null }) },
+      req,
       { headers: { "cache-control": "no-store" } }
     );
   } catch (err) {
@@ -62,7 +66,7 @@ export async function PUT(req: Request) {
   const me = await who();
   if (!me) return Response.json({ error: "Not signed in" }, { status: 401 });
   let raw: unknown;
-  try { raw = await req.json(); } catch { return Response.json({ error: "Invalid request." }, { status: 400 }); }
+  try { raw = await readJson(req); } catch { return Response.json({ error: "Invalid request." }, { status: 400 }); }
   const parsed = putSchema.safeParse(raw);
   if (!parsed.success) {
     const tooBig = parsed.error.issues.some((i) => i.code === "too_big");

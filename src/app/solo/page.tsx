@@ -284,7 +284,10 @@ export default function SoloPage() {
      the whole state, so quick pushes burn Vercel transfer), and when
      you come back to it. Signed out, none of this does anything. */
   const [cloud, setCloud] = useState<{ email: string | null; status: CloudStatus; at: number | null }>({ email: null, status: "idle", at: null });
-  const PUSH_DELAY_MS = 60_000;
+  /* Each push is the whole state, and Vercel counts every byte in and out of a
+     function against a monthly allowance: so a push waits for three quiet
+     minutes, and one more goes when the app is left. */
+  const PUSH_DELAY_MS = 180_000;
   const syncing = useRef(false);
   const syncAgain = useRef(false);
   async function syncCloud() {
@@ -322,7 +325,10 @@ export default function SoloPage() {
   }, [state, cloud.email, ready]);
   useEffect(() => {
     if (!cloud.email) return;
-    const onVisible = () => { if (document.visibilityState === "visible") void syncCloud(); };
+    /* On the way out as well as on the way back: the other device picks up what
+       was said here without this one pushing every few seconds. Unchanged, it
+       is one tiny request and no push. */
+    const onVisible = () => void syncCloud();
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
     // eslint-disable-next-line react-hooks/exhaustive-deps

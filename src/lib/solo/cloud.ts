@@ -1,6 +1,7 @@
 "use client";
 
 import { parseState, type SoloState } from "./store";
+import { packJson } from "@/lib/http";
 import { mergeStates } from "./sync";
 
 /* Signed in, the /solo state is also kept on the server so another phone or
@@ -154,11 +155,7 @@ export const browserIo: CloudIo = {
   },
   async push(data, baseRev) {
     try {
-      const res = await fetch("/api/solo/sync", {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ data, baseRev }),
-      });
+      const res = await fetch("/api/solo/sync", { method: "PUT", ...(await packJson({ data, baseRev })) });
       if (res.ok) return { ok: true, rev: (await res.json()).rev };
       if (res.status === 409) return { ok: false, reason: "conflict" };
       if (res.status === 413) return { ok: false, reason: "too-big" };

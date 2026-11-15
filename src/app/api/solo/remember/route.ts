@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { readJson } from "@/lib/http";
+
 import { getProvider } from "@/lib/ai";
 import { resolveWhen } from "@/lib/presence/time";
 
@@ -55,7 +57,7 @@ const bodySchema = z.object({
 export async function POST(req: Request) {
   let raw: unknown;
   try {
-    raw = await req.json();
+    raw = await readJson(req);
   } catch {
     return Response.json({ error: "Invalid request." }, { status: 400 });
   }

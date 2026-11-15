@@ -50,9 +50,14 @@ export async function blobBase64(blob: Blob): Promise<{ mime: string; data: stri
   return { mime: blob.type || "image/jpeg", data: btoa(bin) };
 }
 
-export async function photoBase64(id: string): Promise<{ mime: string; data: string } | null> {
-  const blob = await getImage(id);
+export async function photoBase64(id: string, side?: number): Promise<{ mime: string; data: string } | null> {
+  let blob = await getImage(id);
   if (!blob) return null;
+  /* For the model: no larger than it needs, which is most of the bytes of a reply that carries a photo. */
+  if (side) {
+    const small = await shrink(new File([blob], "photo", { type: blob.type || "image/jpeg" }), side).catch(() => null);
+    if (small && small.blob.size < blob.size) blob = small.blob;
+  }
   const buf = new Uint8Array(await blob.arrayBuffer());
   let bin = "";
   for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode(...buf.subarray(i, i + 0x8000));

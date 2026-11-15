@@ -74,10 +74,13 @@ async function reply(event, req, id) {
   }
 
   /* A request of the worker's own, so the page going away does not cancel it. */
+  const headers = { "content-type": req.headers.get("content-type") || "application/json" };
+  const gz = req.headers.get("x-body-gzip");
+  if (gz) headers["x-body-gzip"] = gz; /* the body may be compressed (lib/http.ts): pass the bytes on as they are */
   const res = await fetch(req.url, {
     method: "POST",
-    headers: { "content-type": "application/json" },
-    body: await req.text(),
+    headers,
+    body: await req.arrayBuffer(),
     credentials: "same-origin",
   });
   if (!res.ok || !res.body) return res;

@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { readJson } from "@/lib/http";
+
 import { streamGuarded, userFacingError } from "@/lib/ai";
 import { looksLikeRefusal } from "@/lib/ai/refusal";
 import { feelingsSchema, personaSchema } from "@/lib/presence/schema";
@@ -174,7 +176,7 @@ const MAX_TOTAL_CHARS = 60_000;
 export async function POST(req: Request) {
   let raw: unknown;
   try {
-    raw = await req.json();
+    raw = await readJson(req);
   } catch {
     return Response.json({ error: "Invalid request." }, { status: 400 });
   }
@@ -209,12 +211,12 @@ export async function POST(req: Request) {
   const cleaned = messages.filter(
     (m) => !(m.role === "assistant" && looksLikeRefusal(m.content))
   );
-  /* Only the most recent few photos are sent as pictures; older ones stay in
+  /* Only the latest photo is sent as a picture; older ones stay in
      the transcript as words. Bounds the request, and an old photo is not what
      anyone is talking about now. */
   let photos = 0;
   for (let i = cleaned.length - 1; i >= 0; i--) {
-    if (cleaned[i].image && ++photos > 3) cleaned[i] = { ...cleaned[i], image: undefined };
+    if (cleaned[i].image && ++photos > 1) cleaned[i] = { ...cleaned[i], image: undefined };
   }
   const hasPhoto = photos > 0 || cleaned.some((m) => m.frames?.length);
   const toModel = (list: typeof messages, withImages = true) => mergeRuns(

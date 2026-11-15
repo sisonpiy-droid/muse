@@ -1,5 +1,6 @@
 "use client";
 
+import { packJson } from "@/lib/http";
 import { DEFAULT_VIBE, REGISTERS, hasFeelings, wornPhrases, type Vibe } from "@/lib/presence/persona";
 import {
   QUOTE_CHARS, callbackForTurn, feelingsOf, findMuse, heardForTurn, isMediaCaption, knownTo, mediaAllowed, memoriesForTurn, plansForTurn,
@@ -230,24 +231,34 @@ export async function prepareTurn(
 
 /* The most recent few photos go with the reply, as pictures; older ones stay
    words. Loaded from IndexedDB only for the messages that need them. */
+/** How many of the latest messages a photo or clip is still sent with. */
+const PHOTO_NEAR = 4;
+/** The longest side of a photo as the model gets it; stored photos are larger. */
+const PHOTO_SIDE = 768;
+
 export async function withPhotos(window: SoloMessage[], after?: string): Promise<{
   m: SoloMessage;
   image?: { mime: string; data: string };
   frames?: { mime: string; data: string }[];
 }[]> {
+  /* A photo goes to the model only while it is being talked about: the latest
+     one, among the last few messages. Re-sent with every reply it cost hundreds
+     of kilobytes a turn for as long as it stayed in the window; after that it
+     is in the thread as words, and her own reply already said what it was. */
+  const near = new Set(window.slice(-PHOTO_NEAR).map((m) => m.id));
   const recent = new Set(window
-    .filter((m) => m.from === "user" && m.image && (!after || m.at > after))
-    .slice(-3).map((m) => m.id));
+    .filter((m) => m.from === "user" && m.image && near.has(m.id) && (!after || m.at > after))
+    .slice(-1).map((m) => m.id));
   /* Videos: only the latest goes as frames. Four pictures each, and an older
      clip is not what anyone is talking about now. */
-  const clip = window.filter((m) => m.from === "user" && m.video?.frames.length && (!after || m.at > after)).at(-1)?.id;
+  const clip = window.filter((m) => m.from === "user" && m.video?.frames.length && near.has(m.id) && (!after || m.at > after)).at(-1)?.id;
   return Promise.all(window.map(async (m) => {
     if (m.id === clip) {
       const frames = await framesBase64(m);
       return frames.length ? { m, frames } : { m };
     }
     if (!recent.has(m.id) || !m.image) return { m };
-    const image = await photoBase64(m.image.id).catch(() => null);
+    const image = await photoBase64(m.image.id, PHOTO_SIDE).catch(() => null);
     return image ? { m, image } : { m };
   }));
 }
@@ -346,12 +357,8 @@ async function readReply(
   alive: () => void,
   replyId?: string
 ): Promise<ReplyOutcome> {
-  const res = await fetch("/api/solo/chat", {
-    method: "POST",
-    signal,
-    headers: { "content-type": "application/json", ...(replyId ? { "x-reply-id": replyId } : {}) },
-    body: JSON.stringify(body),
-  });
+  const packed = await packJson(body, replyId ? { "x-reply-id": replyId } : {});
+  const res = await fetch("/api/solo/chat", { method: "POST", signal, ...packed });
   alive();
   if (!res.ok || !res.body) {
     const data = await res.json().catch(() => ({}));

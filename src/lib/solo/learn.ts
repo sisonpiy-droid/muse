@@ -1,5 +1,6 @@
 "use client";
 
+import { packJson } from "@/lib/http";
 import { addMemories, attachEmbeddings, findMuse, type SoloMessage, type SoloState } from "./store";
 
 /* Turning conversation into memory, for one-to-one chats and circles alike.
@@ -65,8 +66,7 @@ export async function learnFrom(opts: {
   try {
     const r = await fetch("/api/solo/remember", {
       method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+      ...(await packJson({
         messages: window.map((m) => ({
           role: m.from === "user" ? "user" : "assistant",
           content: m.from === "muse" && nameOf ? `${nameOf(m)}: ${m.content}` : m.content,
@@ -74,7 +74,7 @@ export async function learnFrom(opts: {
         })),
         known,
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-      }),
+      })),
     });
     const { memories: found } = await r.json();
     if (!Array.isArray(found) || !found.length) return;
@@ -128,11 +128,10 @@ export async function refreshDigests(state: SoloState, museIds: string[], update
     try {
       const res = await fetch("/api/solo/digest", {
         method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
+        ...(await packJson({
           name, you: state.userName ?? "them", previous: had?.text ?? "",
           messages: fresh.slice(-150).map((m) => ({ from: m.from, content: m.content.slice(0, 600), at: m.at })),
-        }),
+        })),
       });
       const { digest } = await res.json();
       if (typeof digest !== "string" || !digest.trim()) return;

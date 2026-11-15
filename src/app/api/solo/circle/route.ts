@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { readJson } from "@/lib/http";
+
 import { streamGuarded, userFacingError } from "@/lib/ai";
 import { banterNote } from "@/lib/solo/banter";
 import { circleBlock, circleHistory, coveredBlock, coveredGround, oneToOneBlock, personaSystem, togetherBlock } from "@/lib/presence/persona";
@@ -101,7 +103,7 @@ const MAX_TOTAL_CHARS = 60_000;
 export async function POST(req: Request) {
   let raw: unknown;
   try {
-    raw = await req.json();
+    raw = await readJson(req);
   } catch {
     return Response.json({ error: "Invalid request." }, { status: 400 });
   }

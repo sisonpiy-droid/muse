@@ -17,6 +17,7 @@ import { deleteImages } from "@/lib/solo/backend";
 import { PHOTO_ONLY } from "@/lib/solo/photos";
 import { videoNote, withPhotos } from "@/lib/solo/turn";
 import { backgroundedSince, useReplyLoop } from "@/components/useReplyLoop";
+import { packJson } from "@/lib/http";
 import { REGISTERS, hasFeelings, splitBurst, storyPitches } from "@/lib/presence/persona";
 import type { Update } from "@/app/solo/page";
 import {
@@ -120,8 +121,7 @@ export function CircleChat({
         const res = await fetch("/api/solo/circle", {
           method: "POST",
           signal,
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
+          ...(await packJson({
             circleName: room.name,
             speaker: { id: m.id, persona },
             /* Capped to what the route accepts. Circles built before the
@@ -179,7 +179,7 @@ export function CircleChat({
                person can be having a bad month while everyone else is fine,
                which is most group chats. */
             feelings: hasFeelings(feelingsOf(s, m.id)) ? feelingsOf(s, m.id) : null,
-          }),
+          })),
         });
 
         if (!res.ok || !res.body) {

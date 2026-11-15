@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { readJson } from "@/lib/http";
+
 import { getProvider } from "@/lib/ai";
 
 /* What a character and the user have talked about over time, in a few lines.
@@ -27,7 +29,7 @@ const bodySchema = z.object({
 
 export async function POST(req: Request) {
   let raw: unknown;
-  try { raw = await req.json(); } catch { return Response.json({ error: "Invalid request." }, { status: 400 }); }
+  try { raw = await readJson(req); } catch { return Response.json({ error: "Invalid request." }, { status: 400 }); }
   const parsed = bodySchema.safeParse(raw);
   if (!parsed.success) return Response.json({ error: "Invalid request." }, { status: 400 });
   const { name, you, previous, messages } = parsed.data;

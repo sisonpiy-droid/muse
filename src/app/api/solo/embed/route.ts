@@ -58,7 +58,8 @@ export async function POST(req: Request) {
     const vectors = await Promise.all(
       parsed.data.texts.map((t) => provider.generateEmbedding(t, DIMS))
     );
-    return Response.json({ vectors });
+    /* Four decimals is plenty for comparing meaning, and roughly a third of the bytes. */
+    return Response.json({ vectors: vectors.map((v) => v?.map((x) => Math.round(x * 1e4) / 1e4) ?? null) });
   } catch (err) {
     /* Same reasoning: a failed embedding costs recall quality on one turn, and
        failing the caller would cost them the conversation. */
