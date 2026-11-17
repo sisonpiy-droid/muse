@@ -31,11 +31,11 @@ import { useFollow } from "@/components/useFollow";
 import { backgroundedSince, useReplyLoop } from "@/components/useReplyLoop";
 import {
   DEFAULT_VIBE, PICKABLE_REGISTERS, REGISTERS, TOPICS, feelingsSummary, HEATS, HEAT_LABEL, asHeat, hasFeelings, heatBelow, moodsFor, romanceAllowed, splitBurst, storyPitches,
-  vibeSummary, type Vibe,
+  vibeSummary, type PersonaDraft, type Vibe,
 } from "@/lib/presence/persona";
 import { safeFilename, transcriptMarkdown } from "@/lib/export";
 import {
-  allMuses, attachEmbeddings, circleOf, deleteConversation,
+  allMuses, attachEmbeddings, circleOf, deleteConversation, forYou, hidePerson, peopleOf,
   deleteFrom, deleteMemory, deleteMessage, deleteMuse, download, editMemory, editMessage,
   editMuse, feelingsOf, findMuse, forgetAll, insertAfter, isEdited, isMediaCaption,
   memoriesOf, needsEmbedding, newMessage, paced, quoteOf, react, readMedia, readReaction,
@@ -57,7 +57,7 @@ import { canListen } from "@/lib/voice/listener";
 import { registerWorker, settingsOf } from "@/lib/proactive/client";
 import { speaker } from "@/lib/voice/speaker";
 
-import { AppNav, Chats, Create, Discover, Home, Profile, YourData, markSeen, type Nav, type Place } from "./screens";
+import { AppNav, Chats, Create, Discover, Home, PersonProfile, Profile, YourData, markSeen, type Nav, type Place } from "./screens";
 
 /* Solo MUSE — the whole product with no database and no account.
  *
@@ -86,6 +86,8 @@ type View =
   | { kind: "chats" }
   | { kind: "create" }
   | { kind: "profile"; museId: string }
+  /* Someone the user has talked about: a profile built from what they said. */
+  | { kind: "person"; key: string }
   | { kind: "chat"; museId: string }
   /* A live call. Never restored by a reload or by forward: a call needs the
      tap that unlocks audio and the mic, so arriving here any other way lands
@@ -98,7 +100,7 @@ type View =
   | { kind: "scrapbook"; museId: string }
   | { kind: "account" }
   /* `tab` is where the new person goes when they were made from inside one. */
-  | { kind: "import"; tab?: string }
+  | { kind: "import"; tab?: string; prefill?: Partial<PersonaDraft> }
   | { kind: "invent"; tab?: string }
   | { kind: "figure"; tab?: string }
   | { kind: "circle"; circleId: string }
@@ -422,6 +424,14 @@ export default function SoloPage() {
     onInvent: (tab) => go({ kind: "invent", tab }),
     onFigure: (tab) => go({ kind: "figure", tab }),
     onNewCircle: () => go({ kind: "new-circle" }),
+    onPerson: (key) => go({ kind: "person", key }),
+    onTalkTo: (p) => go({
+      kind: "import",
+      prefill: {
+        them: p.name, you: state.userName ?? "", relationship: forYou(p.relation, state.userName), mode: "living",
+        extra: [...p.facts.map((f) => forYou(f.content, state.userName)), ...p.guesses.map((g) => `(a guess) ${forYou(g.content, state.userName)}`)].join("\n").slice(0, 3000),
+      },
+    }),
     cloudEmail: cloud.email,
   };
 
@@ -431,7 +441,7 @@ export default function SoloPage() {
      view is showing: running out of room mid-conversation is exactly when it
      matters. A call takes the whole screen. */
   const PLACE: Partial<Record<View["kind"], Place>> = {
-    home: "home", discover: "discover", profile: "discover", chats: "chats", chat: "chats", circle: "chats", create: "create", account: "you",
+    home: "home", discover: "discover", profile: "discover", person: "home", chats: "chats", chat: "chats", circle: "chats", create: "create", account: "you",
   };
   const shell = (node: React.ReactNode, chrome: "full" | "side" | "none" = "side") => {
     const withNav = chrome !== "none" && !!state.userName;
@@ -473,9 +483,26 @@ export default function SoloPage() {
     );
   }
 
+  if (view.kind === "person") {
+    const person = peopleOf(state).find((p) => p.key === view.key);
+    if (!person) { setView({ kind: "home" }); return null; }
+    return shell(
+      <PersonProfile
+        person={person}
+        state={state}
+        nav={nav}
+        onBack={back}
+        onHide={() => { update((cur) => hidePerson(cur, person.key)); back(); }}
+        onForget={(id) => update((cur) => deleteMemory(cur, id))}
+      />,
+      "full"
+    );
+  }
+
   if (view.kind === "import" || view.kind === "invent") {
     return shell(
       <ImportPersona
+        prefill={view.kind === "import" ? view.prefill : undefined}
         /* Same wizard either way. Inventing someone just skips the question it
            already knows the answer to. */
         startMode={view.kind === "invent" ? "character" : undefined}

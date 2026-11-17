@@ -41,6 +41,9 @@ export interface SoloMemory {
      the character's wherever it was learned -- what they were told privately
      goes into a group with them, marked private so it is not repeated there. */
   circleId?: string;
+  /* Set when this is about one particular other person the user named. The
+     profile of that person is these, gathered (peopleOf). */
+  person?: { name: string; relation: string };
 }
 
 export interface SoloMessage {
@@ -858,6 +861,8 @@ export function addMemories(
     replaces?: number[];
     /** The moment a plan or event is for, already resolved to ISO by the route. */
     when?: string | null;
+    /** The other person this is about, when it is about one. */
+    person?: { name: string; relation: string } | null;
   }[],
   /* The list the indexes point into -- exactly what was sent for extraction, in
      the same order. Without it a `replaces` index means nothing. */
@@ -893,6 +898,7 @@ export function addMemories(
     createdAt: new Date().toISOString(),
     ...(typeof m.when === "string" && Number.isFinite(Date.parse(m.when)) ? { at: new Date(m.when).toISOString() } : {}),
     ...(where.circleId ? { circleId: where.circleId } : {}),
+    ...(m.person?.name ? { person: { name: m.person.name.slice(0, 60), relation: (m.person.relation ?? "").slice(0, 80) } } : {}),
   }));
 
   /* Things that have stopped being true.
@@ -1028,6 +1034,70 @@ export function deleteMemory(state: SoloState, memoryId: string): SoloState {
 }
 
 /** Everything one character knows, newest first. */
+/* The people the user has talked about, each with what they said.
+ *
+ * Not stored anywhere of its own: it is the memories that name someone, grouped
+ * by that name, so a profile can never disagree with what the characters
+ * remember -- forget a memory and it leaves the profile, and a character is
+ * never listed as a person. A profile is only ever what the user said about
+ * them; nothing is added. */
+export type Mentioned = {
+  key: string;
+  name: string;
+  relation: string;
+  /** What the user said. */
+  facts: { id: string; content: string; at: string; heardBy: string }[];
+  /** What the app read between the lines. Guesses, and shown as such. */
+  guesses: { id: string; content: string; at: string }[];
+  heardBy: string[];
+  last: string;
+};
+
+const nameKey = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
+
+export function peopleOf(state: SoloState): Mentioned[] {
+  const skip = new Set(
+    [state.userName ?? "", ...allMuses(state).flatMap((m) => [m.name, m.name.split(/\s+/)[0]])].map(nameKey).filter(Boolean)
+  );
+  const by = new Map<string, Mentioned>();
+  for (const m of [...state.memories].sort((a, b) => a.createdAt.localeCompare(b.createdAt))) {
+    const p = m.person;
+    if (!p?.name) continue;
+    const key = nameKey(p.name);
+    if (!key || skip.has(key) || skip.has(key.split(" ")[0])) continue;
+    const who = findMuse(state, m.museId)?.name ?? (state.circles ?? []).find((c) => c.id === m.museId)?.name ?? "";
+    const entry = by.get(key) ?? { key, name: p.name, relation: "", facts: [], guesses: [], heardBy: [], last: m.createdAt };
+    if (p.relation) entry.relation = p.relation;
+    const list = m.type === "INFERENCE" ? entry.guesses : entry.facts;
+    if (!list.some((f) => nameKey(f.content) === nameKey(m.content))) {
+      if (m.type === "INFERENCE") entry.guesses.push({ id: m.id, content: m.content, at: m.createdAt });
+      else entry.facts.push({ id: m.id, content: m.content, at: m.createdAt, heardBy: who });
+    }
+    if (who && !entry.heardBy.includes(who)) entry.heardBy.push(who);
+    entry.last = m.createdAt;
+    by.set(key, entry);
+  }
+  return [...by.values()].sort((a, b) => b.last.localeCompare(a.last));
+}
+
+/** A memory is written about "User"; this puts the user's own name there. */
+export const forYou = (text: string, name: string | null): string =>
+  text.replace(/\bUser('s)?\b/g, (_m, s) => `${name ?? "They"}${s ?? ""}`);
+
+/** Takes someone's profile away. What the characters remember stays: only the grouping goes. */
+export function hidePerson(state: SoloState, key: string): SoloState {
+  const k = nameKey(key);
+  return {
+    ...state,
+    memories: state.memories.map((m) => {
+      if (!m.person || nameKey(m.person.name) !== k) return m;
+      const { person: _gone, ...rest } = m;
+      void _gone;
+      return rest;
+    }),
+  };
+}
+
 export function memoriesOf(state: SoloState, museId: string): SoloMemory[] {
   return state.memories
     .filter((m) => m.museId === museId)

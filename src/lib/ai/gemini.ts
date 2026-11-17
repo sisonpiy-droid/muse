@@ -457,7 +457,7 @@ export async function extractMemoriesVia(
 ${timing}${known}
 
 Return ONLY a JSON array. No prose, no code fence. Each item:
-{"content": string, "type": "PERMANENT"|"PREFERENCE"|"GOAL"|"RELATIONSHIP"|"EVENT"|"SHARED"|"PROMISE"|"DONE", "importance": 1-5, "confidence": 0-1, "replaces": number[], "when": string|null }
+{"content": string, "type": "PERMANENT"|"PREFERENCE"|"GOAL"|"RELATIONSHIP"|"EVENT"|"SHARED"|"PROMISE"|"DONE"|"INFERENCE", "importance": 1-5, "confidence": 0-1, "replaces": number[], "when": string|null, "person": {"name": string, "relation": string}|null }
 
 Plans, appointments and dated events -- a meeting, an exam, a trip, a deadline,
 something that happened on a particular day -- are EVENTs. A plan to do
@@ -497,6 +497,26 @@ says they quit the engineering job, the new memory replaces the one saying they
 work as an engineer. Only list something the new fact actually contradicts: a
 detail that merely adds to one ("their sister is called Priya" beside "their
 sister is getting married") replaces nothing.
+
+"person" is for a memory that is about one particular other person the user names --
+a friend, someone they like or are seeing, a relative, a colleague. Set it to
+{"name": <the name as the user says it>, "relation": <what they are to the user, a
+few words: "a girl User likes", "User's sister", "User's manager">}, and put the
+name in the sentence: "Riya, a girl User likes, went on a date with User on
+Saturday." Otherwise null. Only for a real, named individual: not a group, not an
+unnamed "my friend", not a celebrity, not the Muse. Record what the user said
+about them, briefly and factually, as the user said it -- never a guess about
+what they think or feel, and nothing the user did not say.
+
+INFERENCE is a guess about that other person, drawn from what the user told you
+about them, the way a friend would read between the lines: the user said they
+went to a book store after the date, so "Probably, Riya likes books." Use it
+only when a person is named, set "person" as above, start the sentence with
+"Probably" or "Seems", set confidence at or below 0.6, and write at most two per
+conversation, only where what the user said really does point to it. Never guess
+about health, sexuality, religion, politics, money, ethnicity or family
+troubles; never guess what they feel about the user; never repeat something the
+user stated outright, which is an ordinary memory instead.
 
 Record something only if it is durable, useful later, and about the user. A fact
 stated once in passing still counts; small talk does not. Focus on the turns
@@ -551,6 +571,17 @@ description. A memory is a note, not a transcript.`;
   return parsed;
 }
 
+/* The other person a memory is about, if it names one. Anything that is not a
+   plain name is dropped: a wrong profile is worse than none. */
+function asPerson(v: unknown): { name: string; relation: string } | null {
+  if (!v || typeof v !== "object") return null;
+  const name = String((v as { name?: unknown }).name ?? "").trim().replace(/\s+/g, " ");
+  const relation = String((v as { relation?: unknown }).relation ?? "").trim().slice(0, 80);
+  if (name.length < 2 || name.length > 60 || !/\p{L}/u.test(name)) return null;
+  if (/^(user|muse|the muse|the character|they|them|someone|friend|my friend)$/i.test(name)) return null;
+  return { name, relation };
+}
+
 /** Models wrap JSON in fences or prose often enough that this must be tolerant. */
 export function parseMemories(raw: string): ExtractedMemory[] {
   let s = raw.trim();
@@ -568,7 +599,7 @@ export function parseMemories(raw: string): ExtractedMemory[] {
   }
   if (!Array.isArray(parsed)) return [];
 
-  const types = new Set(["PERMANENT", "PREFERENCE", "GOAL", "RELATIONSHIP", "EVENT", "SHARED", "PROMISE", "DONE"]);
+  const types = new Set(["PERMANENT", "PREFERENCE", "GOAL", "RELATIONSHIP", "EVENT", "SHARED", "PROMISE", "DONE", "INFERENCE"]);
   const clamp = (n: unknown, lo: number, hi: number, dflt: number) => {
     const v = Number(n);
     return Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : dflt;
@@ -592,6 +623,15 @@ export function parseMemories(raw: string): ExtractedMemory[] {
         : [],
       /* Raw here; the route resolves it against the user's timezone. */
       when: typeof m.when === "string" && m.when.trim() ? m.when.trim() : null,
+      person: asPerson(m.person),
     }))
-    .filter((m) => m.content.length > 0 && m.content.length <= 500);
+    .filter((m) => m.content.length > 0 && m.content.length <= 500)
+    /* A guess is only ever about a named person, only ever worded as one, and
+       never held as more than a guess. */
+    .filter((m) => m.type !== "INFERENCE" || m.person)
+    .map((m) => (m.type !== "INFERENCE" ? m : {
+      ...m,
+      confidence: Math.min(m.confidence, 0.6),
+      content: /^(probably|seems|likely)\b/i.test(m.content) ? m.content : `Probably: ${m.content}`,
+    }));
 }

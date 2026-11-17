@@ -117,16 +117,25 @@ export function ImportPersona({
      "Someone I made up", which is an odd place to look for it and meant the
      wizard opened by asking for a file that does not exist. */
   startMode,
+  prefill,
 }: {
   onCreate: (draft: PersonaDraft) => void;
   onCancel: () => void;
   startMode?: string;
+  /* Someone the user already told the app about: their name, what they are to
+     the user and what was said. Consent is still asked, as for anyone living. */
+  prefill?: Partial<PersonaDraft>;
 }) {
   const [step, setStep] = useState<Step>(0);
-  const [draft, setDraft] = useState<PersonaDraft>(() => loadDraft() ?? {
-    them: "", you: "", relationship: "", callsYou: "",
-    arch: "other", texture: "close", mode: startMode ?? "", consent: null,
-    samples: "", extra: "", metrics: "", prompts: {},
+  const [draft, setDraft] = useState<PersonaDraft>(() => {
+    const blank: PersonaDraft = {
+      them: "", you: "", relationship: "", callsYou: "",
+      arch: "other", texture: "close", mode: startMode ?? "", consent: null,
+      samples: "", extra: "", metrics: "", prompts: {},
+    };
+    /* Someone being set up from what the user said starts from that, not from a
+       half-finished draft of somebody else. */
+    return prefill ? { ...blank, ...prefill, consent: null } : loadDraft() ?? blank;
   });
   const [parsed, setParsed] = useState<ParsedChat | null>(null);
   const [picked, setPicked] = useState<string | null>(null);

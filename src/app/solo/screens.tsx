@@ -12,8 +12,8 @@ import { settingsOf } from "@/lib/proactive/client";
 import { bondOf } from "@/lib/solo/life";
 import { photoUrl } from "@/lib/solo/photos";
 import {
-  allMuses, deleteCircle, download, findMuse, inTab, membersOf, memoriesOf, parseBackup, tabOf,
-  type SoloCircle, type SoloMessage, type SoloMuse, type SoloState,
+  allMuses, deleteCircle, download, findMuse, forYou, inTab, membersOf, memoriesOf, parseBackup, peopleOf, tabOf,
+  type Mentioned, type SoloCircle, type SoloMessage, type SoloMuse, type SoloState,
 } from "@/lib/solo/store";
 
 import type { Update } from "./page";
@@ -48,6 +48,10 @@ export type Nav = {
   onFigure: (tab?: string) => void;
   onOpenCircle: (id: string) => void;
   onNewCircle: () => void;
+  /** A person the user has talked about. */
+  onPerson: (key: string) => void;
+  /** Set up someone to talk to from what the user said about them. */
+  onTalkTo: (p: Mentioned) => void;
   /** Set when this device is signed in and syncing. */
   cloudEmail: string | null;
 };
@@ -287,6 +291,7 @@ export function Home({ state, nav, onName }: { state: SoloState; nav: Nav; onNam
   const more = toMeet.slice(1, 5);
   const made = inTab(state, MADE_TAB);
   const circles = state.circles ?? [];
+  const mentioned = peopleOf(state);
   const h = hourNow();
   const hello = h < 5 ? "Still up" : h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening";
 
@@ -383,6 +388,23 @@ export function Home({ state, nav, onName }: { state: SoloState; nav: Nav; onNam
           ))}
         </div>
       </section>
+
+      {mentioned.length > 0 && (
+        <section aria-labelledby="h-people">
+          <h2 id="h-people" className="section-title">People you&apos;ve told them about</h2>
+          <p className="fine" style={{ margin: "-0.4rem 0 0.8rem" }}>Profiles the app keeps from what you said. They are notes, not chatbots.</p>
+          <div className="rail">
+            {mentioned.map((p) => (
+              <button key={p.key} className="resume" onClick={() => nav.onPerson(p.key)}>
+                <span className="resume-top"><Avatar name={p.name} /></span>
+                <b>{p.name}</b>
+                <span className="resume-preview">{forYou(p.relation, state.userName) || "Someone you mentioned"}</span>
+                <span className="fine">{plural(p.facts.length, "thing", "things")}</span>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
 
       <section aria-labelledby="h-made">
         <div className="section-head">
@@ -698,6 +720,72 @@ export function Create({ state, nav }: { state: SoloState; nav: Nav }) {
           </ul>
         </section>
       )}
+    </main>
+  );
+}
+
+/* ------------------------------------------------------ a person you mentioned */
+
+/* What the user has said about someone, gathered from their chats. The app
+   added nothing to it and the person was not asked, so it is a set of notes;
+   it becomes someone to talk to only through the same setup as anyone living,
+   which asks whether they have agreed. */
+export function PersonProfile({ person, state, nav, onBack, onHide, onForget }: {
+  person: Mentioned; state: SoloState; nav: Nav; onBack: () => void; onHide: () => void;
+  /** Drop one note, a wrong guess say. */
+  onForget: (memoryId: string) => void;
+}) {
+  const first = person.name.split(" ")[0];
+  const me = state.userName ?? "you";
+  const said = (t: string) => forYou(t, state.userName);
+  return (
+    <main className="shell profile">
+      <header className="row" style={{ justifyContent: "space-between" }}>
+        <button className="link-btn back-btn" onClick={onBack}>← Back</button>
+      </header>
+      <div className="person-head">
+        <Avatar name={person.name} large />
+        <div>
+          <span className="pcard-tag">Someone in your life</span>
+          <h1 className="display" style={{ margin: "0.3rem 0 0.1rem", fontSize: "clamp(2rem, 7vw, 2.8rem)" }}>{person.name}</h1>
+          <p className="profile-rel">{said(person.relation) || "Someone you mentioned"}</p>
+        </div>
+      </div>
+
+      <h2 className="section-title">What you&apos;ve said about {first}</h2>
+      <ul className="said">
+        {[...person.facts].reverse().map((f) => (
+          <li key={f.id}>
+            <p>{said(f.content)}</p>
+            <span>{ago(Date.parse(f.at))}{f.heardBy ? ` · told ${f.heardBy}` : ""}</span>
+          </li>
+        ))}
+      </ul>
+
+      {person.guesses.length > 0 && (
+        <>
+          <h2 className="section-title">Reading between the lines</h2>
+          <p className="fine" style={{ margin: "-0.4rem 0 0.7rem" }}>Guesses from what you said, not things {person.name} told anyone. Remove any that are wrong.</p>
+          <ul className="said guess">
+            {person.guesses.map((g) => (
+              <li key={g.id}>
+                <p>{said(g.content)}</p>
+                <button className="link-btn" onClick={() => onForget(g.id)}>Not right</button>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+
+      <div className="person-actions">
+        <button className="btn" onClick={() => nav.onTalkTo(person)}>Set up {first} to talk to</button>
+        <button className="btn-ghost" onClick={onHide}>Remove this profile</button>
+      </div>
+      <p className="fine" style={{ marginTop: "1rem", maxWidth: "36rem" }}>
+        The notes are what {me} said, kept on this device; the guesses are the app&apos;s. {person.name} hasn&apos;t been asked and isn&apos;t a chatbot. Setting {first} up to
+        talk to goes through the same step as anyone real, which asks whether they have agreed. Removing the profile keeps what the
+        characters remember.
+      </p>
     </main>
   );
 }

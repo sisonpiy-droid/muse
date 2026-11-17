@@ -71,9 +71,15 @@ export interface ExtractedMemory {
      RELATIONSHIP. */
   /* PROMISE is something the Muse owes them ("I'll tell you later"); DONE
      closes one, through `replaces`, and is never stored itself. */
-  type: "PERMANENT" | "PREFERENCE" | "GOAL" | "RELATIONSHIP" | "EVENT" | "SHARED" | "PROMISE" | "DONE";
+  /* INFERENCE is a reasonable guess about another person from what the user said
+     about them -- always about a named person, always worded as a guess. */
+  type: "PERMANENT" | "PREFERENCE" | "GOAL" | "RELATIONSHIP" | "EVENT" | "SHARED" | "PROMISE" | "DONE" | "INFERENCE";
   importance: number; // 1-5
   confidence: number; // 0-1
+  /* Set when the memory is about one particular other person the user named --
+     a friend, someone they like, a relative -- so the app can keep a profile of
+     them built from what the user said (lib/solo/store.ts peopleOf). */
+  person?: { name: string; relation: string } | null;
   /* Indexes into the `known` list this fact makes untrue.
      
      People change jobs and leave cities, and without this the old fact simply

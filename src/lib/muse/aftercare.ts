@@ -101,10 +101,11 @@ export async function extractAndStoreMemories(opts: {
     const fresh = extracted.filter((m) => !known.has(m.content.trim().toLowerCase()));
     if (!fresh.length) return 0;
 
-    /* Solo-only kinds -- a promise the Muse made, and one kept -- have no
-       place in the database, which records facts about the user. */
-    type Stored = Exclude<(typeof fresh)[number]["type"], "PROMISE" | "DONE">;
-    const keep = fresh.filter((m): m is (typeof fresh)[number] & { type: Stored } => m.type !== "PROMISE" && m.type !== "DONE");
+    /* Solo-only kinds -- a promise the Muse made, one kept, and a guess about
+       someone the user mentioned -- have no place in the database, which records
+       facts about the user. */
+    type Stored = Exclude<(typeof fresh)[number]["type"], "PROMISE" | "DONE" | "INFERENCE">;
+    const keep = fresh.filter((m): m is (typeof fresh)[number] & { type: Stored } => m.type !== "PROMISE" && m.type !== "DONE" && m.type !== "INFERENCE");
     if (!keep.length) return 0;
 
     const embedder = getEmbeddingProvider();
