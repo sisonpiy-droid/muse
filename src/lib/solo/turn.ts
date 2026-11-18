@@ -163,7 +163,7 @@ export async function prepareTurn(
     }),
     /* Present only for someone with a full profile. When it is, the
        server ignores the simple shape above and uses Presence's prompt. */
-    persona: promptPersona(person, s.userName),
+    persona: promptPersona(person, s.userName, s.self?.look),
     /* Everyone they share a circle with. Capped: someone in circles with nine
        or more other people exceeded the route's limit and could no longer hold
        a one-to-one conversation at all. */

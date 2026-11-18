@@ -83,7 +83,7 @@ const advancing = new Set<string>();
 export async function advanceLife(s: SoloState, museId: string, update: Update): Promise<void> {
   if (!lifeDue(s, museId) || advancing.has(museId)) return;
   const muse = findMuse(s, museId);
-  const persona = muse ? promptPersona(muse, s.userName) : null;
+  const persona = muse ? promptPersona(muse, s.userName, s.self?.look) : null;
   if (!muse || !persona) return;
   advancing.add(museId);
   try {

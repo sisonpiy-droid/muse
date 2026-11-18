@@ -97,6 +97,8 @@ type View =
   | { kind: "memories"; museId: string }
   | { kind: "story"; museId: string }
   | { kind: "look"; museId: string; scene?: boolean }
+  /* Photos of the user themselves. */
+  | { kind: "look-you" }
   | { kind: "scrapbook"; museId: string }
   | { kind: "account" }
   /* `tab` is where the new person goes when they were made from inside one. */
@@ -441,7 +443,7 @@ export default function SoloPage() {
      view is showing: running out of room mid-conversation is exactly when it
      matters. A call takes the whole screen. */
   const PLACE: Partial<Record<View["kind"], Place>> = {
-    home: "home", discover: "discover", profile: "discover", person: "home", chats: "chats", chat: "chats", circle: "chats", create: "create", account: "you",
+    home: "home", discover: "discover", profile: "discover", person: "home", "look-you": "you", chats: "chats", chat: "chats", circle: "chats", create: "create", account: "you",
   };
   const shell = (node: React.ReactNode, chrome: "full" | "side" | "none" = "side") => {
     const withNav = chrome !== "none" && !!state.userName;
@@ -664,7 +666,7 @@ export default function SoloPage() {
         onPlace={(place) => update((cur) => ({ ...cur, place: place ?? undefined }))}
         onBack={() => back()}
       >
-        {state.userName && <YourData state={state} update={update} cloudEmail={cloud.email} />}
+        {state.userName && <YourData state={state} update={update} cloudEmail={cloud.email} onYourLook={() => go({ kind: "look-you" })} />}
       </Account>,
       "full"
     );
@@ -684,12 +686,25 @@ export default function SoloPage() {
         key={`${muse.id}-${view.scene ? "scene" : "them"}`}
         muse={muse}
         scene={view.scene}
-        onSave={(text) => update((cur) => ({
-          ...cur,
-          muses: cur.muses.map((m) => (m.id === muse.id && m.persona ? { ...m, persona: { ...m.persona, [view.scene ? "scene" : "look"]: text ?? undefined } } : m)),
-        }))}
+        /* Through editMuse, so it works for the starters too: theirs is kept as an overlay. */
+        onSave={(text) => update((cur) => editMuse(cur, muse.id, view.scene ? { scene: text } : { look: text }))}
         onBack={() => back()}
       />
+    );
+  }
+
+  /* Photos of the user themselves, read by every character. */
+  if (view.kind === "look-you") {
+    const me = { id: "you", name: state.userName ?? "You", description: "", relationshipType: "", category: "", traits: [], builtin: false, persona: { them: state.userName ?? "You", you: "", relationship: "", arch: "other", texture: "close", mode: "character", look: state.self?.look } } as unknown as SoloMuse;
+    return shell(
+      <Look
+        key="you"
+        muse={me}
+        self
+        onSave={(text) => update((cur) => ({ ...cur, self: { ...(cur.self ?? {}), look: text ?? undefined } }))}
+        onBack={() => back()}
+      />,
+      "full"
     );
   }
 
@@ -1372,10 +1387,14 @@ function SoloChat({
             }] : []),
             { label: `What ${muse.name} remembers`, onSelect: onMemories },
             { label: `Scrapbook with ${muse.name}`, onSelect: onScrapbook },
-            /* Someone in public life, or someone made up: photos to take a look and vibe from. */
-            ...(!muse.builtin && muse.persona
+            /* Photos to take a look and a vibe from. Of them, only for someone real or
+               made by you; of the two of you, or anything that sets the mood, for
+               everyone -- the starters included. */
+            ...(muse.persona
               ? [
-                  { label: muse.persona.look ? `Photos of ${muse.name} (added)` : `Add photos of ${muse.name}`, onSelect: onLook },
+                  ...(!muse.builtin
+                    ? [{ label: muse.persona.look ? `Photos of ${muse.name} (added)` : `Add photos of ${muse.name}`, onSelect: onLook }]
+                    : []),
                   { label: muse.persona.scene ? `Photos of us and the mood (added)` : `Add photos of us, or the mood`, onSelect: onScene },
                 ]
               : []),

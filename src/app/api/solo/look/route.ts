@@ -20,7 +20,8 @@ export const maxDuration = 60;
 const bodySchema = z.object({
   name: z.string().trim().min(1).max(60),
   /** "them": how they look. "scene": photos of the two of them, or anything else, for the mood. */
-  kind: z.enum(["them", "scene"]).default("them"),
+  /* "you": the user themselves, who chose to share these. */
+  kind: z.enum(["them", "scene", "you"]).default("them"),
   mode: z.string().max(30).optional(),
   photos: z.array(z.object({ mime: z.enum(["image/jpeg", "image/png", "image/webp"]), data: z.string().max(450_000) })).min(1).max(5),
 });
@@ -42,7 +43,7 @@ Never describe or guess race, ethnicity, religion, health, disability, sexuality
 
 Return ONLY JSON, no prose, no code fence: {"tooYoung": boolean, "vibe": string}` : `You read photos to give a character a look and a vibe.
 
-These photos were given as pictures of ${name}${mode === "figure" ? ", someone in public life" : mode === "character" ? ", a character the user made up" : ", someone the user knows"}. Take that as given. Describe only what you can see. Never say who anyone is, never guess an identity, and do not mention that a face looks like anyone.
+These photos were given as pictures of ${name}${kind === "you" ? ", the person who is chatting with the character and chose to share them of themselves" : mode === "figure" ? ", someone in public life" : mode === "character" ? ", a character the user made up" : ", someone the user knows"}. Take that as given. Describe only what you can see. Never say who anyone is, never guess an identity, and do not mention that a face looks like anyone.
 
 Write, from all of the photos together:
 - "look": how they look, in plain concrete words -- hair, build, features, usual clothes and style, expression, how they carry themselves. What is visible, not guessed. Under 450 characters.
@@ -55,7 +56,7 @@ Return ONLY JSON, no prose, no code fence: {"tooYoung": boolean, "look": string,
   try {
     const { text } = await getProvider().generateResponse({
       system,
-      messages: [{ role: "user", content: kind === "scene" ? `Here are the photos for the chat with ${name}.` : `Here are the photos of ${name}.`, images: photos }],
+      messages: [{ role: "user", content: kind === "scene" ? `Here are the photos for the chat with ${name}.` : kind === "you" ? `Here are the photos of ${name}, shared by them.` : `Here are the photos of ${name}.`, images: photos }],
       temperature: 0.4,
       thinking: "low",
       signal: req.signal,

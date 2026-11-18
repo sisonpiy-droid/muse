@@ -19,10 +19,14 @@ const SIDE = 800;
 export function Look({
   muse,
   scene = false,
+  self = false,
   onSave,
   onBack,
 }: {
+  /** For `self`, a stand-in for the user: their name and what is already saved. */
   muse: SoloMuse;
+  /** Photos of the user themselves, for every character to read. */
+  self?: boolean;
   /** Photos of the two of you, or anything random, for the mood; not of them. */
   scene?: boolean;
   /** The description to keep; null to remove it. */
@@ -70,7 +74,7 @@ export function Look({
       const res = await fetch("/api/solo/look", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name: muse.name, mode: muse.persona?.mode, kind: scene ? "scene" : "them", photos }),
+        body: JSON.stringify({ name: muse.name, mode: muse.persona?.mode, kind: scene ? "scene" : self ? "you" : "them", photos }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.look) throw new Error(data.error ?? "Couldn't read those photos. Try again.");
@@ -86,25 +90,27 @@ export function Look({
   return (
     <main className="shell">
       <header className="row" style={{ justifyContent: "space-between" }}>
-        <p className="mark">{scene ? "Us & the mood" : "Look & vibe"}</p>
+        <p className="mark">{scene ? "Us & the mood" : self ? "You" : "Look & vibe"}</p>
         <button className="link-btn" onClick={onBack}>Back</button>
       </header>
 
       <div className="row" style={{ gap: "0.75rem", marginTop: "1.5rem", alignItems: "center" }}>
         <Avatar name={muse.name} image={muse.avatar?.id} />
         <div style={{ minWidth: 0 }}>
-          <h1 className="display" style={{ fontSize: "1.6rem", margin: 0 }}>{scene ? `Photos for you and ${muse.name}` : `Photos of ${muse.name}`}</h1>
+          <h1 className="display" style={{ fontSize: "1.6rem", margin: 0 }}>{scene ? `Photos for you and ${muse.name}` : self ? "Photos of you" : `Photos of ${muse.name}`}</h1>
           <p className="fine" style={{ margin: 0 }}>
             {scene
               ? `Add ${MIN_PHOTOS} to ${MAX_PHOTOS} photos of the two of you, or anything random. ${muse.name} will pick up the mood, and the chat will feel like that.`
-              : `Add ${MIN_PHOTOS} to ${MAX_PHOTOS} photos. ${muse.name} will pick up how they look and the vibe, and the chat will feel like that.`}
+              : self
+                ? `Add ${MIN_PHOTOS} to ${MAX_PHOTOS} photos of yourself. Everyone you talk to will pick up how you look and your vibe, and how they talk to you will shift with it.`
+                : `Add ${MIN_PHOTOS} to ${MAX_PHOTOS} photos. ${muse.name} will pick up how they look and the vibe, and the chat will feel like that.`}
           </p>
         </div>
       </div>
 
       {saved && !draft && (
         <div className="look-card">
-          <p className="fine" style={{ margin: 0 }}>What {muse.name} goes by now</p>
+          <p className="fine" style={{ margin: 0 }}>{self ? "What everyone goes by now" : `What ${muse.name} goes by now`}</p>
           <p style={{ whiteSpace: "pre-wrap", margin: "0.4rem 0 0" }}>{saved}</p>
           <button className="link-btn" onClick={() => { if (confirm("Remove this? The chat goes back to how it was.")) onSave(null); }}>
             Remove
@@ -139,7 +145,7 @@ export function Look({
       ) : (
         <>
           <label className="field" style={{ marginTop: "1rem" }}>
-            <span>This is what {muse.name} will go by. Change anything you like.</span>
+            <span>This is what {self ? "everyone" : muse.name} will go by. Change anything you like.</span>
             <textarea className="input" rows={7} maxLength={1000} value={draft} onChange={(e) => setDraft(e.target.value)} />
           </label>
           <div className="row" style={{ gap: "0.75rem" }}>

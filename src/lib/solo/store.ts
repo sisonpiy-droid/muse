@@ -292,6 +292,10 @@ export interface SoloState {
   archived?: string[];
   /** Where the user is, if they said, so characters can know their weather (world.ts). */
   place?: { name: string; lat: number; lon: number };
+  /* About the user themselves: how they look and the vibe they give off, read
+     once from photos they chose to share (the photos are not kept). Every
+     character reads it; see youLookBlock. */
+  self?: { look?: string };
   /* Plans made together that have been started, by the memory id of the plan,
      so a movie night begins once. */
   started?: Record<string, string>;
@@ -423,6 +427,7 @@ export function parseState(raw: string | null | undefined): SoloState {
       scores: parsed.scores ?? {},
       bank: parsed.bank ?? {},
       scrapbook: parsed.scrapbook ?? {},
+      ...(parsed.self && typeof parsed.self === "object" ? { self: parsed.self } : {}),
       ...(Array.isArray(parsed.pinned) ? { pinned: parsed.pinned } : {}),
       ...(Array.isArray(parsed.archived) ? { archived: parsed.archived } : {}),
       ...(parsed.place && typeof parsed.place === "object" ? { place: parsed.place } : {}),
@@ -539,11 +544,12 @@ export function inTab(state: SoloState, tab: string): SoloMuse[] {
  * was saved, shown, and ignored. Joined here, at send time, so there is still
  * only one copy of them. `you` is filled the same way: the starters are
  * authored without knowing who will read them. */
-export function promptPersona(m: SoloMuse, userName: string | null): PersonaDraft | null {
+export function promptPersona(m: SoloMuse, userName: string | null, youLook?: string | null): PersonaDraft | null {
   if (!m.persona) return null;
   return {
     ...m.persona,
     you: m.persona.you || userName || "them",
+    ...(youLook?.trim() ? { youLook: youLook.trim().slice(0, 1000) } : {}),
     traits: (m.traits ?? []).slice(0, 8).map((t) => t.slice(0, 30)),
   };
 }
@@ -1257,7 +1263,7 @@ export function parseBackup(text: string): RestoreResult {
      what was forgotten -- comes back too. Restoring used to keep only the above and
      quietly lose the rest, including the record that stops a deleted memory
      being learned again. */
-  for (const k of ["forgotten", "lives", "unlocked", "scores", "started", "cutoffs", "digests", "bank", "scrapbook", "stories"] as const) {
+  for (const k of ["forgotten", "lives", "unlocked", "scores", "started", "cutoffs", "digests", "bank", "scrapbook", "stories", "self"] as const) {
     const v = p[k];
     if (v && typeof v === "object" && !Array.isArray(v)) (state as unknown as Record<string, unknown>)[k] = v;
   }
@@ -1469,6 +1475,10 @@ export function deleteCircle(state: SoloState, circleId: string): SoloState {
  * on screen and answers to a different name.
  */
 export interface MusePatch {
+  /** How they look and the vibe, read from photos; null takes it away. */
+  look?: string | null;
+  /** The mood of photos of the two of you, or of anything chosen; null takes it away. */
+  scene?: string | null;
   name?: string;
   /** Which tab they sit under on the home screen. */
   category?: string;
@@ -1500,8 +1510,13 @@ function defined<T extends object>(patch: T): Partial<T> {
 }
 
 export function applyPatch(m: SoloMuse, patch: MusePatch): SoloMuse {
-  const p = defined(patch);
+  const { look, scene, ...p } = defined(patch);
   const merged: SoloMuse = { ...m, ...p };
+  /* Photo-derived text lives on the persona, and null means taken away. */
+  const photos = {
+    ...(look !== undefined ? { look: look ?? undefined } : {}),
+    ...(scene !== undefined ? { scene: scene ?? undefined } : {}),
+  };
 
   /* A character with no profile at all -- one built before the Presence port,
      whose customInstructions were too thin for migrate() to rebuild from. If
@@ -1536,6 +1551,7 @@ export function applyPatch(m: SoloMuse, patch: MusePatch): SoloMuse {
       brief: p.brief ?? m.persona.brief,
       samples: p.samples ?? m.persona.samples,
       extra: p.extra ?? m.persona.extra,
+      ...photos,
     },
   };
 }

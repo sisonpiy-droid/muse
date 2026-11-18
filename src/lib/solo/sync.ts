@@ -89,6 +89,7 @@ export function mergeStates(base: SoloState, theirs: SoloState, ours: SoloState)
     ...ours,
     userName: same(ours.userName, base.userName) ? theirs.userName : ours.userName,
     place: same(ours.place, base.place) ? theirs.place : ours.place,
+    self: same(ours.self, base.self) ? theirs.self : ours.self,
     pinned: mergeSet(base.pinned, theirs.pinned, ours.pinned),
     archived: mergeSet(base.archived, theirs.archived, ours.archived),
     muses: mergeList(base.muses, theirs.muses, ours.muses),

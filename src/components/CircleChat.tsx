@@ -114,7 +114,7 @@ export function CircleChat({
 
     let anchor = last.id;
     for (const m of speakers) {
-      const persona = promptPersona(m, s.userName);
+      const persona = promptPersona(m, s.userName, s.self?.look);
       if (!persona || signal.aborted) continue;
       let acc = "";
       try {

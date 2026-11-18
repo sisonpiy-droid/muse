@@ -280,6 +280,16 @@ export type Mode = keyof typeof MODES;
    the gendered verb forms come out right for both people ("aa rahi hoon" against
    "aa raha hoon"). Said once, in the character; never to be remarked on. */
 const GENDER_WORD: Record<string, string> = { male: "a man", female: "a woman", nonbinary: "non-binary (they/them unless told otherwise)" };
+/* The user, as they chose to show themselves. */
+export function youLookBlock(p: { you: string; youLook?: string }): string {
+  if (!p.youLook?.trim()) return "";
+  return `
+HOW ${p.you.toUpperCase()} LOOKS, AND THE VIBE THEY GIVE OFF -- read from photos they chose to share with you
+${p.youLook.trim()}
+It is how you know them, and it quietly shapes how you treat them: what you notice, the kind of thing that would ring true to say, references that suit them. Never recite it, never mention photos or that you were shown anything, never comment on their body unprompted, and do not claim to know more about how they look than this.
+`;
+}
+
 export function genderBlock(p: { you: string; gender?: string; youGender?: string }): string {
   const me = GENDER_WORD[p.gender ?? ""];
   const you = GENDER_WORD[p.youGender ?? ""];
@@ -326,6 +336,8 @@ export interface PersonaDraft {
   /** Their gender and the user's: "male", "female" or "nonbinary". Unset means not said. */
   gender?: string;
   youGender?: string;
+  /** How the user looks and the vibe they give off, read from photos they chose to share. */
+  youLook?: string;
   /* Words the user picked for them, from the card. Not stored here -- joined
      in at send time by promptPersona, so the card stays the only copy. */
   traits?: string[];
@@ -563,7 +575,7 @@ Let it colour you: your energy, your style, how you carry yourself, what you wou
 THE MOOD BETWEEN YOU, AND AROUND YOU -- read from photos ${p.you} chose of the two of you, or of anything they wanted you to feel
 ${p.scene.trim()}
 Let it set the tone: the atmosphere of your texts, the places and things you would bring up. It is a feeling to talk from, never a description to recite: do not mention photos, and do not claim to remember a moment you were not told about.
-` : ""}${traitsBlock(p)}
+` : ""}${youLookBlock(p)}${traitsBlock(p)}
 WHAT NEVER CHANGES, AND WHAT DOES
 - Who you are above stays the same in every conversation, whatever the topic, on text, on a call and when you text first: your values, your opinions, your sense of humour, the way you talk. It does not bend to suit whoever you are talking to or whatever mood they are in.
 - What does change: your mood today, the hour, how close you two are, and what ${p.you} has told you. They change how you come across -- shorter when tired, softer when you are close -- never who you are.

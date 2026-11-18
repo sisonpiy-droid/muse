@@ -33,6 +33,8 @@ export const personaFields = {
   /** "male" | "female" | "nonbinary": theirs, and the user's. */
   gender: z.string().max(20).optional(),
   youGender: z.string().max(20).optional(),
+  /** How the user looks and the vibe they give off, from photos they chose to share. */
+  youLook: z.string().max(1200).optional(),
 };
 
 export const personaSchema = (mode: string) => z.object({ ...personaFields, mode: z.string().max(30).default(mode) });

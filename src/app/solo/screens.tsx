@@ -887,9 +887,22 @@ export function Profile({ muse, state, nav, onBack, onStory, onMemories, onShown
 
 /* Shown on the account screen: the texts they send first, and this device's
    copy of everything -- back it up, bring one back, or wipe it. */
-export function YourData({ state, update, cloudEmail }: { state: SoloState; update: Update; cloudEmail: string | null }) {
+export function YourData({ state, update, cloudEmail, onYourLook }: { state: SoloState; update: Update; cloudEmail: string | null; onYourLook: () => void }) {
   return (
     <>
+      <h2 className="section-title">Photos of you</h2>
+      <div className="look-card" style={{ marginTop: 0 }}>
+        <p style={{ margin: 0 }}>
+          {state.self?.look
+            ? "Everyone you talk to goes by this:"
+            : "Add a few photos of yourself. Everyone you talk to picks up how you look and your vibe, and how they talk to you shifts with it. The photos are looked at once and not kept; only a short description is."}
+        </p>
+        {state.self?.look && <p className="fine" style={{ whiteSpace: "pre-wrap", margin: "0.4rem 0 0" }}>{state.self.look}</p>}
+        <div className="row" style={{ marginTop: "0.7rem", gap: "0.6rem" }}>
+          <button className="btn-ghost" onClick={onYourLook}>{state.self?.look ? "Change my photos" : "Add photos of me"}</button>
+        </div>
+      </div>
+
       <h2 className="section-title">Texts from them</h2>
       <OutreachPanel state={state} update={update} />
 

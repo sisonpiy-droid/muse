@@ -145,7 +145,7 @@ export function candidates(s: SoloState, museId: string, now = Date.now()): Solo
 export async function offer(s: SoloState, museId: string): Promise<{ created: OutreachTrigger[]; evaluated: string[] } | null> {
   const id = deviceId();
   const muse = findMuse(s, museId);
-  const persona = muse ? promptPersona(muse, s.userName) : null;
+  const persona = muse ? promptPersona(muse, s.userName, s.self?.look) : null;
   if (!id || !muse || !persona) return null;
   const list = candidates(s, museId);
   const thread = s.conversations[museId] ?? [];
