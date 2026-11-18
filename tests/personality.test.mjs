@@ -114,7 +114,7 @@ check("a corrected or deleted memory stays gone, and a new fact replaces the old
   assert.equal(back.memories.length, 0, "a deleted memory is not re-learned");
 });
 
-check("on a filler message only a small fixed handful of memories comes in", () => {
+check("on a filler message the last week comes in, and nothing older is dragged in with it", () => {
   const mem = (i, content) => ({ id: `x${i}`, museId: "m", content, type: "EVENT", importance: 3, confidence: 1, createdAt: new Date(NOW - i * 864e5).toISOString() });
   const s = {
     ...blank(),
@@ -122,7 +122,10 @@ check("on a filler message only a small fixed handful of memories comes in", () 
     memories: Array.from({ length: 14 }, (_, i) => mem(i, `Piyush mentioned thing number ${i} about nothing in particular`)),
   };
   const out = store.memoriesForTurn(s, "m", "hmm", null, { now: NOW });
-  assert.ok(out.length <= 2, `a filler message brings in at most the two newest, got ${out.length}`);
+  /* The last week is always to hand now (store.ts FRESH_MS); older notes need the talk to call them up. */
+  const week = s.memories.filter((m) => NOW - Date.parse(m.createdAt) <= 7 * 864e5).length;
+  assert.equal(out.length, week, `a filler message brings in this week's ${week}, got ${out.length}`);
+  assert.ok(!out.some((c) => /number (8|9|1[0-3]) /.test(c)), "nothing from before the week");
 });
 
 /* -------------------------------------------------------- long conversations */

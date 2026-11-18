@@ -118,7 +118,7 @@ const bodySchema = z.object({
   /* Standing emotional state. Separate from `mood` above, which is this
      conversation only -- this one persists and the user sets it rarely. */
   feelings: feelingsSchema.nullish(),
-  memories: z.array(z.string().max(400)).max(12).default([]),
+  memories: z.array(z.string().max(460)).max(60).default([]),
   /** Dated plans and events, each with the instant it is for. */
   plans: z.array(z.object({ what: z.string().max(420), at: z.string().max(40) })).max(8).default([]),
   userName: z.string().trim().max(80).nullish(),

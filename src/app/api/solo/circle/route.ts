@@ -72,7 +72,7 @@ const bodySchema = z.object({
   /** What the speaker remembers about the user from talking one to one. */
   /* Everything the speaker remembers about the user. Lines learned anywhere
      but this circle arrive marked "(private)" -- see circleBlock. */
-  memories: z.array(z.string().max(420)).max(12).default([]),
+  memories: z.array(z.string().max(460)).max(60).default([]),
   /** The recent end of the speaker's own one-to-one chat with the user. */
   oneToOne: z
     .array(z.object({ from: z.enum(["user", "muse"]), content: z.string().max(600), at: z.string().max(40).optional() }))

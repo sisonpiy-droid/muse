@@ -1,7 +1,7 @@
 "use client";
 
 import { packJson } from "@/lib/http";
-import { addMemories, attachEmbeddings, findMuse, type SoloMessage, type SoloState } from "./store";
+import { GIST_BATCH, GIST_MIN, addMemories, applyGist, gistable, attachEmbeddings, findMuse, type SoloMessage, type SoloState } from "./store";
 
 /* Turning conversation into memory, for one-to-one chats and circles alike.
  *
@@ -99,6 +99,62 @@ export async function learnFrom(opts: {
       return attachEmbeddings(cur, patch);
     });
   } catch { /* a missed memory is not worth an error banner */ }
+}
+
+/* ------------------------------------------- older memories, as a rough impression */
+
+const gisting = new Set<string>();
+const gistKey = (id: string) => `muse-gist-${id}`;
+/** Tried at most this often per character, whatever happened. */
+const GIST_EVERY_MS = 6 * 3600_000;
+
+/* What was said more than a week ago is folded into a few vague summaries, which
+   is what each reply carries instead of every old note (store.ts gistable). The
+   notes themselves stay. Done in the background when a chat is opened; a
+   failure just means it is tried again later, and nothing is lost either way. */
+export async function consolidate(state: SoloState, museId: string, update: Update): Promise<void> {
+  if (gisting.has(museId)) return;
+  const batch = gistable(state, museId).slice(0, GIST_BATCH);
+  const person = findMuse(state, museId);
+  if (batch.length < GIST_MIN || !person) return;
+  try {
+    const last = Number(localStorage.getItem(gistKey(museId)) || 0);
+    if (Date.now() - last < GIST_EVERY_MS) return;
+    localStorage.setItem(gistKey(museId), String(Date.now()));
+  } catch { /* no storage: it just may try again sooner */ }
+  gisting.add(museId);
+  try {
+    const res = await fetch("/api/solo/gist", {
+      method: "POST",
+      ...(await packJson({
+        name: person.name,
+        you: state.userName ?? "them",
+        items: batch.map((m) => ({ content: m.content, at: m.createdAt })),
+      })),
+    });
+    const { gists } = await res.json();
+    if (!Array.isArray(gists) || !gists.length) return;
+    const texts: string[] = gists.filter((g: unknown): g is string => typeof g === "string");
+    const covered = batch.map((m) => m.id);
+    const at = batch.at(-1)!.createdAt;
+    update((cur) => applyGist(cur, museId, covered, texts, at));
+
+    /* Embedded, so a summary can be found by meaning like any memory. */
+    const vecs = await embedTexts(texts);
+    if (!vecs) return;
+    update((cur) => {
+      const byContent = new Map(texts.map((t, i) => [t.trim().slice(0, 400), vecs[i]]));
+      const patch: Record<string, number[] | null> = {};
+      for (const m of cur.memories) {
+        if (m.museId !== museId || m.type !== "GIST" || m.embedding?.length) continue;
+        const v = byContent.get(m.content);
+        if (v) patch[m.id] = v;
+      }
+      return attachEmbeddings(cur, patch);
+    });
+  } catch { /* tried again later */ } finally {
+    gisting.delete(museId);
+  }
 }
 
 /* ------------------------------------------------- the one-to-one, digested */

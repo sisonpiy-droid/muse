@@ -41,6 +41,10 @@ export interface SoloMemory {
      the character's wherever it was learned -- what they were told privately
      goes into a group with them, marked private so it is not repeated there. */
   circleId?: string;
+  /* The summary this was folded into, once it was more than a week old. It is
+     still here, and still found when it is what the talk is about; it is just
+     no longer carried every turn. */
+  gist?: string;
   /* Set when this is about one particular other person the user named. The
      profile of that person is these, gathered (peopleOf). */
   person?: { name: string; relation: string };
@@ -605,7 +609,10 @@ export function relevantMemories(
 }
 
 /** Most memories the chat route accepts in one turn. */
-export const MEMORIES_PER_TURN = 12;
+export const MEMORIES_PER_TURN = 56;
+/** How long what was said counts as recent: remembered in detail. */
+export const FRESH_MS = 7 * 24 * 3600_000;
+const FRESH_PER_TURN = 36;
 /* Kinds of memory that do not go stale the way a plan, a job or a mood does. */
 const STABLE = new Set(["PERMANENT", "RELATIONSHIP"]);
 
@@ -643,17 +650,21 @@ export function memoriesForTurn(
      stale, as told a while ago -- people change jobs, cities and minds, and the
      character should hold an old fact loosely rather than state it as current. */
   const label = (m: SoloMemory | undefined, c: string) => {
-    const old = m && !STABLE.has(m.type) ? Math.floor((now - Date.parse(m.createdAt)) / (30 * 86_400_000)) : 0;
-    const aged = old >= 3 ? `${c} (told about ${old} months ago; may have changed)` : c;
+    const age = m ? now - Date.parse(m.createdAt) : 0;
+    const old = m && !STABLE.has(m.type) ? Math.floor(age / (30 * 86_400_000)) : 0;
+    /* Past a week, only a rough memory: said so, so it is not recited as exact. */
+    const vague = m && m.type !== "GIST" && !STABLE.has(m.type) && age > FRESH_MS;
+    const aged = old >= 3 ? `${c} (told about ${old} months ago; may have changed)`
+      : vague ? `${c} (from a while back; only roughly)` : c;
     return opts.room !== undefined && m?.circleId !== opts.room ? `(private) ${aged}` : aged;
   };
 
   const newest = [...mine].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   /* Who they are rather than what happened: events are what retrieval is for. */
   const standing = newest
-    .filter((m) => m.type !== "EVENT")
+    .filter((m) => m.type !== "EVENT" && m.type !== "GIST" && m.type !== "INFERENCE")
     .sort((a, b) => b.importance - a.importance)
-    .slice(0, 4);
+    .slice(0, 6);
 
   const out: string[] = [];
   const seen = new Set<string>();
@@ -664,10 +675,47 @@ export function memoriesForTurn(
     out.push(c);
   };
   for (const m of standing) add(m.content);
-  /* Only the two newest regardless of topic; the rest come in by relevance. */
-  for (const m of newest.slice(0, 2)) add(m.content);
+  /* The last week, in detail: whatever was said, newest first, topic or not --
+     a person remembers this week without being reminded. The summaries of what
+     went before come after it, and what the talk calls up from anywhere on top. */
+  for (const m of newest.filter((x) => now - Date.parse(x.createdAt) <= FRESH_MS && !x.gist).slice(0, FRESH_PER_TURN)) add(m.content);
+  for (const m of newest.filter((x) => x.type === "GIST").slice(0, 8)) add(m.content);
+  for (const m of newest.filter((x) => !x.gist).slice(0, 2)) add(m.content);
   for (const c of relevantMemories(state, museId, query, queryEmbedding)) if (byContent.has(c)) add(c);
   return out.map((c) => label(byContent.get(c), c));
+}
+
+/* Older than a week, what was said is folded into a few vague summaries.
+ *
+ * The user wants this week in detail and anything before it as a rough
+ * impression, without losing a single thing: so the originals stay (flagged,
+ * and still found when the talk comes back to them) and a summary stands in for
+ * them each turn. Facts about who someone is (PERMANENT, PREFERENCE, GOAL,
+ * RELATIONSHIP), what is between the two of them and promises are not
+ * summarised: they are not "what happened". */
+const NOT_GISTED = new Set(["PERMANENT", "PREFERENCE", "GOAL", "RELATIONSHIP", "SHARED", "PROMISE", "GIST", "INFERENCE"]);
+export const GIST_MIN = 20;
+export const GIST_BATCH = 100;
+
+export function gistable(state: SoloState, museId: string, now = Date.now()): SoloMemory[] {
+  return state.memories
+    .filter((m) => m.museId === museId && !m.gist && !NOT_GISTED.has(m.type) && !isPlan(m, now) && now - Date.parse(m.createdAt) > FRESH_MS + 24 * 3600_000)
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
+/** Records the summaries of a stretch and marks what they cover. The covered memories stay. */
+export function applyGist(state: SoloState, museId: string, covered: string[], texts: string[], at: string): SoloState {
+  const clean = texts.map((t) => t.trim().slice(0, MEMORY_CHARS)).filter(Boolean);
+  if (!clean.length || !covered.length) return state;
+  const id = `gist-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const set = new Set(covered);
+  return {
+    ...state,
+    memories: [
+      ...state.memories.map((m) => (set.has(m.id) ? { ...m, gist: id } : m)),
+      ...clean.map((content, i): SoloMemory => ({ id: i ? `${id}-${i}` : id, museId, content, type: "GIST", importance: 3, confidence: 0.6, createdAt: at })),
+    ],
+  };
 }
 
 /* How far either side of now a dated memory counts as a plan, rather than as
@@ -750,11 +798,18 @@ export function attachEmbeddings(
    place memories are created. */
 export const MEMORY_CHARS = 400;
 
-/* Memories are never deleted otherwise, so a character talked to for a year
-   accumulates thousands, every one of them ranked on every single turn. Kept to
-   what a person would plausibly hold: the most important, and within that the
-   most recent. */
-export const MEMORIES_PER_MUSE = 300;
+/* Every memory is kept: nothing the user said is thrown away to make room.
+ *
+ * This used to be 300, and when it was reached the least important went --
+ * which, with the older ones all rated higher, was whatever had just been said.
+ * So after a few weeks a character stopped learning anything at all, and a
+ * profile of someone new could never be made. Now the ceiling is only a guard
+ * against an endless chat, and what goes first is what has already been folded
+ * into a summary (see gistable), then the oldest and least important.
+ *
+ * What a character holds in mind on any one turn is a separate, much smaller
+ * thing: see memoriesForTurn. */
+export const MEMORIES_PER_MUSE = 4000;
 
 /* What is between the two of them: nicknames, running jokes, bits.
  *
@@ -948,7 +1003,7 @@ export function addMemories(
      the least important thing said longest ago is the closest this gets to how
      forgetting actually works. */
   const kept = [...mine]
-    .sort((a, b) => (b.importance - a.importance) || (Date.parse(b.createdAt) - Date.parse(a.createdAt)))
+    .sort((a, b) => (Number(!!a.gist) - Number(!!b.gist)) || (b.importance - a.importance) || (Date.parse(b.createdAt) - Date.parse(a.createdAt)))
     .slice(0, MEMORIES_PER_MUSE);
 
   return { ...state, memories: [...others, ...kept], forgotten };

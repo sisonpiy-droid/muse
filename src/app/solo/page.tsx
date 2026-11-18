@@ -48,7 +48,7 @@ import { NUDGE_STALE_MS, addPoint, bondOf, markRoughTexted, roughDue, saidBye, a
 import { Persister, mergeStates, onOtherTabWrite } from "@/lib/solo/sync";
 import { Account, type CloudStatus } from "@/components/Account";
 import { browserIo, rememberSignIn, signedInEmail, syncOnce } from "@/lib/solo/cloud";
-import { embedTexts, learnFrom } from "@/lib/solo/learn";
+import { consolidate, embedTexts, learnFrom } from "@/lib/solo/learn";
 import { PHOTO_ONLY, savePhoto } from "@/lib/solo/photos";
 import { VIDEO_ONLY, filesOf, keepAttachment } from "@/lib/solo/attach";
 import { canStoreImages, deleteImages } from "@/lib/solo/backend";
@@ -907,6 +907,8 @@ function SoloChat({
     void advanceLife(latest.current, muse.id, update);
     /* And the first time, a picture of them. */
     void ensureAvatar(latest.current, muse.id, update);
+    /* Anything older than a week becomes a rough impression; the notes stay. */
+    void consolidate(latest.current, muse.id, update);
     // Once per conversation opened; it reads the latest state through the ref.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [muse.id]);

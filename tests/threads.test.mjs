@@ -149,7 +149,8 @@ check("what they told you stays to hand after the subject moves on", () => {
     ],
   };
   const got = memoriesForTurn(s, "aditi", "what are you having for lunch", null);
-  assert.ok(got.includes("User is working from home this week."), "the newest thing they said must come along");
+  /* Long past in real time, so it comes marked as a rough memory: still there. */
+  assert.ok(got.some((c) => c.startsWith("User is working from home this week.")), "the newest thing they said must come along");
   assert.ok(got.includes("User's dog is called Bruno."), "standing facts come along too");
 });
 
