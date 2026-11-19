@@ -1,7 +1,7 @@
 "use client";
 
 import { packJson } from "@/lib/http";
-import { ABOUT_MIN, GIST_BATCH, GIST_MIN, aboutFacts, addMemories, applyGist, gistable, attachEmbeddings, findMuse, type SoloMessage, type SoloState } from "./store";
+import { ABOUT_MIN, GIST_BATCH, GIST_MIN, MIRROR_ID, aboutFacts, addMemories, applyGist, gistable, withMirror, attachEmbeddings, findMuse, type SoloMessage, type SoloState } from "./store";
 
 /* Turning conversation into memory, for one-to-one chats and circles alike.
  *
@@ -130,10 +130,14 @@ export async function refreshAbout(state: SoloState, update: Update, force = fal
     });
     const { about } = await res.json();
     if (!about?.summary) return "failed";
-    update((cur) => ({
-      ...cur,
-      self: { ...(cur.self ?? {}), about: { summary: about.summary, traits: about.traits ?? [], interests: about.interests ?? [], at: new Date().toISOString(), basis: facts.length } },
-    }));
+    update((cur) => {
+      const next = {
+        ...cur,
+        self: { ...(cur.self ?? {}), about: { summary: about.summary, traits: about.traits ?? [], interests: about.interests ?? [], at: new Date().toISOString(), basis: facts.length } },
+      };
+      /* The user's mirror, if they have made one, learns it too. */
+      return next.muses.some((m) => m.id === MIRROR_ID) ? withMirror(next) : next;
+    });
     return "ok";
   } catch {
     return "failed";

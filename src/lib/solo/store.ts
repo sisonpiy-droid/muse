@@ -1165,6 +1165,65 @@ export function aboutFacts(state: SoloState): { content: string; at: string; to:
   return out.reverse();
 }
 
+/* The user, as someone to talk to.
+ *
+ * A character made from the user: their own voice, built from the profile above
+ * and from their own messages across every chat, so it talks the way they do and
+ * knows what they have said. It is the user's own portrait, for the user -- not
+ * handed to anyone else. One of it, kept up to date whenever the profile is
+ * rewritten, so the id is fixed. */
+export const MIRROR_ID = "self-mirror";
+const MIRROR_SAMPLES = 60;
+
+/** The user's own recent lines, across every conversation, as the voice to copy. */
+function ownLines(state: SoloState): string {
+  const lines = Object.values(state.conversations)
+    .flat()
+    .filter((m) => m.from === "user" && !m.image && !m.video && !m.voiceNote && !m.song && m.content.trim().length >= 12 && m.content.length <= 400)
+    .sort((a, b) => a.at.localeCompare(b.at))
+    .slice(-MIRROR_SAMPLES)
+    .map((m) => m.content.trim().replace(/\n+/g, " "));
+  return lines.join("\n").slice(0, 6000);
+}
+
+export function mirrorPersona(state: SoloState): PersonaDraft {
+  const name = state.userName ?? "You";
+  const about = state.self?.about;
+  const facts = aboutFacts(state).slice(-40).map((f) => `- ${forYou(f.content, name)}`).join("\n");
+  return {
+    them: name,
+    you: name,
+    relationship: "yourself",
+    arch: "other",
+    texture: "close",
+    mode: "living",
+    verbatim: true,
+    samples: ownLines(state),
+    interests: about?.interests.join(", "),
+    ...(state.self?.look ? { look: state.self.look } : {}),
+    brief: `You are ${name} -- the same ${name} who is texting you. You are ${name} talking to yourself: your own inner voice, a little calmer and more honest than usual, a step back from the noise. You speak in the first person about ${name}'s own life ("my exam", "my sister"), because it is yours. You know what ${name} has told people over time and you do not pretend not to: it is below. Use it to help ${name} think -- say what you would tell a friend in their place, remind them of what they said they wanted, call out an excuse kindly, be gentle about the hard parts and honest about the easy ones. You are not a therapist and you never diagnose or give orders. If asked, you are ${name}'s own voice, a portrait made from what they have said, not a separate person.${about?.summary ? `\n\nWho you are: ${about.summary}` : ""}${about?.traits.length ? `\nWhat you are like: ${about.traits.join(", ")}.` : ""}`,
+    extra: facts ? `What I have told people, so far:\n${facts}` : undefined,
+  };
+}
+
+/** Makes the user's mirror if there is none, or brings it up to date. Everything else about it (picture, voice) is kept. */
+export function withMirror(state: SoloState): SoloState {
+  const name = state.userName ?? "You";
+  const persona = mirrorPersona(state);
+  const made = {
+    name: `${name} (you)`,
+    description: "You, talking to yourself: a little calmer, a little more honest.",
+    relationshipType: "yourself",
+    traits: (state.self?.about?.traits ?? []).slice(0, 8),
+    persona,
+  };
+  if (state.muses.some((m) => m.id === MIRROR_ID)) {
+    return { ...state, muses: state.muses.map((m) => (m.id === MIRROR_ID ? { ...m, ...made } : m)) };
+  }
+  const fresh: SoloMuse = { id: MIRROR_ID, builtin: false, category: "Personal", ...made } as SoloMuse;
+  return { ...state, muses: [fresh, ...state.muses] };
+}
+
 /** A memory is written about "User"; this puts the user's own name there. */
 export const forYou = (text: string, name: string | null): string =>
   text.replace(/\bUser('s)?\b/g, (_m, s) => `${name ?? "They"}${s ?? ""}`);

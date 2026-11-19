@@ -51,6 +51,8 @@ export type Nav = {
   onNewCircle: () => void;
   /** A person the user has talked about. */
   onPerson: (key: string) => void;
+  /** Chat with a version of the user themselves. */
+  onMirror: () => void;
   /** Set up someone to talk to from what the user said about them. */
   onTalkTo: (p: Mentioned) => void;
   /** Set when this device is signed in and syncing. */
@@ -888,7 +890,7 @@ export function Profile({ muse, state, nav, onBack, onStory, onMemories, onShown
 
 /* Shown on the account screen: the texts they send first, and this device's
    copy of everything -- back it up, bring one back, or wipe it. */
-export function YourData({ state, update, cloudEmail, onYourLook }: { state: SoloState; update: Update; cloudEmail: string | null; onYourLook: () => void }) {
+export function YourData({ state, update, cloudEmail, onYourLook, onMirror }: { state: SoloState; update: Update; cloudEmail: string | null; onYourLook: () => void; onMirror: () => void }) {
   const about = state.self?.about;
   const facts = aboutFacts(state);
   const told = new Set(facts.map((f) => f.to).filter(Boolean)).size;
@@ -938,7 +940,11 @@ export function YourData({ state, update, cloudEmail, onYourLook }: { state: Sol
         </p>
         <div className="row" style={{ marginTop: "0.7rem", gap: "0.6rem" }}>
           <button className="btn-ghost" disabled={busy || facts.length < 5} onClick={() => void redo()}>{busy ? "Writing…" : about ? "Refresh" : "Write it now"}</button>
+          <button className="btn" disabled={facts.length < 5} onClick={onMirror}>Talk to yourself</button>
         </div>
+        <p className="fine" style={{ margin: "0.6rem 0 0" }}>
+          Talk to yourself is a chat with a version of you built from this and from your own messages: your voice, a bit calmer and more honest.
+        </p>
         {note && <p className="look-error" role="status">{note}</p>}
       </div>
 

@@ -35,7 +35,7 @@ import {
 } from "@/lib/presence/persona";
 import { safeFilename, transcriptMarkdown } from "@/lib/export";
 import {
-  allMuses, attachEmbeddings, circleOf, deleteConversation, forYou, hidePerson, peopleOf,
+  MIRROR_ID, allMuses, attachEmbeddings, circleOf, deleteConversation, forYou, hidePerson, peopleOf, withMirror,
   deleteFrom, deleteMemory, deleteMessage, deleteMuse, download, editMemory, editMessage,
   editMuse, feelingsOf, findMuse, forgetAll, insertAfter, isEdited, isMediaCaption,
   memoriesOf, needsEmbedding, newMessage, paced, quoteOf, react, readMedia, readReaction,
@@ -427,6 +427,11 @@ export default function SoloPage() {
     onFigure: (tab) => go({ kind: "figure", tab }),
     onNewCircle: () => go({ kind: "new-circle" }),
     onPerson: (key) => go({ kind: "person", key }),
+    /* Made or brought up to date from what they have said, then opened. */
+    onMirror: () => {
+      update((cur) => withMirror(cur));
+      go({ kind: "chat", museId: MIRROR_ID });
+    },
     onTalkTo: (p) => go({
       kind: "import",
       prefill: {
@@ -666,7 +671,7 @@ export default function SoloPage() {
         onPlace={(place) => update((cur) => ({ ...cur, place: place ?? undefined }))}
         onBack={() => back()}
       >
-        {state.userName && <YourData state={state} update={update} cloudEmail={cloud.email} onYourLook={() => go({ kind: "look-you" })} />}
+        {state.userName && <YourData state={state} update={update} cloudEmail={cloud.email} onYourLook={() => go({ kind: "look-you" })} onMirror={nav.onMirror} />}
       </Account>,
       "full"
     );
