@@ -10,9 +10,10 @@ import { safeFilename } from "@/lib/export";
 import { MADE_TAB, TABS } from "@/lib/personas";
 import { settingsOf } from "@/lib/proactive/client";
 import { bondOf } from "@/lib/solo/life";
+import { refreshAbout } from "@/lib/solo/learn";
 import { photoUrl } from "@/lib/solo/photos";
 import {
-  allMuses, deleteCircle, download, findMuse, forYou, inTab, membersOf, memoriesOf, parseBackup, peopleOf, tabOf,
+  aboutFacts, allMuses, deleteCircle, download, findMuse, forYou, inTab, membersOf, memoriesOf, parseBackup, peopleOf, tabOf,
   type Mentioned, type SoloCircle, type SoloMessage, type SoloMuse, type SoloState,
 } from "@/lib/solo/store";
 
@@ -888,8 +889,59 @@ export function Profile({ muse, state, nav, onBack, onStory, onMemories, onShown
 /* Shown on the account screen: the texts they send first, and this device's
    copy of everything -- back it up, bring one back, or wipe it. */
 export function YourData({ state, update, cloudEmail, onYourLook }: { state: SoloState; update: Update; cloudEmail: string | null; onYourLook: () => void }) {
+  const about = state.self?.about;
+  const facts = aboutFacts(state);
+  const told = new Set(facts.map((f) => f.to).filter(Boolean)).size;
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  /* Kept current in the background when the screen opens. */
+  const latest = useRef({ state, update });
+  useEffect(() => { latest.current = { state, update }; });
+  useEffect(() => {
+    void refreshAbout(latest.current.state, latest.current.update);
+  }, []);
+  const redo = async () => {
+    setBusy(true);
+    setNote(null);
+    const r = await refreshAbout(state, update, true);
+    setBusy(false);
+    if (r === "few") setNote("Talk to a few people first. There isn't enough to go on yet.");
+    else if (r === "failed") setNote("Couldn't write it just now. Try again in a moment.");
+  };
   return (
     <>
+      <h2 className="section-title">About you</h2>
+      <div className="look-card" style={{ marginTop: 0 }}>
+        {about ? (
+          <>
+            <p style={{ margin: 0, lineHeight: 1.55 }}>{about.summary}</p>
+            {about.traits.length > 0 && (
+              <div className="tags" style={{ marginTop: "0.7rem" }}>{about.traits.map((t) => <span className="tag" key={t}>{t}</span>)}</div>
+            )}
+            {about.interests.length > 0 && (
+              <>
+                <p className="fine" style={{ margin: "0.8rem 0 0" }}>Into</p>
+                <div className="tags" style={{ marginTop: "0.3rem" }}>{about.interests.map((t) => <span className="tag" key={t}>{t}</span>)}</div>
+              </>
+            )}
+          </>
+        ) : (
+          <p style={{ margin: 0 }}>
+            {facts.length < 5
+              ? "Talk to a few people and this fills in: a gist of who you are, pieced together from what you tell each of them."
+              : "Writing your profile…"}
+          </p>
+        )}
+        <p className="fine" style={{ margin: "0.8rem 0 0" }}>
+          {facts.length > 0 ? `Built from ${facts.length} things you've said${told > 1 ? ` across ${told} people` : told === 1 ? " to one person" : ""}. ` : ""}
+          Only you see this. Nobody you talk to is given it: what you tell one person stays with them.
+        </p>
+        <div className="row" style={{ marginTop: "0.7rem", gap: "0.6rem" }}>
+          <button className="btn-ghost" disabled={busy || facts.length < 5} onClick={() => void redo()}>{busy ? "Writing…" : about ? "Refresh" : "Write it now"}</button>
+        </div>
+        {note && <p className="look-error" role="status">{note}</p>}
+      </div>
+
       <h2 className="section-title">Photos of you</h2>
       <div className="look-card" style={{ marginTop: 0 }}>
         <p style={{ margin: 0 }}>

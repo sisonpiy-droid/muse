@@ -295,7 +295,7 @@ export interface SoloState {
   /* About the user themselves: how they look and the vibe they give off, read
      once from photos they chose to share (the photos are not kept). Every
      character reads it; see youLookBlock. */
-  self?: { look?: string };
+  self?: { look?: string; about?: About };
   /* Plans made together that have been started, by the memory id of the plan,
      so a movie night begins once. */
   started?: Record<string, string>;
@@ -1139,6 +1139,30 @@ export function peopleOf(state: SoloState): Mentioned[] {
     by.set(key, entry);
   }
   return [...by.values()].sort((a, b) => b.last.localeCompare(a.last));
+}
+
+/* A gist of the user, written from everything they have told every character.
+   Shown on their own profile; no character is given it. `basis` is how many
+   notes it was built from, so it is redone when there are enough new ones. */
+export type About = { summary: string; traits: string[]; interests: string[]; at: string; basis: number };
+
+const NOT_ABOUT_YOU = new Set(["SHARED", "PROMISE", "DONE", "GIST", "INFERENCE"]);
+export const ABOUT_MIN = 5;
+const ABOUT_MAX = 150;
+
+/** The notes about the user, from every character, for the profile. Newest kept when there are many. */
+export function aboutFacts(state: SoloState): { content: string; at: string; to: string }[] {
+  const seen = new Set<string>();
+  const out: { content: string; at: string; to: string }[] = [];
+  for (const m of [...state.memories].sort((a, b) => b.createdAt.localeCompare(a.createdAt))) {
+    if (NOT_ABOUT_YOU.has(m.type)) continue;
+    const k = m.content.trim().toLowerCase();
+    if (!k || seen.has(k)) continue;
+    seen.add(k);
+    out.push({ content: m.content, at: m.createdAt, to: findMuse(state, m.museId)?.name ?? "" });
+    if (out.length >= ABOUT_MAX) break;
+  }
+  return out.reverse();
 }
 
 /** A memory is written about "User"; this puts the user's own name there. */

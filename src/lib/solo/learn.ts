@@ -1,7 +1,7 @@
 "use client";
 
 import { packJson } from "@/lib/http";
-import { GIST_BATCH, GIST_MIN, addMemories, applyGist, gistable, attachEmbeddings, findMuse, type SoloMessage, type SoloState } from "./store";
+import { ABOUT_MIN, GIST_BATCH, GIST_MIN, aboutFacts, addMemories, applyGist, gistable, attachEmbeddings, findMuse, type SoloMessage, type SoloState } from "./store";
 
 /* Turning conversation into memory, for one-to-one chats and circles alike.
  *
@@ -99,6 +99,47 @@ export async function learnFrom(opts: {
       return attachEmbeddings(cur, patch);
     });
   } catch { /* a missed memory is not worth an error banner */ }
+}
+
+/* ------------------------------------------------------------ a gist of the user */
+
+const ABOUT_AT = "muse-about-at";
+let writing = false;
+
+/* The user's profile, written from what they have told everyone. Quietly redone
+   when enough has been added; `force` is the Refresh button. Returns why nothing
+   happened, or "ok". */
+export async function refreshAbout(state: SoloState, update: Update, force = false): Promise<"ok" | "few" | "fresh" | "busy" | "failed"> {
+  const facts = aboutFacts(state);
+  if (facts.length < ABOUT_MIN) return "few";
+  const had = state.self?.about;
+  const now = Date.now();
+  if (!force) {
+    if (had && facts.length - had.basis < 8 && now - Date.parse(had.at) < 3 * 86_400_000) return "fresh";
+    try {
+      if (now - Number(localStorage.getItem(ABOUT_AT) || 0) < 30 * 60_000) return "fresh";
+    } catch { /* no storage: it may just try sooner */ }
+  }
+  if (writing) return "busy";
+  writing = true;
+  try { localStorage.setItem(ABOUT_AT, String(now)); } catch { /* fine */ }
+  try {
+    const res = await fetch("/api/solo/about", {
+      method: "POST",
+      ...(await packJson({ name: state.userName ?? "You", look: state.self?.look, facts })),
+    });
+    const { about } = await res.json();
+    if (!about?.summary) return "failed";
+    update((cur) => ({
+      ...cur,
+      self: { ...(cur.self ?? {}), about: { summary: about.summary, traits: about.traits ?? [], interests: about.interests ?? [], at: new Date().toISOString(), basis: facts.length } },
+    }));
+    return "ok";
+  } catch {
+    return "failed";
+  } finally {
+    writing = false;
+  }
 }
 
 /* ------------------------------------------- older memories, as a rough impression */
