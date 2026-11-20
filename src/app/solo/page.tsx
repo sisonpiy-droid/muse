@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import { Avatar } from "@/components/Avatar";
 import { BuildFigure } from "@/components/BuildFigure";
@@ -828,6 +828,21 @@ function SoloChat({
   const [replyTo, setReplyTo] = useState<SoloMessage | null>(null);
   const foot = useRef<HTMLDivElement>(null);
   const box = useRef<HTMLTextAreaElement>(null);
+  const online = useSyncExternalStore(watchOnline, () => navigator.onLine, () => true);
+  /* Offered once, after they have sent something: a notification when a reply comes
+     and the app is not in front of them. Only a browser that can, and only if not yet answered. */
+  const [askNotify, setAskNotify] = useState(false);
+  useEffect(() => {
+    try {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      if (typeof Notification !== "undefined" && Notification.permission === "default" && !localStorage.getItem("muse-reply-notify")) setAskNotify(true);
+    } catch { /* no notifications here: nothing to offer */ }
+  }, []);
+  const answerNotify = (turnOn: boolean) => {
+    try { localStorage.setItem("muse-reply-notify", "1"); } catch { /* asked again next time */ }
+    setAskNotify(false);
+    if (turnOn) void Notification.requestPermission();
+  };
   /* What you were writing is still there when you come back: kept per chat,
      for as long as the tab is open. */
   const draftKey = `muse-draft-${muse.id}`;
@@ -989,7 +1004,7 @@ function SoloChat({
       /* A burst of texts appears text by text once it is in, so it is not also
          streamed in as one block first. A letter or a voice note still is. */
       const regNow = REGISTERS[vibeNow.register as keyof typeof REGISTERS] ?? REGISTERS.texts;
-      const outcome = await streamReply(prepared.body, signal, (soFar) => { if (!regNow.burst) setStreaming(soFar); }, last.id);
+      const outcome = await streamReply(prepared.body, signal, (soFar) => { if (!regNow.burst) setStreaming(soFar); }, last.id, { muse: muse.id, who: muse.name });
       /* A reply that ended in an error is not a reply, however much of it
          arrived first. Saving the fragment is how half-sentences got into the
          thread. */
@@ -1670,6 +1685,26 @@ function SoloChat({
         </div>
       )}
 
+      {!online && (
+        <div className="notice notice-bad" role="status" style={{ marginTop: "0.5rem" }}>
+          <div>
+            <strong>You&apos;re offline.</strong>{" "}
+            {lastLine?.from === "user" ? "Your message hasn't been sent yet. It goes the moment you're back online." : "Messages will send when you're back online."}
+          </div>
+        </div>
+      )}
+      {askNotify && log.some((m) => m.from === "user") && (
+        <div className="notice" role="status" style={{ marginTop: "0.5rem" }}>
+          <div>
+            <strong>Hear back while you&apos;re away?</strong> Get a notification when {muse.name} replies and this page isn&apos;t open.
+          </div>
+          <div className="row" style={{ gap: "0.5rem" }}>
+            <button className="btn" onClick={() => answerNotify(true)}>Turn on</button>
+            <button className="link-btn" onClick={() => answerNotify(false)}>Not now</button>
+          </div>
+        </div>
+      )}
+
       <div className="composer">
         <ToLatest />
         {replyTo && (
@@ -1705,6 +1740,13 @@ function SoloChat({
     </main>
   );
 }
+
+/* Whether the phone has a connection, as the browser reports it. */
+const watchOnline = (f: () => void) => {
+  window.addEventListener("online", f);
+  window.addEventListener("offline", f);
+  return () => { window.removeEventListener("online", f); window.removeEventListener("offline", f); };
+};
 
 /** Offered as one-tap additions wherever traits are edited. */
 const TRAIT_IDEAS = ["funny", "sarcastic", "caring", "blunt", "chill", "dramatic", "flirty", "nosy", "savage", "soft"];

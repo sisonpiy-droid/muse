@@ -29,6 +29,43 @@ export function useOutreach(
   const busy = useRef(false);
   const offering = useRef(false);
 
+  /* ------------------------------------- a reply that came while away */
+  /* The worker says so when a reply finishes with the app out of sight
+     (public/sw.js). Tapping that opens the chat (/solo?muse=<id>&reply=1), where the
+     reply is picked up; and once the app is in front of them again the
+     notifications are cleared. Separate from the outreach below, which only runs for
+     someone who turned on texts from them. */
+  useEffect(() => {
+    if (!ready) return;
+    const replyFrom = (href: string) => {
+      const u = new URL(href, window.location.origin);
+      return u.searchParams.get("reply") === "1" ? u.searchParams.get("muse") : null;
+    };
+    const landed = replyFrom(window.location.href);
+    if (landed) {
+      window.history.replaceState(window.history.state, "", "/solo");
+      openChat(landed);
+    }
+    const onWorker = (e: MessageEvent) => {
+      if (e.data?.type !== "muse-open" || typeof e.data.url !== "string") return;
+      const m = replyFrom(e.data.url);
+      if (m) openChat(m);
+    };
+    const clear = () => {
+      if (document.visibilityState !== "visible") return;
+      void navigator.serviceWorker?.getRegistration().then((r) => r?.getNotifications().then((ns) => ns.filter((n) => n.tag?.startsWith("reply-")).forEach((n) => n.close())));
+    };
+    clear();
+    document.addEventListener("visibilitychange", clear);
+    navigator.serviceWorker?.addEventListener("message", onWorker);
+    return () => {
+      document.removeEventListener("visibilitychange", clear);
+      navigator.serviceWorker?.removeEventListener("message", onWorker);
+    };
+    // Once per app load; openChat is a stable closure over the history helpers.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready]);
+
   /* -------------------------------------------- collecting, and landing */
   useEffect(() => {
     if (!ready || !deviceId()) return;

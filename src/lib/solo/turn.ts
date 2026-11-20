@@ -321,7 +321,9 @@ export async function streamReply(
   onDelta: (soFar: string, delta: string) => void,
   /** The message being answered. With it, a reply cut off by the page going to the
    *  background is finished by the service worker and picked up on return (public/sw.js). */
-  replyId?: string
+  replyId?: string,
+  /** Who is answering and in which conversation, so a reply that finishes while the app is away can say so (public/sw.js). */
+  notify?: { muse: string; who: string }
 ): Promise<ReplyOutcome> {
   /* A reply that goes quiet is not "still typing": stop waiting and say so. The
      clock restarts with every chunk, so a long reply that keeps arriving is fine. */
@@ -337,7 +339,7 @@ export async function streamReply(
   const stalledOut = (): ReplyOutcome => ({ ok: false, message: "The reply took too long and was stopped. Try again.", retryable: true, partial: "" });
   watch();
   try {
-    return await readReply(body, inner.signal, onDelta, watch, replyId);
+    return await readReply(body, inner.signal, onDelta, watch, replyId, notify);
   } catch (err) {
     if (stalled && !signal.aborted) return stalledOut();
     throw err;
@@ -355,9 +357,14 @@ async function readReply(
   signal: AbortSignal,
   onDelta: (soFar: string, delta: string) => void,
   alive: () => void,
-  replyId?: string
+  replyId?: string,
+  notify?: { muse: string; who: string }
 ): Promise<ReplyOutcome> {
-  const packed = await packJson(body, replyId ? { "x-reply-id": replyId } : {});
+  /* Header values must be plain text, so names go through encodeURIComponent. */
+  const packed = await packJson(body, replyId ? {
+    "x-reply-id": replyId,
+    ...(notify ? { "x-reply-muse": encodeURIComponent(notify.muse), "x-reply-who": encodeURIComponent(notify.who.slice(0, 60)) } : {}),
+  } : {});
   const res = await fetch("/api/solo/chat", { method: "POST", signal, ...packed });
   alive();
   if (!res.ok || !res.body) {

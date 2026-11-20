@@ -140,9 +140,12 @@ export function useReplyLoop(
       }
     };
     document.addEventListener("visibilitychange", onVisible);
+    /* Back online: a message that could not go is sent now, not when the next one is typed. */
+    window.addEventListener("online", resume);
     return () => {
       mounted.current = false;
       document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("online", resume);
       /* Leaving in the pause before a reply: they have finished talking, so
          ask now instead of dropping it. A reply already in flight carries on. */
       if (timer.current) {

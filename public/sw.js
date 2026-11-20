@@ -47,6 +47,34 @@ self.addEventListener("notificationclick", (event) => {
 
 /* ---------------------------------------------------------------- replies */
 
+const safeDecode = (v) => { try { return v ? decodeURIComponent(v) : ""; } catch { return ""; } };
+
+/* What a reply says, for a notification: the words, without the app's markers, the first text of a burst. */
+function previewOf(sse) {
+  let words = "";
+  for (const line of sse.split("\n")) {
+    if (!line.startsWith("data:")) continue;
+    try { const e = JSON.parse(line.slice(5)); if (e.type === "delta" && typeof e.text === "string") words += e.text; } catch { /* not a frame */ }
+  }
+  const first = words.replace(/^\s*\[react:[^\]]*\]\s*/i, "").split(/\n-{3,}\n|\n/)[0].trim();
+  return first.slice(0, 140) || "Sent you a message";
+}
+
+/* The reply finished while nobody was looking: say so. Not when the app is open and
+   in front of them (the page shows it), and only if they allowed notifications. */
+async function notifyAway(muse, who, sse) {
+  if (!muse || self.Notification?.permission !== "granted") return;
+  const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+  if (windows.some((c) => c.visibilityState === "visible")) return;
+  await self.registration.showNotification(who || "Muse", {
+    body: previewOf(sse),
+    tag: `reply-${muse}`,
+    icon: "/icon-192.png",
+    badge: "/icon-192.png",
+    data: { url: `/solo?muse=${encodeURIComponent(muse)}&reply=1` },
+  });
+}
+
 const REPLIES = "muse-replies";
 /* A kept reply older than this is not handed over: the page has moved on. */
 const REPLY_TTL = 10 * 60 * 1000;
@@ -85,6 +113,8 @@ async function reply(event, req, id) {
   });
   if (!res.ok || !res.body) return res;
 
+  const who = safeDecode(req.headers.get("x-reply-who"));
+  const muse = safeDecode(req.headers.get("x-reply-muse"));
   const [toPage, toKeep] = res.body.tee();
   const keeping = (async () => {
     const text = await new Response(toKeep).text();
@@ -92,6 +122,7 @@ async function reply(event, req, id) {
     if (!text.includes('"type":"done"')) return;
     for (const old of await cache.keys()) await cache.delete(old);
     await cache.put(key, new Response(text, { headers: { "content-type": "text/event-stream", "x-made": String(Date.now()) } }));
+    await notifyAway(muse, who, text);
   })().catch(() => {}).finally(() => pending.delete(id));
   pending.set(id, keeping);
   event.waitUntil(keeping);
