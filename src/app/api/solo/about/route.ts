@@ -22,7 +22,7 @@ const bodySchema = z.object({
   facts: z
     .array(z.object({ content: z.string().max(500), at: z.string().max(40).optional(), to: z.string().max(60).optional() }))
     .min(1)
-    .max(160),
+    .max(100),
 });
 
 const clean = (v: unknown, n: number, each: number) =>
@@ -52,7 +52,8 @@ Never invent, guess or fill gaps. Where notes disagree, prefer the newer. Leave 
       system,
       messages: [{ role: "user", content: notes }],
       temperature: 0.3,
-      thinking: "low",
+      /* Summarising notes needs no long deliberation, and this is on a screen the user is waiting at. */
+      thinking: "minimal",
     });
     const s = text.trim().replace(/^```(?:json)?\s*|```$/g, "");
     const a = s.indexOf("{"), b = s.lastIndexOf("}");

@@ -104,12 +104,15 @@ export async function learnFrom(opts: {
 /* ------------------------------------------------------------ a gist of the user */
 
 const ABOUT_AT = "muse-about-at";
-let writing = false;
+/* The write in progress, shared: a second caller waits for it instead of being turned away. */
+let inflight: Promise<"ok" | "failed"> | null = null;
 
 /* The user's profile, written from what they have told everyone. Quietly redone
    when enough has been added; `force` is the Refresh button. Returns why nothing
    happened, or "ok". */
-export async function refreshAbout(state: SoloState, update: Update, force = false): Promise<"ok" | "few" | "fresh" | "busy" | "failed"> {
+export async function refreshAbout(state: SoloState, update: Update, force = false): Promise<"ok" | "few" | "fresh" | "failed"> {
+  /* One at a time, and anyone who asks while it is being written waits for it. */
+  if (inflight) return inflight;
   const facts = aboutFacts(state);
   if (facts.length < ABOUT_MIN) return "few";
   const had = state.self?.about;
@@ -120,12 +123,19 @@ export async function refreshAbout(state: SoloState, update: Update, force = fal
       if (now - Number(localStorage.getItem(ABOUT_AT) || 0) < 30 * 60_000) return "fresh";
     } catch { /* no storage: it may just try sooner */ }
   }
-  if (writing) return "busy";
-  writing = true;
   try { localStorage.setItem(ABOUT_AT, String(now)); } catch { /* fine */ }
+  inflight = write(state, update, facts).finally(() => { inflight = null; });
+  const r = await inflight;
+  /* A failed try must not hold off the next one for half an hour. */
+  if (r === "failed") { try { localStorage.removeItem(ABOUT_AT); } catch { /* fine */ } }
+  return r;
+}
+
+async function write(state: SoloState, update: Update, facts: ReturnType<typeof aboutFacts>): Promise<"ok" | "failed"> {
   try {
     const res = await fetch("/api/solo/about", {
       method: "POST",
+      signal: AbortSignal.timeout(45_000),
       ...(await packJson({ name: state.userName ?? "You", look: state.self?.look, facts })),
     });
     const { about } = await res.json();
@@ -141,8 +151,6 @@ export async function refreshAbout(state: SoloState, update: Update, force = fal
     return "ok";
   } catch {
     return "failed";
-  } finally {
-    writing = false;
   }
 }
 

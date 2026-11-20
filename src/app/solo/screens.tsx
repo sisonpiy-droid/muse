@@ -13,7 +13,7 @@ import { bondOf } from "@/lib/solo/life";
 import { refreshAbout } from "@/lib/solo/learn";
 import { photoUrl } from "@/lib/solo/photos";
 import {
-  aboutFacts, allMuses, deleteCircle, download, findMuse, forYou, inTab, membersOf, memoriesOf, parseBackup, peopleOf, tabOf,
+  aboutFacts, allMuses, deleteCircle, download, renameUser, findMuse, forYou, inTab, membersOf, memoriesOf, parseBackup, peopleOf, tabOf,
   type Mentioned, type SoloCircle, type SoloMessage, type SoloMuse, type SoloState,
 } from "@/lib/solo/store";
 
@@ -894,24 +894,41 @@ export function YourData({ state, update, cloudEmail, onYourLook, onMirror }: { 
   const about = state.self?.about;
   const facts = aboutFacts(state);
   const told = new Set(facts.map((f) => f.to).filter(Boolean)).size;
+  /* True only while a request is really out. It used to say "Writing…" whenever
+     there was no profile yet, so a try that failed looked like it was still going. */
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
-  /* Kept current in the background when the screen opens. */
+  const [name, setName] = useState(state.userName ?? "");
   const latest = useRef({ state, update });
   useEffect(() => { latest.current = { state, update }; });
-  useEffect(() => {
-    void refreshAbout(latest.current.state, latest.current.update);
-  }, []);
-  const redo = async () => {
+  const run = async (force: boolean) => {
     setBusy(true);
     setNote(null);
-    const r = await refreshAbout(state, update, true);
+    const r = await refreshAbout(latest.current.state, latest.current.update, force);
     setBusy(false);
     if (r === "few") setNote("Talk to a few people first. There isn't enough to go on yet.");
-    else if (r === "failed") setNote("Couldn't write it just now. Try again in a moment.");
+    else if (r === "failed") setNote("Couldn't write it just now. Tap the button to try again.");
+  };
+  /* Kept current in the background when the screen opens. */
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void run(false);
+  }, []);
+  const redo = () => void run(true);
+  const rename = () => {
+    const to = name.trim();
+    if (!to || to === state.userName) return;
+    update((cur) => renameUser(cur, to));
   };
   return (
     <>
+      <h2 className="section-title">Your name</h2>
+      <form className="row" style={{ gap: "0.5rem", maxWidth: "26rem" }} onSubmit={(e) => { e.preventDefault(); rename(); }}>
+        <input className="input" value={name} maxLength={60} aria-label="Your name" onChange={(e) => setName(e.target.value)} style={{ flex: 1, minWidth: 0 }} />
+        <button className="btn" disabled={!name.trim() || name.trim() === state.userName}>Save</button>
+      </form>
+      <p className="fine" style={{ margin: "0.4rem 0 0" }}>What everyone calls you. It changes in every chat from the next message.</p>
+
       <h2 className="section-title">About you</h2>
       <div className="look-card" style={{ marginTop: 0 }}>
         {about ? (
@@ -931,7 +948,7 @@ export function YourData({ state, update, cloudEmail, onYourLook, onMirror }: { 
           <p style={{ margin: 0 }}>
             {facts.length < 5
               ? "Talk to a few people and this fills in: a gist of who you are, pieced together from what you tell each of them."
-              : "Writing your profile…"}
+              : busy ? "Writing your profile… this usually takes a few seconds." : "Not written yet. Tap the button to write it."}
           </p>
         )}
         <p className="fine" style={{ margin: "0.8rem 0 0" }}>
@@ -939,7 +956,7 @@ export function YourData({ state, update, cloudEmail, onYourLook, onMirror }: { 
           Only you see this. Nobody you talk to is given it: what you tell one person stays with them.
         </p>
         <div className="row" style={{ marginTop: "0.7rem", gap: "0.6rem" }}>
-          <button className="btn-ghost" disabled={busy || facts.length < 5} onClick={() => void redo()}>{busy ? "Writing…" : about ? "Refresh" : "Write it now"}</button>
+          <button className="btn-ghost" disabled={busy || facts.length < 5} onClick={redo}>{busy ? "Writing…" : about ? "Refresh" : "Write it now"}</button>
           <button className="btn" disabled={facts.length < 5} onClick={onMirror}>Talk to yourself</button>
         </div>
         <p className="fine" style={{ margin: "0.6rem 0 0" }}>

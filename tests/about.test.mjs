@@ -30,9 +30,9 @@ check("the same thing told to two people counts once, and a long history keeps t
   assert.equal(store.aboutFacts(dup).length, 1);
   const many = state(Array.from({ length: 200 }, (_, i) => mem(`m${i}`, "builtin-leo", `Fact ${i}.`, "PERMANENT", new Date(Date.UTC(2026, 0, 1) + i * 864e5).toISOString())));
   const got = store.aboutFacts(many);
-  assert.equal(got.length, 150);
+  assert.equal(got.length, 100);
   assert.equal(got.at(-1).content, "Fact 199.", "the newest are kept");
-  assert.equal(got[0].content, "Fact 50.");
+  assert.equal(got[0].content, "Fact 100.");
 });
 
 check("it is kept on the user's profile, saved, merged between devices, and never put in a character's prompt", () => {
@@ -46,6 +46,22 @@ check("it is kept on the user's profile, saved, merged between devices, and neve
   const text = persona.personaSystem(p, [], false, undefined, "Asia/Kolkata");
   assert.ok(!text.includes("You are a student."), "the gist is for the user, not for the character");
   assert.ok(!text.includes("loyal"));
+});
+
+check("changing the user's name reaches everything that copied it: made characters, the mirror, and the profile reads", () => {
+  const made = { id: "made-1", builtin: false, name: "Zed", description: "d", relationshipType: "friend", category: "x", traits: [], persona: { them: "Zed", you: "Sam", relationship: "friend", arch: "friend", texture: "close", mode: "character", brief: "b" } };
+  const other = { ...made, id: "made-2", name: "Kit", persona: { ...made.persona, them: "Kit", you: "Samuel" } };
+  let s = store.withMirror({ ...state([mem("a", "builtin-leo", "User likes tea.")]), muses: [made, other], self: { about: { summary: "You are x.", traits: [], interests: [], at: "2026-11-18T00:00:00Z", basis: 5 } } });
+  s = store.renameUser(s, "  Sameer  ");
+  assert.equal(s.userName, "Sameer");
+  assert.equal(s.muses.find((m) => m.id === "made-1").persona.you, "Sameer", "set up with the old name: follows");
+  assert.equal(s.muses.find((m) => m.id === "made-2").persona.you, "Samuel", "a name they were given specially stays");
+  const mirror = s.muses.find((m) => m.id === store.MIRROR_ID);
+  assert.equal(mirror.name, "Sameer (you)");
+  assert.equal(mirror.persona.them, "Sameer");
+  assert.equal(store.renameUser(s, "Sameer"), s, "the same name changes nothing");
+  assert.equal(store.renameUser(s, "   "), s, "an empty name changes nothing");
+  assert.equal(store.renameUser(s, "x".repeat(100)).userName.length, 60);
 });
 
 let pass = 0, fail = 0;

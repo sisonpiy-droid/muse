@@ -1148,7 +1148,7 @@ export type About = { summary: string; traits: string[]; interests: string[]; at
 
 const NOT_ABOUT_YOU = new Set(["SHARED", "PROMISE", "DONE", "GIST", "INFERENCE"]);
 export const ABOUT_MIN = 5;
-const ABOUT_MAX = 150;
+const ABOUT_MAX = 100;
 
 /** The notes about the user, from every character, for the profile. Newest kept when there are many. */
 export function aboutFacts(state: SoloState): { content: string; at: string; to: string }[] {
@@ -1222,6 +1222,20 @@ export function withMirror(state: SoloState): SoloState {
   }
   const fresh: SoloMuse = { id: MIRROR_ID, builtin: false, category: "Personal", ...made } as SoloMuse;
   return { ...state, muses: [fresh, ...state.muses] };
+}
+
+/** Changes what the user is called, everywhere it was copied: made characters carry the name they were set up with. */
+export function renameUser(state: SoloState, to: string): SoloState {
+  const name = to.trim().replace(/\s+/g, " ").slice(0, 60);
+  const was = state.userName;
+  if (!name || name === was) return state;
+  let next: SoloState = {
+    ...state,
+    userName: name,
+    muses: state.muses.map((m) => (m.persona && was && m.persona.you === was ? { ...m, persona: { ...m.persona, you: name } } : m)),
+  };
+  if (next.muses.some((m) => m.id === MIRROR_ID)) next = withMirror(next);
+  return next;
 }
 
 /** A memory is written about "User"; this puts the user's own name there. */
