@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { getProvider } from "@/lib/ai";
+import { ProviderError } from "@/lib/ai/types";
 import { readJson } from "@/lib/http";
 
 /* A gist of the user, from everything they have told the people they talk to.
@@ -27,6 +28,29 @@ const bodySchema = z.object({
 
 const clean = (v: unknown, n: number, each: number) =>
   Array.isArray(v) ? v.filter((x): x is string => typeof x === "string").map((x) => x.trim().slice(0, each)).filter(Boolean).slice(0, n) : [];
+
+/* The model's answer as a profile, tolerant of how models wrap or break JSON: a
+   fence, prose around it, a raw newline inside a string. If it gave plain prose
+   instead of JSON, that prose is the summary. */
+function read(text: string): { summary: string; traits: string[]; interests: string[] } | null {
+  const s = text.trim().replace(/^```(?:json)?\s*|```$/g, "").trim();
+  if (!s) return null;
+  const a = s.indexOf("{"), b = s.lastIndexOf("}");
+  if (a >= 0 && b > a) {
+    const body = s.slice(a, b + 1);
+    let out: { summary?: unknown; traits?: unknown; interests?: unknown } | null = null;
+    try { out = JSON.parse(body); } catch {
+      try { out = JSON.parse(body.replace(/[\u0000-\u001f]+/g, " ")); } catch { out = null; }
+    }
+    if (out && typeof out.summary === "string" && out.summary.trim()) {
+      return { summary: out.summary.trim().slice(0, 900), traits: clean(out.traits, 6, 40), interests: clean(out.interests, 8, 50) };
+    }
+    const m = /"summary"\s*:\s*"((?:[^"\\]|\\.)*)"/.exec(body);
+    if (m) return { summary: m[1].replace(/\\n/g, " ").replace(/\\"/g, '"').trim().slice(0, 900), traits: [], interests: [] };
+    return null;
+  }
+  return s.length >= 40 ? { summary: s.slice(0, 900), traits: [], interests: [] } : null;
+}
 
 export async function POST(req: Request) {
   let raw: unknown;
@@ -55,14 +79,16 @@ Never invent, guess or fill gaps. Where notes disagree, prefer the newer. Leave 
       /* Summarising notes needs no long deliberation, and this is on a screen the user is waiting at. */
       thinking: "minimal",
     });
-    const s = text.trim().replace(/^```(?:json)?\s*|```$/g, "");
-    const a = s.indexOf("{"), b = s.lastIndexOf("}");
-    const out = a >= 0 && b > a ? JSON.parse(s.slice(a, b + 1)) : null;
-    const summary = typeof out?.summary === "string" ? out.summary.trim().slice(0, 900) : "";
-    if (!summary) return Response.json({ about: null });
-    return Response.json({ about: { summary, traits: clean(out.traits, 6, 40), interests: clean(out.interests, 8, 50) } });
+    const out = read(text);
+    if (!out) {
+      console.error("about: unreadable output:", text.slice(0, 200));
+      return Response.json({ about: null, why: "unreadable" });
+    }
+    return Response.json({ about: out });
   } catch (err) {
     console.error("about failed", err);
-    return Response.json({ about: null });
+    /* Said, so the app can try again with less (a filter can stop a prompt for what is in it). */
+    const why = err instanceof ProviderError ? (err.code === "blocked" || err.code === "stopped" ? "blocked" : err.code === "empty" ? "empty" : "error") : "error";
+    return Response.json({ about: null, why });
   }
 }

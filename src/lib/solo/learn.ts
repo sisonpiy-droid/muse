@@ -131,15 +131,39 @@ export async function refreshAbout(state: SoloState, update: Update, force = fal
   return r;
 }
 
+/* Tried with everything first, then with less: a filter can stop a prompt for what is in
+   it, and the newest notes are the ones that matter most. */
+const ABOUT_TRIES = [100, 40, 15];
+
+/** Why the last try failed, in a few words, for the screen to show: a failure with no reason cannot be fixed from a phone. */
+export let aboutWhy = "";
+
+async function ask(state: SoloState, facts: ReturnType<typeof aboutFacts>, n: number) {
+  const res = await fetch("/api/solo/about", {
+    method: "POST",
+    signal: AbortSignal.timeout(40_000),
+    ...(await packJson({ name: state.userName ?? "You", look: state.self?.look, facts: facts.slice(-n) })),
+  });
+  let body: { about?: { summary: string; traits?: string[]; interests?: string[] } | null; why?: string; error?: string } = {};
+  try { body = await res.json(); } catch { aboutWhy = `the server answered ${res.status} with something unreadable`; return body; }
+  if (!res.ok) aboutWhy = `the server answered ${res.status}${body.error ? `: ${body.error}` : ""}`;
+  else if (!body.about) aboutWhy = body.why === "blocked" ? "the model's filter stopped it" : body.why === "unreadable" ? "the model's answer was unreadable" : body.why === "empty" ? "the model gave no answer" : "the model could not write it";
+  return body;
+}
+
 async function write(state: SoloState, update: Update, facts: ReturnType<typeof aboutFacts>): Promise<"ok" | "failed"> {
   try {
-    const res = await fetch("/api/solo/about", {
-      method: "POST",
-      signal: AbortSignal.timeout(45_000),
-      ...(await packJson({ name: state.userName ?? "You", look: state.self?.look, facts })),
-    });
-    const { about } = await res.json();
-    if (!about?.summary) return "failed";
+    let about: Awaited<ReturnType<typeof ask>>["about"] = null;
+    for (const n of ABOUT_TRIES) {
+      if (n !== ABOUT_TRIES[0] && facts.length <= n) continue;
+      try { about = (await ask(state, facts, n)).about ?? null; } catch (e) {
+        about = null;
+        aboutWhy = e instanceof Error ? `${e.name}: ${e.message}`.slice(0, 120) : "the request did not go through";
+      }
+      if (about?.summary) break;
+    }
+    if (!about?.summary) { console.error("about failed:", aboutWhy); return "failed"; }
+    aboutWhy = "";
     update((cur) => {
       const next = {
         ...cur,

@@ -10,7 +10,7 @@ import { safeFilename } from "@/lib/export";
 import { MADE_TAB, TABS } from "@/lib/personas";
 import { settingsOf } from "@/lib/proactive/client";
 import { bondOf } from "@/lib/solo/life";
-import { refreshAbout } from "@/lib/solo/learn";
+import { aboutWhy, refreshAbout } from "@/lib/solo/learn";
 import { photoUrl } from "@/lib/solo/photos";
 import {
   aboutFacts, allMuses, deleteCircle, download, renameUser, findMuse, forYou, inTab, membersOf, memoriesOf, parseBackup, peopleOf, tabOf,
@@ -907,7 +907,7 @@ export function YourData({ state, update, cloudEmail, onYourLook, onMirror }: { 
     const r = await refreshAbout(latest.current.state, latest.current.update, force);
     setBusy(false);
     if (r === "few") setNote("Talk to a few people first. There isn't enough to go on yet.");
-    else if (r === "failed") setNote("Couldn't write it just now. Tap the button to try again.");
+    else if (r === "failed") setNote(`Couldn't write it just now${aboutWhy ? ` (${aboutWhy})` : ""}. Tap the button to try again.`);
   };
   /* Kept current in the background when the screen opens. */
   useEffect(() => {
