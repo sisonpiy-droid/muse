@@ -35,6 +35,8 @@ export const personaFields = {
   youGender: z.string().max(20).optional(),
   /** How the user looks and the vibe they give off, from photos they chose to share. */
   youLook: z.string().max(1200).optional(),
+  /** A setup the user chose for the conversation (scenarioBlock). */
+  scenario: z.string().max(600).optional(),
 };
 
 export const personaSchema = (mode: string) => z.object({ ...personaFields, mode: z.string().max(30).default(mode) });

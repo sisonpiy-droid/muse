@@ -37,7 +37,17 @@ export const maxDuration = 60;
 const bodySchema = z.object({
   them: z.string().trim().min(1).max(60),
   era: z.string().trim().max(120).optional(),
+  /** "character": the user wants someone from a story, never a real person -- an actor's name gets the characters they play. */
+  kind: z.enum(["character"]).optional(),
 });
+
+/* Added when the user said they want a character. A name that turns out to be an
+   actor must not become a portrayal of the actor: it becomes the choice of the
+   characters they are best known for, which is what "the actress from Suicide
+   Squad" means. */
+const CHARACTER_ONLY = `
+
+THE USER HAS SAID THEY WANT A FICTIONAL CHARACTER, NOT A REAL PERSON. Reply only in shape 2 (a fictional character), shape 3 (which one?) or shape 4. If the name is a real person -- an actor, a voice actor, a writer -- do not research or portray that person: reply in shape 3, listing up to five fictional characters they are best known for playing or writing, most famous first, each line "<character, and the work> | <what they are in the story, under eight words>". Characters from anime, cartoons, comics, films, series, games and books all count.`;
 
 const SYSTEM = `You research a person in public life, or a fictional character, so that a companion app can portray them. Search the web. Prefer interviews, talk shows, podcasts and their own social media over listicles.
 
@@ -82,7 +92,7 @@ export async function POST(req: Request) {
   }
   const parsed = bodySchema.safeParse(raw);
   if (!parsed.success) return Response.json({ error: "Put their name in first." }, { status: 400 });
-  const { them, era } = parsed.data;
+  const { them, era, kind } = parsed.data;
 
   const provider = getProvider();
   /* No search available: the build still works, from memory, as it always has. */
@@ -90,7 +100,7 @@ export async function POST(req: Request) {
 
   try {
     const { text, sources } = await provider.searchWeb({
-      system: SYSTEM,
+      system: kind === "character" ? SYSTEM + CHARACTER_ONLY : SYSTEM,
       prompt: `Research ${them}${era ? `, specifically ${era}` : ""}.`,
     });
     const found = readResearch(text);

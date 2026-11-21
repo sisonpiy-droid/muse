@@ -3,7 +3,7 @@
 import { useState } from "react";
 
 import { parseTranscript, sampleWindows, styleOf } from "@/lib/chat-import";
-import type { PersonaDraft } from "@/lib/presence/persona";
+import { unsuitableScenario, type PersonaDraft } from "@/lib/presence/persona";
 
 /* Building someone from public life.
  *
@@ -49,6 +49,9 @@ const STANCES = [
   { key: "press", label: "Like you're press", texture: "distant", note: "polished, on duty, giving you the version they give everyone" },
 ];
 
+/* Examples that are clearly characters, one tap each. */
+const CHARACTER_IDEAS = ["Harley Quinn", "Scarlet Witch", "Batman", "Doraemon", "Elizabeth Bennet", "Sherlock Holmes"];
+
 type Source = { title: string; url: string };
 type Candidate = { name: string; knownFor: string };
 
@@ -66,6 +69,10 @@ export function BuildFigure({
   const [them, setThem] = useState("");
   const [you, setYou] = useState(userName ?? "");
   const [era, setEra] = useState("");
+  /* How the two of you know each other in this conversation, in the user's words. */
+  const [scenario, setScenario] = useState("");
+  /* "character": someone from a story, never a real person (an actor's name gets their characters). */
+  const [kind, setKind] = useState<"any" | "character">("any");
   const [role, setRole] = useState("friend");
   const [stance, setStance] = useState("warm");
   const [quoted, setQuoted] = useState("");
@@ -107,14 +114,15 @@ export function BuildFigure({
     setStep("working");
 
     let who = (pickedName ?? them).trim();
-    let found = { research, knownFor, sources, fictional };
+    /* `minor` is read from this lookup, not from state: state set below is not visible until the next render. */
+    let found = { research, knownFor, sources, fictional, minor };
     if (!research) {
       setPhase("search");
       try {
         const res = await fetch("/api/persona/research", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ them: who, era: era.trim() || undefined }),
+          body: JSON.stringify({ them: who, era: era.trim() || undefined, ...(kind === "character" ? { kind: "character" } : {}) }),
         });
         const data = await res.json();
         if (res.status === 422) { setError(data.error); setStep(from); return; }
@@ -133,6 +141,7 @@ export function BuildFigure({
             knownFor: data.knownFor ?? "",
             sources: data.sources ?? [],
             fictional: Boolean(data.fictional),
+            minor: data.minor !== false,
           };
           setResearch(found.research);
           setKnownFor(found.knownFor);
@@ -144,6 +153,19 @@ export function BuildFigure({
         }
       } catch { /* fall through to building from memory */ }
     }
+
+    /* They asked for a character and got a real person: stop rather than portray the person. */
+    if (kind === "character" && !found.fictional) {
+      setError(`${who} is a real person. Type the character instead, like "Harley Quinn" or "Scarlet Witch".`);
+      setStep(from);
+      return;
+    }
+
+    /* Now it is known whether this is a real person or a character: a setup that
+       would put romance on a real person (or a child in a story) stops here, before
+       anything is written. */
+    const why = unsuitableScenario(scenario, { real: !found.fictional, minor: found.fictional && found.minor });
+    if (why) { setError(why); setStep(from); return; }
 
     setPhase("write");
     const { samples, metrics } = measure();
@@ -162,6 +184,7 @@ export function BuildFigure({
           research: found.research || undefined,
           quoted: quoted.trim() || undefined,
           extra: extra.trim() || undefined,
+          scenario: scenario.trim() || undefined,
           samples: samples || undefined,
           metrics: metrics || undefined,
         }),
@@ -194,6 +217,7 @@ export function BuildFigure({
       metrics: metrics || undefined,
       verbatim: samples ? true : !lines.trim(),
       extra: extra.trim() || undefined,
+      scenario: scenario.trim() || undefined,
       interests: knownFor.trim() || undefined,
     });
   }
@@ -219,11 +243,34 @@ export function BuildFigure({
             them, and it will say so if you ask.
           </p>
 
+          <div className="field">
+            <span style={label}>Who is it?</span>
+            <div className="tags">
+              <button type="button" className="tag" aria-pressed={kind === "any"}
+                onClick={() => { setKind("any"); setResearch(""); setFictional(false); }} style={chip(kind === "any")}>Anyone in public life</button>
+              <button type="button" className="tag" aria-pressed={kind === "character"}
+                onClick={() => { setKind("character"); setResearch(""); setFictional(false); }} style={chip(kind === "character")}>A character from a story</button>
+            </div>
+            {kind === "character" && (
+              <>
+                <p className="fine" style={{ margin: "0.5rem 0 0.3rem" }}>
+                  Films, series, anime, cartoons, comics, games, books. If you type an actor&apos;s name you get the characters they play, not them.
+                </p>
+                <div className="tags">
+                  {CHARACTER_IDEAS.map((c) => (
+                    <button key={c} type="button" className="tag" onClick={() => { setThem(c); setCandidates([]); setResearch(""); setKnownFor(""); setSources([]); setFictional(false); }}>{c}</button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+
           <div className="pair">
             <label className="field">
-              <span>Their name</span>
+              <span>{kind === "character" ? "Their name" : "Their name"}</span>
               <input className="input" autoFocus value={them} maxLength={60}
-                onChange={(e) => { setThem(e.target.value); setCandidates([]); }} placeholder="Shah Rukh Khan"
+                /* A different name is a different lookup: what was found for the last one must not be reused. */
+                onChange={(e) => { setThem(e.target.value); setCandidates([]); setResearch(""); setKnownFor(""); setSources([]); setFictional(false); }} placeholder="Shah Rukh Khan"
                 onKeyDown={(e) => { if (e.key === "Enter" && them.trim() && you.trim()) void build("who"); }} />
             </label>
             <label className="field">
@@ -234,10 +281,21 @@ export function BuildFigure({
           </div>
 
           <label className="field">
-            <span>Which version of them? (optional)</span>
+            <span>{kind === "character" ? "Which version? (optional)" : "Which version of them? (optional)"}</span>
             <input className="input" value={era} maxLength={120}
-              onChange={(e) => setEra(e.target.value)} placeholder="in interviews, recent years" />
+              onChange={(e) => { setEra(e.target.value); setResearch(""); }} placeholder={kind === "character" ? "the 2016 film, the comics, the anime" : "in interviews, recent years"} />
           </label>
+
+          <label className="field">
+            <span>What&apos;s going on between you? (optional)</span>
+            <textarea className="input" rows={3} value={scenario} maxLength={600}
+              onChange={(e) => setScenario(e.target.value)}
+              placeholder={kind === "character" ? "She is my girlfriend, and we are on a rooftop after a mission" : "He has become my mentor for my startup"} />
+          </label>
+          <p className="fine" style={{ marginTop: "-0.4rem" }}>
+            The chat starts from this: how you two know each other, what you&apos;re working on. It&apos;s a setup you
+            chose, not a fact about them. {kind === "character" ? "A grown-up character can be anything you like, romantic included." : "For a real person it can't be romantic or intimate."}
+          </p>
 
           {error && <p className={candidates.length ? "lede" : "error"} role="alert">{error}</p>}
 

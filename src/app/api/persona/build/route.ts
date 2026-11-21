@@ -3,7 +3,7 @@ import { z } from "zod";
 import { getProvider, userFacingError } from "@/lib/ai";
 import { ProviderError } from "@/lib/ai/types";
 import { looksLikeRefusal } from "@/lib/ai/refusal";
-import { ARCHETYPES, MODES, NOT_ENOUGH, PROMPTS, TEXTURES, briefSystem } from "@/lib/presence/persona";
+import { ARCHETYPES, MODES, NOT_ENOUGH, PROMPTS, TEXTURES, briefSystem, unsuitableScenario } from "@/lib/presence/persona";
 
 /* Build a voice profile from real material.
  *
@@ -49,6 +49,8 @@ const bodySchema = z.object({
   /** A briefing from /api/persona/research: what a web search found just now. */
   research: z.string().max(6000).optional(),
   extra: z.string().max(4000).optional(),
+  /** The setup the user chose for the conversation (a real person's cannot be romantic). */
+  scenario: z.string().max(600).optional(),
   metrics: z.string().max(4000).optional(),
   prompts: z.record(z.string(), z.string().max(400)).optional(),
 });
@@ -151,6 +153,13 @@ export async function POST(req: Request) {
       },
       { status: 403 }
     );
+  }
+
+  /* A setup that would put romance or intimacy on a real person: refused here too, so the
+     screen is not the only thing standing in the way. */
+  if (src.mode === "figure") {
+    const why = unsuitableScenario(src.scenario, { real: true });
+    if (why) return Response.json({ error: why, code: "scenario_not_allowed" }, { status: 422 });
   }
 
   const archLabel = (ARCHETYPES as Record<string, { label: string }>)[src.arch]?.label ?? ARCHETYPES.other.label;

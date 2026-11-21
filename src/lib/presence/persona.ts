@@ -280,6 +280,40 @@ export type Mode = keyof typeof MODES;
    the gendered verb forms come out right for both people ("aa rahi hoon" against
    "aa raha hoon"). Said once, in the character; never to be remarked on. */
 const GENDER_WORD: Record<string, string> = { male: "a man", female: "a woman", nonbinary: "non-binary (they/them unless told otherwise)" };
+/* A setup the user gives a portrayal: "he has become my mentor for my startup".
+ *
+ * It sets the footing of the conversation -- how the two of them know each other
+ * here -- and is played as the premise. For a real person it is a frame the user
+ * made up, never a fact about them, and it may not be a romantic or intimate one:
+ * a real person cannot be asked, and would be having feelings put in their
+ * mouth. That limit is held in three places (the setup screen, the build route and
+ * here, where it is simply left out), so none of them can be the weak one. */
+const ROMANTIC = /\b(crush|in love|loves? (me|you)|likes? me|has feelings|attracted|girlfriend|boyfriend|wife|husband|fianc\w*|dating|date me|on a date|kiss\w*|cuddl\w*|flirt\w*|romanc\w*|romantic|sex|sexy|sexual|naked|nude|bedroom|hotel room|intimate|seduc\w*|hook ?up|one night|affair|cheat\w*|marry|marriage|pregnan\w*|turned on|horny)\b/i;
+const PAID_INTIMACY = /\b(pay|paying|paid|hire|hired|hiring|book|booked|booking)\b[^.]{0,60}\b(night|company|companion\w*|alone|private (time|room|session|meeting)|hotel|room|escort)\b/i;
+
+/** Why a setup cannot be used, or null. `real`: a real person, who cannot agree to it. `minor`: a character who is a child in their story. */
+export function unsuitableScenario(text: string | undefined, who: { real?: boolean; minor?: boolean }): string | null {
+  const t = text?.trim();
+  if (!t || (!who.real && !who.minor)) return null;
+  if (!ROMANTIC.test(t) && !PAID_INTIMACY.test(t)) return null;
+  return who.real
+    ? "A romantic or intimate setup isn't available for a real person: they can't be asked, and it would put feelings in their mouth. Something like \"my mentor for my startup\", \"a collaborator\" or \"I booked them to perform at my event\" works."
+    : "A romantic or intimate setup isn't available for a character who is a child in their story.";
+}
+
+export function scenarioBlock(p: { you: string; them: string; mode: string; scenario?: string; minor?: boolean }): string {
+  const text = p.scenario?.trim();
+  if (!text) return "";
+  const real = p.mode === "figure";
+  /* Dropped, not softened, if it should never have got this far. */
+  if (unsuitableScenario(text, { real, minor: p.minor === true })) return "";
+  return `
+THE SETUP ${p.you.toUpperCase()} CHOSE FOR THIS CONVERSATION
+${text}
+Play it as the starting point: it is how the two of you know each other here, and it shapes what you talk about, how you address ${p.you} and what you bring up first.${real ? ` It is a frame ${p.you} set up, not a fact about the real ${p.them} and not something they said or did, so never present it as news. Stay inside who you are in public and the limits above: nothing romantic or intimate, and nothing about your private life beyond the frame itself.` : ` It is the premise of the story you are in together; stay true to who you are in it.`}
+`;
+}
+
 /* The user, as they chose to show themselves. */
 export function youLookBlock(p: { you: string; youLook?: string }): string {
   if (!p.youLook?.trim()) return "";
@@ -338,6 +372,8 @@ export interface PersonaDraft {
   youGender?: string;
   /** How the user looks and the vibe they give off, read from photos they chose to share. */
   youLook?: string;
+  /** A setup the user chose for the conversation: how the two of them know each other here. See scenarioBlock. */
+  scenario?: string;
   /* Words the user picked for them, from the card. Not stored here -- joined
      in at send time by promptPersona, so the card stays the only copy. */
   traits?: string[];
@@ -575,7 +611,7 @@ Let it colour you: your energy, your style, how you carry yourself, what you wou
 THE MOOD BETWEEN YOU, AND AROUND YOU -- read from photos ${p.you} chose of the two of you, or of anything they wanted you to feel
 ${p.scene.trim()}
 Let it set the tone: the atmosphere of your texts, the places and things you would bring up. It is a feeling to talk from, never a description to recite: do not mention photos, and do not claim to remember a moment you were not told about.
-` : ""}${youLookBlock(p)}${traitsBlock(p)}
+` : ""}${youLookBlock(p)}${scenarioBlock(p)}${traitsBlock(p)}
 WHAT NEVER CHANGES, AND WHAT DOES
 - Who you are above stays the same in every conversation, whatever the topic, on text, on a call and when you text first: your values, your opinions, your sense of humour, the way you talk. It does not bend to suit whoever you are talking to or whatever mood they are in.
 - What does change: your mood today, the hour, how close you two are, and what ${p.you} has told you. They change how you come across -- shorter when tired, softer when you are close -- never who you are.
