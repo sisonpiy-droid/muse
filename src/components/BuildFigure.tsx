@@ -49,6 +49,15 @@ const STANCES = [
   { key: "press", label: "Like you're press", texture: "distant", note: "polished, on duty, giving you the version they give everyone" },
 ];
 
+/* Storylines that work for a real person: a movie or a shoot the two of you are in, an interview, a mentor.
+   Never romantic -- see unsuitableScenario. `{n}` is their name. */
+const STORY_IDEAS = [
+  "{n} is the lead in an action movie I am directing. We are on set, about to shoot the big scene.",
+  "{n} and I are co-stars on a thriller. We are rehearsing our scenes before the shoot.",
+  "{n} is interviewing me for a film magazine about the movie we just wrapped.",
+  "{n} has become my mentor for my startup.",
+];
+
 /* Examples that are clearly characters, one tap each. */
 const CHARACTER_IDEAS = ["Harley Quinn", "Scarlet Witch", "Batman", "Doraemon", "Elizabeth Bennet", "Sherlock Holmes"];
 
@@ -290,11 +299,20 @@ export function BuildFigure({
             <span>What&apos;s going on between you? (optional)</span>
             <textarea className="input" rows={3} value={scenario} maxLength={600}
               onChange={(e) => setScenario(e.target.value)}
-              placeholder={kind === "character" ? "She is my girlfriend, and we are on a rooftop after a mission" : "He has become my mentor for my startup"} />
+              placeholder={kind === "character" ? "She is my girlfriend, and we are on a rooftop after a mission" : "She is the lead in a movie I am directing, and we are on set"} />
           </label>
+          {kind === "any" && (
+            <div className="tags" style={{ margin: "-0.2rem 0 0.4rem" }}>
+              {STORY_IDEAS.map((t) => {
+                const text = t.replace("{n}", them.trim() || "They");
+                return <button key={t} type="button" className="tag" onClick={() => setScenario(text)}>{t.split(".")[0].replace("{n}", them.trim() || "They")}</button>;
+              })}
+            </div>
+          )}
           <p className="fine" style={{ marginTop: "-0.4rem" }}>
-            The chat starts from this: how you two know each other, what you&apos;re working on. It&apos;s a setup you
-            chose, not a fact about them. {kind === "character" ? "A grown-up character can be anything you like, romantic included." : "For a real person it can't be romantic or intimate."}
+            The chat starts from this: how you two know each other, or a story you are in together, like a movie
+            you are making or a shoot. It&apos;s a setup you chose, not a fact about them.{" "}
+            {kind === "character" ? "A grown-up character can be anything you like, romantic included." : "For a real person it can't be romantic or intimate."}
           </p>
 
           {error && <p className={candidates.length ? "lede" : "error"} role="alert">{error}</p>}
